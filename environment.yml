@@ -1,0 +1,16 @@
+name: family_finder
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python>=3.10,<3.13
+  - orthofinder>=3.1
+  - mafft>=7.5
+  - fasttree>=2.1
+  - iqtree>=2
+  - paml>=4.10
+  - pal2nal>=14
+  - ete4>=4.3
+  - biopython>=1.80
+  - rich

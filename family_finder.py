@@ -7,8 +7,12 @@ displaced sequences to find their true gene families.
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
+
+# Prevent MAFFT_BINARIES conflict when running inside conda/micromamba env
+os.environ.pop("MAFFT_BINARIES", None)
 
 from config import Config
 from utils.logging_setup import setup_logging
