@@ -14,11 +14,11 @@ def compute_pairwise_distances(species_tree: Tree) -> Dict[Tuple[str, str], floa
 
     Returns dict mapping (sp_a, sp_b) -> distance for all ordered pairs.
     """
-    leaves = species_tree.leaves()
+    leaves = list(species_tree.leaves())
     distances = {}
     for i, leaf_a in enumerate(leaves):
         for leaf_b in leaves[i + 1 :]:
-            dist = leaf_a.get_distance(leaf_b)
+            dist = species_tree.get_distance(leaf_a, leaf_b)
             distances[(leaf_a.name, leaf_b.name)] = dist
             distances[(leaf_b.name, leaf_a.name)] = dist
     return distances

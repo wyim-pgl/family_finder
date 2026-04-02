@@ -42,7 +42,7 @@ def prune_orthogroup(
         (confirmed_gene_ids, outlier_gene_ids)
     """
     tree = Tree(open(tree_path).read().strip())
-    leaves = tree.leaves()
+    leaves = list(tree.leaves())
 
     # Too few leaves to prune meaningfully
     if len(leaves) < config.min_species_for_pruning:
@@ -77,7 +77,7 @@ def prune_orthogroup(
             if expected is None or expected <= 0:
                 continue
 
-            observed = leaf_i.get_distance(leaf_j)
+            observed = tree.get_distance(leaf_i, leaf_j)
             ratios.append(observed / expected)
 
         if ratios:

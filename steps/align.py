@@ -66,7 +66,7 @@ def codon_align(
     write_fasta(cds_seqs, str(cds_fa))
 
     cmd = [
-        "perl", config.pal2nal_bin,
+        config.pal2nal_bin,
         str(protein_aln), str(cds_fa),
         "-output", "fasta",
     ]

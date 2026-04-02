@@ -44,20 +44,28 @@ def process_single_orthogroup(args: tuple):
         return (og_id, None, outlier_seqs)
 
     try:
-        # 1. Extract protein sequences
+        # 1. Extract sequences
         prot_seqs = {gid: protein_pool[gid] for gid in gene_ids if gid in protein_pool}
-        if len(prot_seqs) < config.min_orthogroup_size:
-            return (og_id, None, prot_seqs)
+        cds_seqs = {gid: cds_pool[gid] for gid in gene_ids if gid in cds_pool}
+        # Need both pep and cds for each gene
+        common_ids = set(prot_seqs) & set(cds_seqs)
+        if len(common_ids) < config.min_orthogroup_size:
+            return (og_id, None, {gid: protein_pool[gid] for gid in gene_ids if gid in protein_pool})
+        prot_seqs = {gid: prot_seqs[gid] for gid in common_ids}
+        cds_seqs = {gid: cds_seqs[gid] for gid in common_ids}
 
-        # 2. Align
+        # 2. Protein alignment (guide) → codon alignment via pal2nal
         prot_aln = align_protein(prot_seqs, og_dir / "proteins.afa", config)
+        codon_aln = codon_align(
+            og_dir / "proteins.afa", cds_seqs, og_dir / "codon.afa", config
+        )
 
-        # 3. Build tree
-        tree_path = build_tree(prot_aln, og_dir / "tree.nwk", config)
+        # 3. Build tree from CDS (codon) alignment
+        tree_path = build_tree(codon_aln, og_dir / "tree.nwk", config)
 
-        # 4. Species-aware pruning
+        # 4. Species-aware pruning (using CDS tree distances)
         gene_to_species = {
-            gid: get_species(gid, config.species_delimiter) for gid in prot_seqs
+            gid: get_species(gid, config.species_delimiter) for gid in common_ids
         }
         confirmed, outliers = prune_orthogroup(
             str(tree_path), gene_to_species, expected_distances, config
@@ -66,30 +74,31 @@ def process_single_orthogroup(args: tuple):
         # 5. If confirmed set is large enough, produce final outputs
         if len(confirmed) >= config.min_orthogroup_size:
             confirmed_prots = {gid: protein_pool[gid] for gid in confirmed}
+            confirmed_cds = {gid: cds_pool[gid] for gid in confirmed}
             write_fasta(confirmed_prots, str(og_dir / "confirmed_proteins.fa"))
+            write_fasta(confirmed_cds, str(og_dir / "confirmed_cds.fa"))
 
-            # Re-align without outliers
-            confirmed_aln = align_protein(
+            # Re-align without outliers (protein guide → codon)
+            confirmed_prot_aln = align_protein(
                 confirmed_prots, og_dir / "confirmed_proteins.afa", config
             )
+            codon_align(
+                og_dir / "confirmed_proteins.afa",
+                confirmed_cds,
+                og_dir / "confirmed_codon.afa",
+                config,
+            )
 
-            # Re-build tree
-            build_tree(confirmed_aln, og_dir / "confirmed_tree.nwk", config)
-
-            # Codon alignment if CDS available
-            confirmed_cds = {gid: cds_pool[gid] for gid in confirmed if gid in cds_pool}
-            if len(confirmed_cds) >= config.min_orthogroup_size:
-                codon_align(
-                    og_dir / "confirmed_proteins.afa",
-                    confirmed_cds,
-                    og_dir / "confirmed_codon.afa",
-                    config,
-                )
+            # Re-build CDS tree
+            build_tree(
+                og_dir / "confirmed_codon.afa",
+                og_dir / "confirmed_tree.nwk",
+                config,
+            )
 
             outlier_seqs = {gid: protein_pool[gid] for gid in outliers if gid in protein_pool}
             return (og_id, confirmed, outlier_seqs)
         else:
-            # Too small after pruning → all go to outlier pool
             all_seqs = {gid: protein_pool[gid] for gid in gene_ids if gid in protein_pool}
             return (og_id, None, all_seqs)
 

@@ -10,7 +10,7 @@ logger = logging.getLogger("family_finder")
 
 
 def build_tree(alignment: Path, outpath: Path, config: Config) -> Path:
-    """Build a phylogenetic tree from a protein alignment.
+    """Build a phylogenetic tree from a nucleotide (codon) alignment.
 
     Returns path to the Newick tree file.
     """
@@ -26,7 +26,7 @@ def build_tree(alignment: Path, outpath: Path, config: Config) -> Path:
 
 
 def _run_fasttree(alignment: Path, outpath: Path, config: Config) -> Path:
-    cmd = [config.fasttree_bin, "-gamma", str(alignment)]
+    cmd = [config.fasttree_bin, "-nt", "-gtr", "-gamma", str(alignment)]
 
     logger.debug(f"Running FastTree: {' '.join(cmd)}")
 
@@ -45,7 +45,7 @@ def _run_iqtree(alignment: Path, outpath: Path, config: Config) -> Path:
     cmd = [
         config.iqtree_bin,
         "-s", str(alignment),
-        "-m", "TEST",
+        "-m", "GTR+G",
         "-bb", "1000",
         "-nt", "AUTO",
         "--prefix", str(prefix),

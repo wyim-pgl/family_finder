@@ -21,7 +21,11 @@ def run_orthofinder(input_dir: Path, output_dir: Path, config: Config) -> Path:
     Returns:
         Path to the OrthoFinder Results directory.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # OrthoFinder requires -o dir to NOT already exist
+    output_dir = Path(output_dir)
+    if output_dir.exists():
+        import shutil
+        shutil.rmtree(output_dir)
 
     cmd = [
         config.orthofinder_bin,
@@ -33,11 +37,14 @@ def run_orthofinder(input_dir: Path, output_dir: Path, config: Config) -> Path:
         cmd.extend(config.orthofinder_extra_args.split())
 
     logger.info(f"Running OrthoFinder: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
     if result.returncode != 0:
-        logger.error(f"OrthoFinder failed:\n{result.stderr}")
+        logger.error(f"OrthoFinder failed:\n{result.stdout}")
         raise RuntimeError(f"OrthoFinder failed with return code {result.returncode}")
+
+    logger.info(f"OrthoFinder stdout (last 5 lines):\n" +
+                "\n".join(result.stdout.strip().splitlines()[-5:]))
 
     # Find the Results_* directory
     results_dirs = sorted(output_dir.glob("Results_*"))
