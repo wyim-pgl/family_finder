@@ -53,22 +53,181 @@ The pipeline stops when any of:
 
 ## Installation
 
-### Dependencies (micromamba)
+### Option 1: micromamba (recommended)
 
 ```bash
+# Install micromamba if not available
+"${SHELL}" <(curl -L micro.mamba.pm/install.sh)
+
+# Create environment from environment.yml
 micromamba create -f environment.yml
 micromamba activate family_finder
+
+# Verify installation
+python -c "from ete4 import Tree; from Bio import SeqIO; print('OK')"
+orthofinder -h | head -1
+mafft --version
+FastTree 2>&1 | head -1
+pal2nal.pl 2>&1 | head -1
 ```
 
-Required tools:
-- OrthoFinder (+ diamond, mcl, famsa, FastTree)
-- MAFFT
-- FastTree or IQ-TREE
-- pal2nal
-- TreeShrink (optional, for Stage 1 pruning)
-- PAML/codeml (optional, for selection analysis)
+### Option 2: conda
 
-Python packages: ete4, Biopython
+```bash
+conda env create -f environment.yml
+conda activate family_finder
+```
+
+### Option 3: Manual installation
+
+```bash
+# Create conda env with bioconda tools
+conda create -n family_finder -c conda-forge -c bioconda \
+  python=3.11 orthofinder mafft fasttree iqtree paml pal2nal ete4 biopython rich
+
+conda activate family_finder
+
+# Optional: TreeShrink (requires Python <=3.9, separate env recommended)
+conda create -n treeshrink -c bioconda treeshrink
+```
+
+### Verify dependencies
+
+```bash
+# All of these must succeed:
+orthofinder -h          # OrthoFinder (includes diamond, mcl, famsa)
+mafft --version         # MAFFT aligner
+FastTree 2>&1 | head    # FastTree (note: capital F and T)
+pal2nal.pl 2>&1 | head  # pal2nal codon aligner
+python -c "from ete4 import Tree"    # ete4 tree library
+python -c "from Bio import SeqIO"    # Biopython
+
+# Optional:
+iqtree --version                     # IQ-TREE (alternative tree builder)
+codeml 2>&1 | head                   # PAML/codeml (selection analysis)
+run_treeshrink.py -h                 # TreeShrink (outlier detection)
+```
+
+### Troubleshooting
+
+| Problem | Solution |
+|---|---|
+| `diamond: Invalid option: ignore-warnings` | OrthoFinder 3.1.3 + diamond <2.1.25 incompatibility. Remove `--ignore-warnings` from `orthofinder/run/config.json` |
+| `Cannot run MCL` | Ensure `mcl` is in PATH: `which mcl` or install via `conda install -c bioconda mcl` |
+| `MAFFT_BINARIES` conflict | Pipeline auto-clears this env var. If issues persist: `unset MAFFT_BINARIES` |
+| `No module named 'Bio'` | Run with the correct Python: the one inside your conda/micromamba env |
+| TreeShrink won't install | Requires Python <=3.9. Use a separate env or skip (Stage 2 pruning still works) |
+| `ModuleNotFoundError: rich` | `pip install rich` in the OrthoFinder environment |
+
+## Quick Start
+
+```bash
+# 1. Install
+micromamba create -f environment.yml && micromamba activate family_finder
+
+# 2. Prepare input (see Input Preparation below)
+
+# 3. Run
+python family_finder.py \
+  --protein-dir data/pep \
+  --cds-dir data/cds \
+  --species-tree data/species_tree.nwk \
+  --outdir output \
+  --threads 8 \
+  --verbose
+
+# 4. Check results
+cat output/summary.tsv | head
+ls output/final_families/
+```
+
+## Input Preparation
+
+### 1. Protein and CDS FASTA files
+
+Each species needs one protein file and one CDS file in separate directories:
+
+```
+data/pep/
+  Mcry.pep.fa      # Mammillaria protein sequences
+  Ococ.pep.fa      # Opuntia cochenillifera proteins
+  Cgig.pep.fa      # Carnegiea gigantea proteins
+
+data/cds/
+  Mcry.cds.fa      # Mammillaria CDS sequences
+  Ococ.cds.fa      # Opuntia cochenillifera CDS
+  Cgig.cds.fa      # Carnegiea gigantea CDS
+```
+
+### 2. Gene ID format
+
+Gene IDs **must** follow `SpeciesPrefix_GeneID` format. The species is extracted from the prefix before the first `_`:
+
+```
+>Mcry_Mcr1G24690          → species "Mcry"
+>CgigH_Cgig_v2_SGP5p_1.1 → species "CgigH"
+```
+
+If your original gene IDs don't have species prefixes, add them:
+
+```bash
+# Add species prefix to all gene IDs in a FASTA file
+sed 's/^>/>Mcry_/' original.pep.fa > data/pep/Mcry.pep.fa
+sed 's/^>/>Mcry_/' original.cds.fa > data/cds/Mcry.cds.fa
+```
+
+**Important**: Protein and CDS files must use **identical gene IDs**. The pipeline matches them by ID.
+
+### 3. Extracting CDS/protein from GFF3 + genome
+
+If you have a GFF3 annotation and genome FASTA:
+
+```bash
+# Using gffread (recommended)
+gffread annotation.gff3 -g genome.fa -x cds.fa -y pep.fa
+
+# Or using AGAT (filters longest isoform first)
+agat_sp_keep_longest_isoform.pl -gff annotation.gff3 -o longest.gff3
+agat_sp_extract_sequences.pl -g longest.gff3 -f genome.fa -t cds -o cds.fa
+agat_sp_extract_sequences.pl -g longest.gff3 -f genome.fa -p -o pep.fa
+```
+
+### 4. Species tree
+
+Provide a Newick-format species tree with branch lengths. Leaf names must match species prefixes in gene IDs:
+
+```
+((Mcry:0.5,Cgig:0.5):0.3,(Ococ:0.2,Obas:0.2):0.3);
+```
+
+Recommended approach: build from low-copy-number orthologs using ASTRAL.
+
+To include two annotations of the same genome (e.g., MAKER vs Helixer), add them as sister taxa with near-zero distance:
+
+```
+((Mcry:0.5,(Cgig:0.01,CgigH:0.01):0.49):0.3,(Ococ:0.2,Obas:0.2):0.3);
+```
+
+### 5. Validate inputs before running
+
+```bash
+# Check gene ID consistency between protein and CDS
+for sp in Mcry Ococ Obas Cgig; do
+  pep_ids=$(grep "^>" data/pep/${sp}.pep.fa | sort)
+  cds_ids=$(grep "^>" data/cds/${sp}.cds.fa | sort)
+  diff <(echo "$pep_ids") <(echo "$cds_ids") | head -5
+  echo "${sp}: $(grep -c '^>' data/pep/${sp}.pep.fa) pep, $(grep -c '^>' data/cds/${sp}.cds.fa) cds"
+done
+
+# Check for internal stop codons (annotation quality)
+python -c "
+from Bio import SeqIO
+for f in ['Mcry','Ococ','Obas','Cgig']:
+    bad = sum(1 for r in SeqIO.parse(f'data/pep/{f}.pep.fa','fasta') if '*' in str(r.seq).rstrip('*'))
+    total = sum(1 for _ in SeqIO.parse(f'data/pep/{f}.pep.fa','fasta'))
+    print(f'{f}: {bad}/{total} genes with internal stop codons')
+"
+```
 
 ## Usage
 
@@ -82,7 +241,21 @@ python family_finder.py \
   --verbose
 ```
 
-### Required inputs
+### Resume after interruption
+
+```bash
+# Pipeline saves checkpoints after each round
+# Resume from the last completed round:
+python family_finder.py \
+  --protein-dir data/pep \
+  --cds-dir data/cds \
+  --species-tree data/species_tree.nwk \
+  --outdir output \
+  --resume \
+  --threads 8
+```
+
+### Required arguments
 
 | Argument | Description |
 |---|---|
@@ -90,14 +263,6 @@ python family_finder.py \
 | `--cds-dir` | Directory of per-species CDS FASTA files (e.g., `Mcry.cds.fa`) |
 | `--species-tree` | Newick species tree (e.g., from ASTRAL) |
 | `--outdir` | Output directory |
-
-### Gene ID format
-
-Gene IDs must follow `SpeciesPrefix_GeneID` format. The species is extracted from the prefix before the first `_`:
-- `Mcry_Mcr1G24690` → species `Mcry`
-- `CgigH_Cgig_v2_SGP5p_31_000132.1` → species `CgigH`
-
-Protein and CDS files must use matching gene IDs.
 
 ### Optional arguments
 
@@ -207,6 +372,71 @@ All key CAM (Crassulacean Acid Metabolism) genes clustered correctly across 5 sp
 | Ppcrk2/3 | R1_OG0008534 | 6 | 5 | PPCK-related kinase 2/3 |
 
 CgigH (Helixer annotation) recovered PPC4 and PPCK genes that were present but unannotated in the MAKER annotation, confirming their presence in the *Carnegiea gigantea* genome.
+
+## Development History & Iterative Improvements
+
+This pipeline was developed through multiple iterations, each addressing issues discovered during real data testing on cactus genomes.
+
+### v1: Basic pipeline (`27a747b`)
+
+- Initial implementation: OrthoFinder → MAFFT → FastTree → species-aware ratio pruning
+- Config via YAML (later switched to JSON due to PyYAML dependency issue)
+- Single-pass pruning using observed/expected distance ratio
+
+**Problem discovered**: Ratio-only pruning caught only 18 out of 14,712 orthogroups (0.12%). The threshold of 5.0 was too permissive, and the placeholder species tree with uniform distances didn't reflect true evolutionary distances.
+
+### v2: CDS-based trees + ete4 fixes (`f2b5fcb`)
+
+- Switched from protein trees to **CDS-based trees** (`FastTree -nt -gtr -gamma`) for better resolution
+- Added pal2nal for protein-guided codon alignment
+- Fixed ete4 API (v4 vs v3): `tree.leaves()` returns generator, `get_distance()` requires tree method
+- Fixed MAFFT_BINARIES environment conflict
+- Fixed OrthoFinder output directory handling
+
+**Lesson**: CDS trees provide better branch length estimates for pruning because synonymous substitutions add signal that protein trees lose.
+
+### v3: Micromamba environment (`22df265`)
+
+- Created `environment.yml` with all dependencies pinned
+- Resolved OrthoFinder `rich` dependency issue
+- Fixed OrthoFinder shebang pointing to wrong Python
+
+### v4: TreeShrink integration (`e3e9ad8`)
+
+- Added **two-stage pruning**:
+  - Stage 1: TreeShrink for statistical branch-length outlier detection
+  - Stage 2: Species-aware ratio filter on TreeShrink survivors
+- TreeShrink uses quantile-based detection (default q=0.05) — catches outliers that ratio-based methods miss
+
+**Problem discovered**: TreeShrink requires Python <=3.9, conflicts with OrthoFinder env (Python 3.11+). Pipeline gracefully skips TreeShrink when unavailable.
+
+### v5: Robustness + performance (`b3dfd99`)
+
+Addressed issues found during the 5-species (143K sequences) production run:
+
+- **pal2nal failures diagnosed**: All 17 failures traced to Ococ (Opuntia cochenillifera) — 161 genes with internal stop codons in CDS, indicating annotation errors (frameshifts, pseudogenes)
+- **Internal stop codon filter**: `_filter_internal_stops()` removes problematic genes before pal2nal, logs which genes and why
+- **Protein tree fallback**: When codon alignment fails entirely, builds tree from protein alignment instead of crashing
+- **Auto-detect sequence type**: FastTree automatically uses `-nt -gtr -gamma` for nucleotide or protein mode based on input
+- **Pickle overhead fix**: Workers now receive only their OG's sequences (~5-50 seqs) instead of the entire pool (143K seqs). Reduced inter-process data transfer by ~1000x
+- **Lightweight returns**: Workers return gene ID sets instead of sequence dictionaries, further reducing memory
+- **OrthoFinder diamond compatibility**: Removed `--ignore-warnings` flag incompatible with diamond 2.1.24
+- **PATH management**: Auto-adds orthofinder conda env to PATH for mcl/diamond
+
+### Performance impact of optimizations
+
+| Version | Round 1 time (est.) | Memory per worker |
+|---|---|---|
+| v1-v4 | ~7 hours | ~700MB (full pool copied) |
+| v5 | ~5 hours (projected) | ~10MB (per-OG seqs only) |
+
+### Lessons learned
+
+1. **Test with real data early** — synthetic tests pass but production data reveals annotation quality issues, tool incompatibilities, and performance bottlenecks
+2. **Annotation quality varies widely** — Ococ had 161 genes with internal stops; always validate input data
+3. **Pickle serialization matters** — Python multiprocessing copies all arguments to each worker; keep payloads small
+4. **Graceful degradation** — fall back to protein trees when CDS fails, skip TreeShrink when unavailable, log everything for diagnosis
+5. **Two annotations of the same genome** can be treated as separate "species" with near-zero distance to validate gene recovery
 
 ## Known Issues
 
