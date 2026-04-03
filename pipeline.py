@@ -38,10 +38,9 @@ def process_single_orthogroup(args: tuple):
     og_dir = round_dir / "orthogroups" / og_id
     og_dir.mkdir(parents=True, exist_ok=True)
 
-    # Skip if too small
+    # Skip if too small — return gene IDs only (not sequences) to avoid pickle overhead
     if len(gene_ids) < config.min_orthogroup_size:
-        outlier_seqs = {gid: protein_pool[gid] for gid in gene_ids if gid in protein_pool}
-        return (og_id, None, outlier_seqs)
+        return (og_id, None, set(gene_ids))
 
     try:
         # 1. Extract sequences
@@ -50,7 +49,7 @@ def process_single_orthogroup(args: tuple):
         # Need both pep and cds for each gene
         common_ids = set(prot_seqs) & set(cds_seqs)
         if len(common_ids) < config.min_orthogroup_size:
-            return (og_id, None, {gid: protein_pool[gid] for gid in gene_ids if gid in protein_pool})
+            return (og_id, None, set(gene_ids))
         prot_seqs = {gid: prot_seqs[gid] for gid in common_ids}
         cds_seqs = {gid: cds_seqs[gid] for gid in common_ids}
 
@@ -60,8 +59,12 @@ def process_single_orthogroup(args: tuple):
             og_dir / "proteins.afa", cds_seqs, og_dir / "codon.afa", config
         )
 
-        # 3. Build tree from CDS (codon) alignment
-        tree_path = build_tree(codon_aln, og_dir / "tree.nwk", config)
+        # 3. Build tree from CDS (codon) alignment; fall back to protein if pal2nal failed
+        if codon_aln is not None:
+            tree_path = build_tree(codon_aln, og_dir / "tree.nwk", config)
+        else:
+            logger.debug(f"  {og_id}: pal2nal failed, using protein alignment for tree")
+            tree_path = build_tree(prot_aln, og_dir / "tree.nwk", config)
 
         # 4. Species-aware pruning (using CDS tree distances)
         gene_to_species = {
@@ -82,30 +85,34 @@ def process_single_orthogroup(args: tuple):
             confirmed_prot_aln = align_protein(
                 confirmed_prots, og_dir / "confirmed_proteins.afa", config
             )
-            codon_align(
+            confirmed_codon = codon_align(
                 og_dir / "confirmed_proteins.afa",
                 confirmed_cds,
                 og_dir / "confirmed_codon.afa",
                 config,
             )
 
-            # Re-build CDS tree
-            build_tree(
-                og_dir / "confirmed_codon.afa",
-                og_dir / "confirmed_tree.nwk",
-                config,
-            )
+            # Re-build tree (CDS if available, else protein)
+            if confirmed_codon is not None:
+                build_tree(
+                    og_dir / "confirmed_codon.afa",
+                    og_dir / "confirmed_tree.nwk",
+                    config,
+                )
+            else:
+                build_tree(
+                    og_dir / "confirmed_proteins.afa",
+                    og_dir / "confirmed_tree.nwk",
+                    config,
+                )
 
-            outlier_seqs = {gid: protein_pool[gid] for gid in outliers if gid in protein_pool}
-            return (og_id, confirmed, outlier_seqs)
+            return (og_id, confirmed, outliers)
         else:
-            all_seqs = {gid: protein_pool[gid] for gid in gene_ids if gid in protein_pool}
-            return (og_id, None, all_seqs)
+            return (og_id, None, set(gene_ids))
 
     except Exception as e:
         logger.error(f"Failed to process {og_id}: {e}")
-        all_seqs = {gid: protein_pool[gid] for gid in gene_ids if gid in protein_pool}
-        return (og_id, None, all_seqs)
+        return (og_id, None, set(gene_ids))
 
 
 def run(
@@ -190,11 +197,15 @@ def run(
         save_checkpoint(round_dir, round_num, len(current_pool), "processing")
 
         # Step 4: Process each orthogroup
-        work_items = [
-            (og_id, gene_ids, current_pool, cds_pool,
-             expected_distances, config, round_dir)
-            for og_id, gene_ids in orthogroups.items()
-        ]
+        # Only pass the sequences each OG actually needs (avoids pickling entire pool)
+        work_items = []
+        for og_id, gene_ids in orthogroups.items():
+            og_prots = {gid: current_pool[gid] for gid in gene_ids if gid in current_pool}
+            og_cds = {gid: cds_pool[gid] for gid in gene_ids if gid in cds_pool}
+            work_items.append(
+                (og_id, gene_ids, og_prots, og_cds,
+                 expected_distances, config, round_dir)
+            )
 
         results = parallel_map(
             process_single_orthogroup,
@@ -202,24 +213,21 @@ def run(
             n_workers=config.n_workers,
         )
 
-        # Step 5: Collect confirmed families and outliers
+        # Step 5: Collect confirmed families and outlier gene IDs
         new_families = {}
-        new_outlier_pool = {}
+        outlier_gene_ids = set()
 
-        assigned_genes = set()
         for r in results:
             if r is None:
                 continue
-            og_id, confirmed, outlier_seqs = r
-            assigned_genes.update(outlier_seqs.keys())
+            og_id, confirmed, outlier_ids = r
 
             if confirmed is not None:
                 family_id = f"R{round_num}_{og_id}"
                 new_families[family_id] = confirmed
                 all_confirmed_families[family_id] = confirmed
-                assigned_genes.update(confirmed)
 
-            new_outlier_pool.update(outlier_seqs)
+            outlier_gene_ids.update(outlier_ids)
 
         # Add unassigned genes (not in any orthogroup) to outlier pool
         all_og_genes = set()
@@ -227,7 +235,10 @@ def run(
             all_og_genes.update(gene_ids)
         for gid in current_pool:
             if gid not in all_og_genes:
-                new_outlier_pool[gid] = current_pool[gid]
+                outlier_gene_ids.add(gid)
+
+        # Build outlier pool with sequences from current_pool
+        new_outlier_pool = {gid: current_pool[gid] for gid in outlier_gene_ids if gid in current_pool}
 
         # Save outlier pool for resume
         write_fasta(new_outlier_pool, str(round_dir / "outlier_pool.fa"))

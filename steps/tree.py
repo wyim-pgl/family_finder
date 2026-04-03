@@ -9,24 +9,36 @@ from config import Config
 logger = logging.getLogger("family_finder")
 
 
-def build_tree(alignment: Path, outpath: Path, config: Config) -> Path:
-    """Build a phylogenetic tree from a nucleotide (codon) alignment.
+def build_tree(alignment: Path, outpath: Path, config: Config, nucleotide: bool = True) -> Path:
+    """Build a phylogenetic tree from an alignment.
+
+    Args:
+        nucleotide: If True, use nucleotide model (-nt -gtr -gamma).
+                    If False, use protein model.
 
     Returns path to the Newick tree file.
     """
+    alignment = Path(alignment)
     outpath = Path(outpath)
     outpath.parent.mkdir(parents=True, exist_ok=True)
 
+    # Auto-detect: if alignment has protein extension, use protein mode
+    if alignment.name.endswith("proteins.afa"):
+        nucleotide = False
+
     if config.tree_builder == "fasttree":
-        return _run_fasttree(alignment, outpath, config)
+        return _run_fasttree(alignment, outpath, config, nucleotide)
     elif config.tree_builder == "iqtree":
-        return _run_iqtree(alignment, outpath, config)
+        return _run_iqtree(alignment, outpath, config, nucleotide)
     else:
         raise ValueError(f"Unknown tree builder: {config.tree_builder}")
 
 
-def _run_fasttree(alignment: Path, outpath: Path, config: Config) -> Path:
-    cmd = [config.fasttree_bin, "-nt", "-gtr", "-gamma", str(alignment)]
+def _run_fasttree(alignment: Path, outpath: Path, config: Config, nucleotide: bool = True) -> Path:
+    if nucleotide:
+        cmd = [config.fasttree_bin, "-nt", "-gtr", "-gamma", str(alignment)]
+    else:
+        cmd = [config.fasttree_bin, "-gamma", str(alignment)]
 
     logger.debug(f"Running FastTree: {' '.join(cmd)}")
 
@@ -40,7 +52,7 @@ def _run_fasttree(alignment: Path, outpath: Path, config: Config) -> Path:
     return outpath
 
 
-def _run_iqtree(alignment: Path, outpath: Path, config: Config) -> Path:
+def _run_iqtree(alignment: Path, outpath: Path, config: Config, nucleotide: bool = True) -> Path:
     prefix = outpath.parent / outpath.stem
     cmd = [
         config.iqtree_bin,

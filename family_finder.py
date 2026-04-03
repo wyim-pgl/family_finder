@@ -14,6 +14,11 @@ from pathlib import Path
 # Prevent MAFFT_BINARIES conflict when running inside conda/micromamba env
 os.environ.pop("MAFFT_BINARIES", None)
 
+# Ensure orthofinder conda env bin is in PATH (for mcl, diamond, etc.)
+_of_env_bin = "/data/gpfs/assoc/pgl/bin/conda/conda_envs/orthofinder/bin"
+if _of_env_bin not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _of_env_bin + ":" + os.environ.get("PATH", "")
+
 from config import Config
 from utils.logging_setup import setup_logging
 import pipeline
