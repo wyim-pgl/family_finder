@@ -24,6 +24,7 @@ class Config:
     # Pruning parameters
     distance_ratio_threshold: float = 5.0
     min_species_for_pruning: int = 3
+    treeshrink_quantile: float = 0.05  # TreeShrink quantile (lower = stricter)
 
     # OrthoFinder parameters
     orthofinder_threads: int = 8
