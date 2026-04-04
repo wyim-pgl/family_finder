@@ -46,6 +46,9 @@ def process_single_orthogroup(args: tuple):
         # 1. Extract sequences
         prot_seqs = {gid: protein_pool[gid] for gid in gene_ids if gid in protein_pool}
         cds_seqs = {gid: cds_pool[gid] for gid in gene_ids if gid in cds_pool}
+        missing = set(gene_ids) - set(prot_seqs)
+        if missing:
+            logger.debug(f"  {og_id}: {len(missing)} gene(s) missing from protein pool")
         # Need both pep and cds for each gene
         common_ids = set(prot_seqs) & set(cds_seqs)
         if len(common_ids) < config.min_orthogroup_size:
@@ -76,35 +79,42 @@ def process_single_orthogroup(args: tuple):
 
         # 5. If confirmed set is large enough, produce final outputs
         if len(confirmed) >= config.min_orthogroup_size:
-            confirmed_prots = {gid: protein_pool[gid] for gid in confirmed}
-            confirmed_cds = {gid: cds_pool[gid] for gid in confirmed}
+            confirmed_prots = {gid: protein_pool[gid] for gid in confirmed if gid in protein_pool}
+            confirmed_cds = {gid: cds_pool[gid] for gid in confirmed if gid in cds_pool}
             write_fasta(confirmed_prots, str(og_dir / "confirmed_proteins.fa"))
             write_fasta(confirmed_cds, str(og_dir / "confirmed_cds.fa"))
 
-            # Re-align without outliers (protein guide → codon)
-            confirmed_prot_aln = align_protein(
-                confirmed_prots, og_dir / "confirmed_proteins.afa", config
-            )
-            confirmed_codon = codon_align(
-                og_dir / "confirmed_proteins.afa",
-                confirmed_cds,
-                og_dir / "confirmed_codon.afa",
-                config,
-            )
-
-            # Re-build tree (CDS if available, else protein)
-            if confirmed_codon is not None:
-                build_tree(
-                    og_dir / "confirmed_codon.afa",
-                    og_dir / "confirmed_tree.nwk",
-                    config,
-                )
+            # Skip re-alignment if nothing was pruned
+            if not outliers:
+                shutil.copy(og_dir / "proteins.afa", og_dir / "confirmed_proteins.afa")
+                if codon_aln is not None:
+                    shutil.copy(codon_aln, og_dir / "confirmed_codon.afa")
+                shutil.copy(og_dir / "tree.nwk", og_dir / "confirmed_tree.nwk")
             else:
-                build_tree(
+                # Re-align without outliers (protein guide → codon)
+                confirmed_prot_aln = align_protein(
+                    confirmed_prots, og_dir / "confirmed_proteins.afa", config
+                )
+                confirmed_codon = codon_align(
                     og_dir / "confirmed_proteins.afa",
-                    og_dir / "confirmed_tree.nwk",
+                    confirmed_cds,
+                    og_dir / "confirmed_codon.afa",
                     config,
                 )
+
+                # Re-build tree (CDS if available, else protein)
+                if confirmed_codon is not None:
+                    build_tree(
+                        og_dir / "confirmed_codon.afa",
+                        og_dir / "confirmed_tree.nwk",
+                        config,
+                    )
+                else:
+                    build_tree(
+                        og_dir / "confirmed_proteins.afa",
+                        og_dir / "confirmed_tree.nwk",
+                        config,
+                    )
 
             return (og_id, confirmed, outliers)
         else:
@@ -166,6 +176,19 @@ def run(
                 from utils.seqio import read_fasta
                 current_pool = read_fasta(str(pool_fasta))
                 logger.info(f"Resuming from round {start_round} with {len(current_pool)} sequences")
+
+            # Reload previously confirmed families from summary or round dirs
+            summary_file = outdir / "summary.tsv"
+            if summary_file.exists():
+                with open(summary_file) as f:
+                    f.readline()  # skip header
+                    for line in f:
+                        parts = line.strip().split("\t")
+                        if len(parts) >= 5:
+                            fam_id = parts[0]
+                            genes = set(parts[4].split(","))
+                            all_confirmed_families[fam_id] = genes
+                logger.info(f"Reloaded {len(all_confirmed_families)} confirmed families from previous rounds")
 
     round_num = start_round - 1
     rounds_with_no_new = 0

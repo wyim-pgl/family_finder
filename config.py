@@ -55,8 +55,14 @@ class Config:
 
     @classmethod
     def from_json(cls, path: str) -> "Config":
+        import logging
         with open(path) as f:
             data = json.load(f)
+        unknown = set(data.keys()) - set(cls.__dataclass_fields__.keys())
+        if unknown:
+            logging.getLogger("family_finder").warning(
+                f"Unknown config keys in {path} (ignored): {unknown}"
+            )
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
     def to_json(self, path: str):

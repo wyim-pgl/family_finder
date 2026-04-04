@@ -36,7 +36,7 @@ def prune_orthogroup(
     Returns:
         (confirmed_gene_ids, outlier_gene_ids)
     """
-    tree = Tree(open(tree_path).read().strip())
+    tree = Tree(Path(tree_path).read_text().strip())
     leaves = list(tree.leaves())
     all_genes = {leaf.name for leaf in leaves}
 
@@ -140,7 +140,7 @@ def _species_aware_filter(
 
     Returns set of outlier gene IDs.
     """
-    tree = Tree(open(tree_path).read().strip())
+    tree = Tree(Path(tree_path).read_text().strip())
     leaves = [l for l in tree.leaves() if l.name in gene_ids]
 
     outlier_scores = {}

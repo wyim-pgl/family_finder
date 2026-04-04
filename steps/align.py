@@ -31,6 +31,7 @@ def align_protein(seqs: Dict[str, str], outpath: Path, config: Config) -> Path:
     elif config.mafft_strategy == "ginsi":
         cmd = [config.mafft_bin, "--globalpair", "--maxiterate", "1000", str(input_fa)]
     else:
+        logger.debug(f"Unknown MAFFT strategy '{config.mafft_strategy}', using --auto")
         cmd = [config.mafft_bin, "--auto", str(input_fa)]
 
     logger.debug(f"Running MAFFT: {' '.join(cmd)}")

@@ -1,12 +1,13 @@
 """Species tree utilities: loading and pairwise distance computation."""
 
+from pathlib import Path
 from typing import Dict, Tuple
 from ete4 import Tree
 
 
 def load_species_tree(path: str) -> Tree:
     """Load a species tree from a Newick file."""
-    return Tree(open(path).read().strip())
+    return Tree(Path(path).read_text().strip())
 
 
 def compute_pairwise_distances(species_tree: Tree) -> Dict[Tuple[str, str], float]:

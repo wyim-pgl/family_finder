@@ -54,10 +54,11 @@ def _run_fasttree(alignment: Path, outpath: Path, config: Config, nucleotide: bo
 
 def _run_iqtree(alignment: Path, outpath: Path, config: Config, nucleotide: bool = True) -> Path:
     prefix = outpath.parent / outpath.stem
+    model = "GTR+G" if nucleotide else "LG+G"
     cmd = [
         config.iqtree_bin,
         "-s", str(alignment),
-        "-m", "GTR+G",
+        "-m", model,
         "-bb", "1000",
         "-nt", "AUTO",
         "--prefix", str(prefix),
