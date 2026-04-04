@@ -10,6 +10,8 @@ Iterative gene family construction pipeline with species-aware pruning.
 Round 1: All seqs → OrthoFinder → per-OG align/tree/prune → confirmed families + outliers
 Round 2: Outliers → OrthoFinder → per-OG align/tree/prune → new families + outliers
 Round N: Repeat until convergence
+                                          ↓
+HMMER Rescue: Unplaced genes → hmmsearch vs family HMM profiles → rescued into existing families
 ```
 
 ### Why iterative?
@@ -50,6 +52,50 @@ The pipeline stops when any of:
 - `max_rounds` reached (default: 10)
 - No new families for `convergence_no_new_families` consecutive rounds (default: 2)
 - Outlier pool drops below `convergence_threshold` (default: 5)
+
+## HMMER Profile-Based Rescue
+
+After iterative clustering converges, genes that remain unplaced may still be true members of confirmed families but too divergent for DIAMOND pairwise similarity to detect. The HMMER rescue step addresses this by leveraging profile-based search.
+
+**How it works:**
+
+1. Build HMM profiles from the protein alignments of all confirmed families (using `hmmbuild`)
+2. Search unplaced gene sequences against the profile database (using `hmmsearch`)
+3. Assign each gene to the best-matching family if E-value < threshold (default: 1e-5)
+4. Re-align and rebuild trees for affected families
+
+**Why HMMER succeeds where DIAMOND fails:** DIAMOND compares individual sequence pairs, so a divergent gene may not match any single family member well enough. HMM profiles capture position-specific conservation patterns across the entire family, detecting conserved domain architecture even in highly divergent sequences.
+
+### Results (5-species run)
+
+- After convergence (round 10): 13,963 genes remained unplaced
+- HMMER rescue recovered **6,358 genes (45.5%)** into existing families
+- Breakdown by species:
+
+| Species | Genes Rescued |
+|---|---|
+| *O. cochenillifera* (Ococ) | 1,692 |
+| *C. gigantea* Helixer (CgigH) | 1,573 |
+| *O. basilaris* (Obas) | 1,262 |
+| *C. gigantea* (Cgig) | 1,099 |
+| *M. crystallinum* (Mcry) | 732 |
+
+### CAM pathway gene rescue
+
+Of 9 initially unplaced CAM pathway genes from *M. crystallinum*, 8 were rescued by HMMER:
+
+| Gene ID | Gene Name | Assigned Family | E-value |
+|---|---|---|---|
+| Mcr2G22880 | CKB1 | R1_OG0000560 | 1.7e-147 |
+| Mcr4G10250 | Pfk5 | R1_OG0004219 | 2e-158 |
+| Mcr1G03910 | Nst | R1_OG0015572 | 5.2e-76 |
+| Mcr1G01450 | VhaE | R1_OG0000561 | 8.5e-73 |
+| Mcr5G24020 | VhaB | R1_OG0001531 | 1.4e-59 |
+| Mcr1G10640 | Cbl3 | R3_OG0000142 | 3.7e-34 |
+| Mcr9G21470 | Lda1 | R1_OG0012544 | 1.2e-9 |
+| Mcr5G21920 | FAR1 | R1_OG0000605 | 2.6e-8 |
+
+The single unrescued gene, Mcr4G19500 (Gln1/Gln2, 78 aa), is a truncated gene model too short for reliable profile matching.
 
 ## Installation
 
@@ -275,6 +321,8 @@ python family_finder.py \
 | `--threads` | 8 | Parallel workers / OrthoFinder threads |
 | `--tree-builder` | fasttree | `fasttree` or `iqtree` |
 | `--run-codeml` | — | Run PAML/codeml on confirmed families |
+| `--no-hmmer-rescue` | — | Disable HMMER rescue step after convergence |
+| `--hmmer-evalue` | 1e-5 | E-value threshold for HMMER rescue |
 | `--verbose` | — | Debug logging |
 
 ### JSON config
@@ -287,6 +335,11 @@ All parameters can be set via a JSON config file:
   "mafft_bin": "mafft",
   "fasttree_bin": "FastTree",
   "pal2nal_bin": "pal2nal.pl",
+  "hmmbuild_bin": "hmmbuild",
+  "hmmsearch_bin": "hmmsearch",
+  "hmmpress_bin": "hmmpress",
+  "hmmer_rescue": true,
+  "hmmer_evalue": 1e-5,
   "orthofinder_threads": 8,
   "n_workers": 8,
   "max_rounds": 10,
@@ -316,7 +369,10 @@ outdir/
     outlier_pool.fa            # Sequences for next round
     round_stats.json           # Round statistics
   round_02/ ...
-  final_families/              # All confirmed families (copied)
+  hmmer_rescue/
+    family_profiles/           # HMM profiles per family
+    rescue_summary.tsv         # gene_id, best_family, evalue
+  final_families/              # All confirmed families (incl. HMMER-rescued genes)
   summary.tsv                  # family_id, round, n_genes, n_species, gene_list
   pipeline.log
 ```
@@ -372,6 +428,15 @@ All key CAM (Crassulacean Acid Metabolism) genes clustered correctly across 5 sp
 | Ppcrk2/3 | R1_OG0008534 | 6 | 5 | PPCK-related kinase 2/3 |
 
 CgigH (Helixer annotation) recovered PPC4 and PPCK genes that were present but unannotated in the MAKER annotation, confirming their presence in the *Carnegiea gigantea* genome.
+
+### Value of iteration: CAM genes found only through later rounds
+
+33 CAM pathway genes were placed into correct families only through iterative rounds (R2--R10), having been pruned or misassigned in R1. Examples include:
+
+- **R2--R4:** NADP-Me3, Snrk2.3, CIPK24, Ers1/Etr1, Myb61
+- **R9:** Hkl1
+
+These genes would have been lost in a single-pass OrthoFinder analysis.
 
 ## Development History & Iterative Improvements
 
@@ -442,7 +507,7 @@ Addressed issues found during the 5-species (143K sequences) production run:
 
 - **Ococ annotation quality**: 161 genes have internal stop codons in CDS, causing pal2nal failures. The pipeline auto-filters these and falls back to protein trees.
 - **TreeShrink**: Requires Python <=3.9; may not install in newer conda environments. Pipeline works without it (Stage 2 pruning only).
-- **Large outlier pools**: Most remaining outliers after convergence are from orthogroups with <4 members (below `min_orthogroup_size`), not from pruning failures.
+- **Large outlier pools**: After HMMER rescue, 7,605 genes remain unplaced. Most are from orthogroups with <4 members (below `min_orthogroup_size`) or are species-specific orphans.
 
 ## Project Structure
 
@@ -457,6 +522,7 @@ family_finder/
     tree.py                  # FastTree / IQ-TREE wrapper
     prune.py                 # TreeShrink + species-aware pruning
     codeml.py                # PAML/codeml wrapper
+    hmmer_rescue.py          # HMMER profile-based rescue of unplaced genes
   utils/
     seqio.py                 # FASTA I/O, species splitting
     species.py               # Species tree loading, pairwise distances

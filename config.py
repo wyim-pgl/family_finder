@@ -14,6 +14,13 @@ class Config:
     iqtree_bin: str = "iqtree"
     codeml_bin: str = "codeml"
     pal2nal_bin: str = "pal2nal.pl"
+    hmmbuild_bin: str = "hmmbuild"
+    hmmsearch_bin: str = "hmmsearch"
+    hmmpress_bin: str = "hmmpress"
+
+    # HMMER rescue parameters
+    hmmer_rescue: bool = False
+    hmmer_evalue: float = 1e-5
 
     # Pipeline parameters
     max_rounds: int = 10

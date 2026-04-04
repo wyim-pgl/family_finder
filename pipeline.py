@@ -182,16 +182,14 @@ def run(
         input_dir = round_dir / "input"
         split_by_species(current_pool, str(input_dir), config.species_delimiter)
 
-        # Step 2: Run OrthoFinder
+        # Step 2: Run OrthoFinder + parse orthogroups
         of_dir = round_dir / "orthofinder"
         try:
             results_dir = run_orthofinder(input_dir, of_dir, config)
+            orthogroups = parse_orthogroups(results_dir)
         except Exception as e:
             logger.error(f"OrthoFinder failed in round {round_num}: {e}")
             break
-
-        # Step 3: Parse orthogroups
-        orthogroups = parse_orthogroups(results_dir)
         logger.info(f"Round {round_num}: {len(orthogroups)} orthogroups found")
 
         save_checkpoint(round_dir, round_num, len(current_pool), "processing")
@@ -278,6 +276,24 @@ def run(
 
         current_pool = new_outlier_pool
 
+    # HMMER rescue: assign unplaced genes to existing families via HMM profiles
+    if config.hmmer_rescue and all_confirmed_families and current_pool:
+        logger.info(f"=== HMMER Rescue === ({len(current_pool)} unplaced genes)")
+        from steps.hmmer_rescue import rescue_unplaced
+
+        # Rebuild full protein pool for re-alignment of rescued families
+        from utils.seqio import build_seq_map
+        full_protein_pool = build_seq_map(protein_dir)
+
+        all_confirmed_families = rescue_unplaced(
+            families=all_confirmed_families,
+            unplaced_pool=current_pool,
+            protein_pool=full_protein_pool,
+            cds_pool=cds_pool,
+            outdir=outdir,
+            config=config,
+        )
+
     # Final: Assemble all confirmed families
     _write_final_output(all_confirmed_families, current_pool, cds_pool, outdir, config)
 
@@ -298,20 +314,31 @@ def _write_final_output(
     # Copy confirmed family outputs
     for family_id, gene_ids in families.items():
         # Parse round and OG from family_id (e.g., "R1_OG0000000")
-        parts = family_id.split("_", 1)
-        round_num = int(parts[0][1:])
-        og_id = parts[1]
+        try:
+            parts = family_id.split("_", 1)
+            round_num = int(parts[0][1:])
+            og_id = parts[1]
+        except (ValueError, IndexError):
+            continue
         src_dir = outdir / f"round_{round_num:02d}" / "orthogroups" / og_id
         dst_dir = final_dir / family_id
         if src_dir.exists():
             shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
 
+        # Overlay HMMER rescue re-alignments if they exist
+        rescue_dir = outdir / "hmmer_rescue" / "families" / family_id
+        if rescue_dir.exists():
+            shutil.copytree(rescue_dir, dst_dir, dirs_exist_ok=True)
+
     # Write summary TSV
     with open(outdir / "summary.tsv", "w") as f:
         f.write("family_id\tround\tn_genes\tn_species\tgene_list\n")
         for family_id, gene_ids in sorted(families.items()):
-            parts = family_id.split("_", 1)
-            round_num = parts[0][1:]
+            try:
+                parts = family_id.split("_", 1)
+                round_num = parts[0][1:]
+            except (ValueError, IndexError):
+                round_num = "?"
             species = {
                 get_species(gid, config.species_delimiter) for gid in gene_ids
             }

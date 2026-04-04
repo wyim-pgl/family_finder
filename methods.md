@@ -1,0 +1,70 @@
+# 2.X Gene Family Construction
+
+## 2.X.1 Iterative Clustering Pipeline
+
+Gene families were constructed using an iterative clustering and pruning pipeline ("family_finder") developed for this study. The pipeline addresses a fundamental limitation of single-pass ortholog inference: a single round of sequence clustering frequently mis-assigns genes, particularly those that are fast-evolving, derived from incomplete or erroneous annotations, or displaced into oversized orthogroups by spurious pairwise similarity hits. By pruning phylogenetically misplaced genes from each round and re-submitting them for clustering, the iterative approach provides displaced sequences with additional opportunities to group with their true orthologs.
+
+The input dataset comprised 143,961 protein-coding genes from five entries representing four cactus species and one alternative annotation: *Mesembryanthemum crystallinum* (Mcry; 25,226 genes; MAKER annotation), *Carnegiea gigantea* (Cgig; 29,163 genes; MAKER annotation), *C. gigantea* (CgigH; 27,583 genes; Helixer deep-learning annotation), *Opuntia cochenillifera* (Ococ; 33,745 genes; MAKER annotation), and *Opuntia basilaris* (Obas; 28,244 genes; MAKER annotation). The Helixer re-annotation of the *C. gigantea* genome was included as a separate entry to cross-validate gene recovery between evidence-based and deep-learning gene prediction methods. In the species tree, Cgig and CgigH were placed as sister taxa with a near-zero branch length of 0.01 substitutions per site, reflecting that they represent the same genome rather than distinct species. The full topology was ((Mcry:0.5,(Cgig:0.01,CgigH:0.01):0.49):0.3,(Ococ:0.2,Obas:0.2):0.3), with *M. crystallinum* (Aizoaceae) serving as the outgroup to the cactus clade and the two *Opuntia* species forming a sister pair within Opuntioideae.
+
+Each round of the pipeline began by partitioning the current sequence pool into per-species FASTA files and running OrthoFinder v3.1.3 (Emms & Kelly 2019), which performed an all-versus-all DIAMOND v2.1.24 (Buchfink et al. 2015) search among protein sequences followed by Markov clustering (MCL) to define orthogroups. Orthogroups containing fewer than four genes were excluded from further processing in that round, and their constituent sequences were returned to the outlier pool. All remaining orthogroups were processed independently in parallel through the alignment, tree construction, and pruning stages described below. Genes confirmed as correctly placed within their orthogroup were stored as finalized families; genes identified as outliers were collected into a pool that served as input for the subsequent round.
+
+## 2.X.2 Per-Orthogroup Processing
+
+Protein sequences within each orthogroup were aligned using MAFFT v7.505 (Katoh & Standley 2013) with the --auto flag, which selects the appropriate algorithm based on input size (FFT-NS-2 for larger groups, L-INS-i for smaller ones). The resulting protein alignment was then used as a guide for codon-level alignment via pal2nal (Suyama et al. 2006), which back-translates the protein alignment to nucleotide coordinates while preserving the reading frame and ensuring that indels respect codon boundaries. This protein-guided approach was preferred over direct nucleotide alignment to avoid frameshift-induced misalignment.
+
+Prior to codon alignment, the pipeline filtered out genes whose protein sequences contained internal stop codons (asterisk characters not at the C-terminus), as these indicate annotation errors such as frameshifts or pseudogene mis-predictions and cause pal2nal to fail. In the five-species dataset, 161 *O. cochenillifera* genes and 15 *M. crystallinum* genes (approximately 0.12% of total input) were affected. Filtered genes were logged and excluded from codon alignment; when codon alignment failed entirely for an orthogroup due to insufficient remaining sequences, the pipeline fell back to protein-based tree construction.
+
+Gene trees were inferred using FastTree v2.1 (Price et al. 2010). For codon alignments, the general time-reversible model with gamma-distributed rate heterogeneity was applied (FastTree -nt -gtr -gamma). When codon alignment was unavailable and the protein alignment was used instead, FastTree was run in protein mode with the JTT+CAT model and gamma correction (FastTree -gamma). Codon-based trees were preferred because synonymous substitutions, visible only at the nucleotide level, provide additional phylogenetic signal that protein alignments discard. This is particularly important for recently diverged species such as *O. cochenillifera* and *O. basilaris*, where protein sequences may be nearly identical but codon usage patterns have diverged measurably.
+
+## 2.X.3 Species-Aware Pruning
+
+Phylogenetically misplaced genes were identified and removed from each orthogroup using a species-aware distance ratio algorithm. For each gene *i* in the gene tree, the outlier score was computed as:
+
+S(*i*) = median over all *j* where *j* is not equal to *i* and sp(*i*) is not equal to sp(*j*) of [ d_obs(*i*, *j*) / d_exp(sp(*i*), sp(*j*)) ]
+
+where d_obs(*i*, *j*) is the pairwise patristic distance between genes *i* and *j* in the gene tree, d_exp(sp(*i*), sp(*j*)) is the pairwise patristic distance between the species of genes *i* and *j* in the species tree, and sp(*i*) denotes the species assignment of gene *i*. Same-species comparisons (paralogs within one species) were excluded from the calculation, and pruning was only applied to orthogroups containing genes from at least three species to ensure sufficient interspecific comparisons. Genes with S(*i*) exceeding a threshold of 5.0 were classified as outliers and removed from the orthogroup.
+
+Several design choices in this algorithm merit justification. Pairwise patristic distances were used rather than root-to-tip distances to ensure that the metric is independent of tree rooting, which is often uncertain for gene trees. The ratio to species tree distance normalizes for expected phylogenetic divergence, so that gene pairs from distantly related species (e.g., *M. crystallinum* and *O. cochenillifera*, with a species tree distance of approximately 1.0 substitutions per site) are not systematically scored higher than pairs from closely related species (e.g., Cgig and CgigH, with a distance of 0.02). The median was chosen over the mean because it is robust to individual outlier pairs: a single misplaced gene elsewhere in the tree does not inflate the score for an otherwise correctly placed gene. The threshold of 5.0 requires that a gene's median observed-to-expected distance ratio exceed fivefold the species tree expectation before removal, providing a conservative filter that avoids excessive pruning.
+
+After pruning, the confirmed members of each orthogroup were re-aligned (MAFFT protein alignment followed by pal2nal codon alignment) and a clean gene tree was reconstructed. This re-alignment step removes alignment artifacts introduced by the now-removed outlier sequences, producing curated alignments and trees suitable for downstream evolutionary analyses.
+
+## 2.X.4 Convergence and Iterative Rounds
+
+The iterative loop terminated when any of three convergence criteria were met: (1) the maximum number of rounds (10) was reached; (2) no new families were produced for two consecutive rounds, indicating that the pipeline had stabilized; or (3) the outlier pool dropped below five sequences, indicating exhaustion of the unplaced gene pool.
+
+In the five-species analysis, the pipeline ran for all 10 rounds. Round 1 produced 16,250 families from the full input of 143,961 sequences, capturing 92.3% of the final family count. Subsequent rounds (R2 through R10) added 1,346 additional families for a cumulative total of 17,596 confirmed gene families. The outlier pool decreased from 23,707 sequences after round 1 to 13,963 after round 10, at which point it had stabilized. The majority of remaining outliers belonged to orthogroups with fewer than four members (below the minimum size threshold) or represented species-specific orphan genes with no detectable homologs in the panel.
+
+The iterative approach proved essential for recovering biologically important gene families. An estimated 33 CAM (Crassulacean Acid Metabolism) pathway genes were placed into correct families only through rounds 2 through 10, having been pruned as outliers or misassigned during round 1. Notable examples included NADP-Me3, Snrk2.3, CIPK24, Ers1/Etr1, and Myb61 (recovered in rounds 2 through 4) and Hkl1 (recovered in round 9). These genes would have been lost or incorrectly assigned in a single-pass OrthoFinder analysis.
+
+## 2.X.5 HMMER Profile-Based Rescue
+
+After convergence of the iterative clustering pipeline, 13,963 genes (9.7% of the input) remained unplaced. Many of these were expected to be true members of confirmed families but too divergent for DIAMOND pairwise sequence comparison to detect homology. To recover these genes, we employed a profile-based rescue strategy using HMMER v3.2.1 (Eddy 2011).
+
+HMM profiles were built from the confirmed protein alignments of all 17,596 families using hmmbuild. The unplaced gene sequences were then searched against the complete set of family profiles using hmmsearch with an E-value threshold of 1 x 10^-5. Each gene was assigned to the family producing the lowest E-value hit, provided that the hit fell below the threshold. Genes assigned to existing families through this rescue step were incorporated into their respective families, after which the affected families were re-aligned and their gene trees were reconstructed to account for the new members.
+
+This approach rescued 6,358 genes (45.5% of the unplaced pool) into existing families. The rescued genes were distributed across all five species: *O. cochenillifera* (1,692 genes), *C. gigantea* Helixer (1,573), *O. basilaris* (1,262), *C. gigantea* MAKER (1,099), and *M. crystallinum* (732). The disproportionate number of rescued genes from *O. cochenillifera* and CgigH is consistent with the higher fragmentation and divergence observed in those annotations.
+
+The biological significance of the HMMER rescue step was demonstrated by its recovery of CAM pathway genes that had eluded all 10 rounds of iterative DIAMOND-based clustering. Of nine initially unplaced *M. crystallinum* CAM genes, eight were successfully assigned to existing families by HMMER: Mcr2G22880 (CKB1; E = 1.7 x 10^-147), Mcr4G10250 (Pfk5; E = 2 x 10^-158), Mcr1G03910 (Nst; E = 5.2 x 10^-76), Mcr1G01450 (VhaE; E = 8.5 x 10^-73), Mcr5G24020 (VhaB; E = 1.4 x 10^-59), Mcr1G10640 (Cbl3; E = 3.7 x 10^-34), Mcr9G21470 (Lda1; E = 1.2 x 10^-9), and Mcr5G21920 (FAR1; E = 2.6 x 10^-8). The single unrescued gene, Mcr4G19500 (Gln1/Gln2), was a truncated gene model of only 78 amino acids, below the length at which profile-based methods can reliably establish homology.
+
+The success of the HMMER rescue step reflects a fundamental difference between pairwise and profile-based homology search strategies. DIAMOND compares individual sequence pairs and requires that a query share sufficient similarity with at least one database sequence to produce a significant hit. For highly divergent homologs, no single pairwise comparison may exceed the significance threshold even when the gene clearly belongs to the family based on its overall domain architecture. HMM profiles, by contrast, encode position-specific amino acid frequencies and gap penalties derived from the entire multiple sequence alignment of a family, enabling them to detect conserved structural and functional motifs even in sequences that have diverged substantially from any individual family member.
+
+## 2.X.6 Software and Parameters
+
+All analyses were performed on the PGL computing cluster. The software tools, versions, and key parameters used in the gene family construction pipeline are summarized in the table below.
+
+| Software | Version | Purpose | Key Parameters |
+|---|---|---|---|
+| OrthoFinder | 3.1.3 | Ortholog inference (DIAMOND + MCL) | Default MCL inflation; --ignore-warnings removed for DIAMOND 2.1.24 compatibility |
+| DIAMOND | 2.1.24 | All-versus-all sequence similarity search | Default sensitivity (bundled with OrthoFinder) |
+| MAFFT | 7.505 | Multiple protein sequence alignment | --auto (algorithm auto-selection) |
+| pal2nal | --- | Protein-guided codon alignment | Default parameters |
+| FastTree | 2.1 | Maximum-likelihood gene tree inference | -nt -gtr -gamma (nucleotide); -gamma (protein) |
+| HMMER | 3.2.1 | Profile-based sequence search and rescue | hmmbuild defaults; hmmsearch E < 1 x 10^-5 |
+| ete4 | 4.3.0 | Phylogenetic tree manipulation and distance computation | --- |
+| Biopython | --- | Sequence file I/O | --- |
+| IQ-TREE | --- | Alternative tree builder (not used by default) | -m GTR+G -bb 1000 |
+| PAML/codeml | --- | Selection analysis on confirmed families | Site models (Yang 2007) |
+
+A compatibility issue between OrthoFinder v3.1.3 and DIAMOND v2.1.24 required removal of the --ignore-warnings flag from OrthoFinder's internal configuration file (orthofinder/run/config.json), as this flag is not recognized by DIAMOND v2.1.24. The MAFFT_BINARIES environment variable was automatically cleared at pipeline startup to prevent conflicts with conda-installed binaries.
+
+Pipeline parameters were set as follows: maximum rounds, 10; minimum orthogroup size, 4 genes; species-aware pruning threshold (tau), 5.0; TreeShrink quantile, 0.05 (when available; TreeShrink was not used in the reported analysis due to a Python version incompatibility); convergence criterion for consecutive rounds without new families, 2; minimum outlier pool size for continuation, 5 sequences; HMMER rescue E-value threshold, 1 x 10^-5. Per-orthogroup processing was parallelized across 8 workers, and OrthoFinder was run with 8 threads for the DIAMOND search phase. The complete configuration used for the five-species analysis is provided in the file config_5sp.json in the pipeline repository.

@@ -78,6 +78,14 @@ def parse_args():
         help="Run codeml on confirmed families after pipeline completes",
     )
     parser.add_argument(
+        "--no-hmmer-rescue", action="store_true",
+        help="Disable HMMER rescue step for unplaced genes",
+    )
+    parser.add_argument(
+        "--hmmer-evalue", type=float, default=None,
+        help="E-value threshold for HMMER rescue (default: 1e-5)",
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Enable debug logging",
     )
@@ -106,6 +114,10 @@ def main():
         config.tree_builder = args.tree_builder
     if args.run_codeml:
         config.run_codeml = True
+    if args.no_hmmer_rescue:
+        config.hmmer_rescue = False
+    if args.hmmer_evalue is not None:
+        config.hmmer_evalue = args.hmmer_evalue
 
     # Setup logging
     import logging
