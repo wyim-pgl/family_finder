@@ -107,6 +107,7 @@ def run_codeml(ctl_path: Path, work_dir: Path, config: Config) -> Path:
         cwd=str(work_dir),
         capture_output=True,
         text=True,
+        timeout=3600,
     )
 
     if result.returncode != 0:
@@ -132,9 +133,13 @@ def run_codeml_on_families(
 
     for family_id in sorted(families.keys()):
         # Locate the codon alignment and tree from the family's round directory
-        parts = family_id.split("_", 1)
-        round_num = int(parts[0][1:])
-        og_id = parts[1]
+        try:
+            parts = family_id.split("_", 1)
+            round_num = int(parts[0][1:])
+            og_id = parts[1]
+        except (ValueError, IndexError):
+            logger.warning(f"Skipping {family_id}: cannot parse family_id")
+            continue
 
         base_dir = outdir.parent / f"round_{round_num:02d}" / "orthogroups" / og_id
         codon_aln = base_dir / "confirmed_codon.afa"

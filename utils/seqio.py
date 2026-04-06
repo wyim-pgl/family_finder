@@ -17,7 +17,7 @@ def read_fasta_dir(directory: str) -> Dict[str, str]:
     """Read all FASTA files in a directory, return combined dict of id -> sequence."""
     seqs = {}
     dirpath = Path(directory)
-    for ext in ("*.fa", "*.fasta", "*.faa", "*.pep"):
+    for ext in ("*.fa", "*.fasta", "*.faa", "*.pep", "*.fna", "*.fas", "*.cds"):
         for fpath in dirpath.glob(ext):
             seqs.update(read_fasta(str(fpath)))
     return seqs
@@ -47,7 +47,10 @@ def split_by_species(
     Gene IDs are expected as SpeciesPrefix{delimiter}GeneID.
     Returns path to the output directory containing per-species files.
     """
+    import shutil
     outpath = Path(outdir)
+    if outpath.exists():
+        shutil.rmtree(outpath)
     outpath.mkdir(parents=True, exist_ok=True)
 
     species_seqs: Dict[str, Dict[str, str]] = {}

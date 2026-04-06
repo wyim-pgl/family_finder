@@ -141,7 +141,12 @@ def _species_aware_filter(
     Returns set of outlier gene IDs.
     """
     tree = Tree(Path(tree_path).read_text().strip())
-    leaves = [l for l in tree.leaves() if l.name in gene_ids]
+    # Prune tree to surviving genes so distances aren't distorted by removed taxa
+    surviving = [l for l in tree.leaves() if l.name in gene_ids]
+    if len(surviving) < 2:
+        return set()
+    tree.prune(surviving)
+    leaves = list(tree.leaves())
 
     outlier_scores = {}
     for leaf_i in leaves:

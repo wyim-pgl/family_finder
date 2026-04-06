@@ -291,10 +291,12 @@ def run(
 
         if rounds_with_no_new >= config.convergence_no_new_families:
             logger.info(f"Converged: no new families for {rounds_with_no_new} consecutive rounds")
+            current_pool = new_outlier_pool
             break
 
         if len(new_outlier_pool) < config.convergence_threshold:
             logger.info(f"Converged: outlier pool ({len(new_outlier_pool)}) below threshold ({config.convergence_threshold})")
+            current_pool = new_outlier_pool
             break
 
         current_pool = new_outlier_pool

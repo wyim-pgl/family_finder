@@ -34,7 +34,12 @@ def run_orthofinder(input_dir: Path, output_dir: Path, config: Config) -> Path:
         "-o", str(output_dir),
     ]
     if config.orthofinder_extra_args:
-        cmd.extend(config.orthofinder_extra_args.split())
+        extra = config.orthofinder_extra_args.split()
+        blocked = {"-o", "--output", "-f", "--fasta"}
+        for arg in extra:
+            if arg in blocked:
+                raise ValueError(f"orthofinder_extra_args contains blocked flag: {arg}")
+        cmd.extend(extra)
 
     logger.info(f"Running OrthoFinder: {' '.join(cmd)}")
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

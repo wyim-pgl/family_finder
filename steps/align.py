@@ -36,12 +36,19 @@ def align_protein(seqs: Dict[str, str], outpath: Path, config: Config) -> Path:
 
     logger.debug(f"Running MAFFT: {' '.join(cmd)}")
 
-    with open(outpath, "w") as out_f:
-        result = subprocess.run(cmd, stdout=out_f, stderr=subprocess.PIPE, text=True)
+    tmp_out = outpath.parent / f".{outpath.name}.tmp"
+    try:
+        with open(tmp_out, "w") as out_f:
+            result = subprocess.run(cmd, stdout=out_f, stderr=subprocess.PIPE, text=True, timeout=1800)
 
-    if result.returncode != 0:
-        logger.error(f"MAFFT failed for {input_fa}:\n{result.stderr}")
-        raise RuntimeError(f"MAFFT failed with return code {result.returncode}")
+        if result.returncode != 0:
+            logger.error(f"MAFFT failed for {input_fa}:\n{result.stderr}")
+            raise RuntimeError(f"MAFFT failed with return code {result.returncode}")
+
+        tmp_out.rename(outpath)
+    except BaseException:
+        tmp_out.unlink(missing_ok=True)
+        raise
 
     return outpath
 
@@ -134,7 +141,7 @@ def codon_align(
 
     logger.debug(f"Running pal2nal: {' '.join(cmd)}")
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
     if result.returncode != 0:
         logger.warning(f"pal2nal failed:\n{result.stderr[:300]}")

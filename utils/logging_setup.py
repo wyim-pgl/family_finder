@@ -8,6 +8,7 @@ from pathlib import Path
 def setup_logging(outdir: Path, level: int = logging.INFO) -> logging.Logger:
     logger = logging.getLogger("family_finder")
     logger.setLevel(level)
+    logger.handlers.clear()
 
     formatter = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
