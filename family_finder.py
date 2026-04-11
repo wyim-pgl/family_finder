@@ -86,6 +86,14 @@ def parse_args():
         help="E-value threshold for HMMER rescue (default: 1e-5)",
     )
     parser.add_argument(
+        "--no-pseudogene-detection", action="store_true",
+        help="Disable post-convergence pseudogene detection",
+    )
+    parser.add_argument(
+        "--pseudogene-species", type=str, default=None,
+        help="Restrict pseudogene analysis to one species (e.g., Ococ)",
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Enable debug logging",
     )
@@ -118,6 +126,10 @@ def main():
         config.hmmer_rescue = False
     if args.hmmer_evalue is not None:
         config.hmmer_evalue = args.hmmer_evalue
+    if args.no_pseudogene_detection:
+        config.pseudogene_detection = False
+    if args.pseudogene_species is not None:
+        config.pseudogene_species_filter = args.pseudogene_species
 
     # Setup logging
     import logging

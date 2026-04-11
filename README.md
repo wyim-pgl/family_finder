@@ -12,6 +12,8 @@ Round 2: Outliers → OrthoFinder → per-OG align/tree/prune → new families +
 Round N: Repeat until convergence
                                           ↓
 HMMER Rescue: Unplaced genes → hmmsearch vs family HMM profiles → rescued into existing families
+                                          ↓
+Pseudogene Detection (optional): All genes scored across 6 evidence types → candidates classified high/medium/low
 ```
 
 ### Why iterative?
@@ -96,6 +98,130 @@ Of 9 initially unplaced CAM pathway genes from *M. crystallinum*, 8 were rescued
 | Mcr5G21920 | FAR1 | R1_OG0000605 | 2.6e-8 |
 
 The single unrescued gene, Mcr4G19500 (Gln1/Gln2, 78 aa), is a truncated gene model too short for reliable profile matching.
+
+## Pseudogene Detection (Optional)
+
+After iterative clustering and HMMER rescue, the pipeline can optionally identify pseudogene candidates across the genome. Pseudogenes -- genes that have lost their protein-coding function -- are common in plant genomes but are often mis-annotated as functional genes. Detecting them improves downstream analyses (e.g., gene family size comparisons, selection tests) by separating functional genes from non-functional copies.
+
+Pseudogene detection is **enabled by default** but can be disabled with `--no-pseudogene-detection` or by setting `"pseudogene_detection": false` in the config. It can also be run standalone via `find_pseudogenes.py` on a completed pipeline output.
+
+### Evidence types
+
+The detector examines six independent lines of evidence. Each gene accumulates an evidence vector, and only genes with at least one positive signal are reported as candidates.
+
+| Evidence | What it detects | Threshold |
+|---|---|---|
+| Internal stop codons | Premature termination codons in the protein sequence — direct loss-of-function evidence | Any internal `*` |
+| CDS/protein length discrepancy | CDS length differs from protein×3 by >10% — frameshifts or assembly errors | \|ratio - 1.0\| > 0.1 |
+| Truncated gene | Gene shorter than 50% of its family's median length — partial gene model | < 50% of family median |
+| Orphan gene | Unplaced after all clustering rounds + HMMER rescue — likely pseudogene or foreign (HGT) | Not in any family |
+| GC3 composition outlier | 3rd-codon-position GC% deviates >3 SD from species mean — compositional drift from pseudogenization or HGT | \|z-score\| > 3.0 |
+| Long branch length | Branch length in gene tree >3x median — accelerated evolution from relaxed selection | distance ratio > 3.0 |
+
+### Confidence scoring
+
+Each evidence type carries a weight reflecting its biological informativeness:
+
+| Evidence | Weight | Rationale |
+|---|---|---|
+| Internal stop codons | 0.40 | Direct evidence of loss of function |
+| CDS/protein length mismatch | 0.35 | Frameshift or assembly error |
+| Truncated gene | 0.30 | Partial gene model |
+| Orphan gene | 0.25 | Unplaced genes are usually pseudogenes or foreign (HGT) |
+| GC3 composition outlier | 0.25 | Compositional drift indicates pseudogenization or HGT |
+| Long branch length | 0.20 | Accelerated evolution (could also be positive selection) |
+
+The **confidence score** is the sum of applicable weights, capped at 1.0. Classification uses score-based thresholds:
+
+| Classification | Criteria | Interpretation |
+|---|---|---|
+| `pseudogene_high` | score ≥ 0.50 | Multiple evidence lines — highly likely pseudogene |
+| `pseudogene_medium` | score ≥ 0.25 | Single meaningful evidence (orphan, truncated, stop codon, GC3 outlier) |
+| `pseudogene_low` | score > 0 | Only long branch (0.20) — weak signal, may be under positive selection |
+| `functional` | score = 0 | No pseudogene evidence |
+
+### Usage
+
+**Integrated mode (optional, enabled by default):**
+
+```bash
+# Standard run — pseudogene detection runs automatically
+python family_finder.py \
+  --protein-dir data/pep --cds-dir data/cds \
+  --species-tree data/species_tree.nwk \
+  --outdir output_5sp --threads 8 --verbose
+
+# Restrict pseudogene analysis to one species
+python family_finder.py ... --pseudogene-species Ococ
+
+# Disable pseudogene detection entirely
+python family_finder.py ... --no-pseudogene-detection
+```
+
+**Standalone mode:** Run on an already-completed pipeline output directory (must contain `summary.tsv`):
+
+```bash
+# Single species
+python find_pseudogenes.py \
+  --protein-dir data/pep --cds-dir data/cds \
+  --outdir output_5sp --species Ococ
+
+# All species with custom truncation threshold
+python find_pseudogenes.py \
+  --protein-dir data/pep --cds-dir data/cds \
+  --outdir output_5sp --truncation-threshold 0.4
+```
+
+### Output files
+
+All pseudogene output is written to `<outdir>/pseudogene_analysis/`:
+
+| File | Description |
+|---|---|
+| `pseudogene_candidates.tsv` | Full candidate list with all evidence columns and confidence score |
+| `pseudogene_summary.txt` | Human-readable statistics: classification breakdown, evidence type counts |
+| `pseudogene_candidates.pep.fa` | Protein sequences of all candidates |
+| `pseudogene_candidates.cds.fa` | CDS sequences of all candidates |
+| `pseudogene_candidates.bed` | BED file for genome browser (red=high, orange=medium, yellow=low) |
+| `family_pseudogene_enrichment.tsv` | Per-family pseudogene concentration |
+| `chromosomal_distribution.tsv` | Per-chromosome pseudogene density |
+| `species_comparison.tsv` | Cross-species pseudogene rates (all-species mode only) |
+
+### GFF3 filtering
+
+Use the pseudogene results to create a clean GFF3 without pseudogenes:
+
+```python
+# Example: filter pseudogenes from GFF3
+pseudo_ids = set()
+with open("output_5sp/pseudogene_analysis/pseudogene_candidates_Ococ.tsv") as f:
+    f.readline()  # skip header
+    for line in f:
+        parts = line.strip().split("\t")
+        if parts[2].startswith("pseudogene"):  # all confidence levels
+            pseudo_ids.add(parts[0].split("_", 1)[1])  # strip species prefix
+
+# Then filter GFF3 lines where gene ID is in pseudo_ids
+```
+
+### Config parameters
+
+| Parameter | Type | Default | CLI flag | Description |
+|---|---|---|---|---|
+| `pseudogene_detection` | bool | `true` | `--no-pseudogene-detection` | Enable/disable pseudogene detection |
+| `pseudogene_truncation_threshold` | float | `0.5` | — | Flag genes shorter than this fraction of family median |
+| `pseudogene_species_filter` | string | `""` | `--pseudogene-species` | Restrict to one species (e.g., `"Ococ"`) |
+
+### Results (5-species run, *O. cochenillifera*)
+
+| Classification | Count | % of 33,745 genes |
+|---|---|---|
+| `pseudogene_high` | 181 | 0.5% |
+| `pseudogene_medium` | 4,020 | 11.9% |
+| `pseudogene_low` | 142 | 0.4% |
+| **Total candidates** | **4,343** | **12.9%** |
+
+Top evidence types: orphan/unplaced (2,639), truncated (1,200), GC3 outlier (365), long branch (166), internal stops (161).
 
 ## Installation
 
@@ -323,6 +449,8 @@ python family_finder.py \
 | `--run-codeml` | — | Run PAML/codeml on confirmed families |
 | `--no-hmmer-rescue` | — | Disable HMMER rescue step after convergence |
 | `--hmmer-evalue` | 1e-5 | E-value threshold for HMMER rescue |
+| `--no-pseudogene-detection` | — | Disable post-convergence pseudogene detection |
+| `--pseudogene-species` | — | Restrict pseudogene analysis to one species (e.g., `Ococ`) |
 | `--verbose` | — | Debug logging |
 
 ### JSON config
@@ -372,6 +500,15 @@ outdir/
   hmmer_rescue/
     family_profiles/           # HMM profiles per family
     rescue_summary.tsv         # gene_id, best_family, evalue
+  pseudogene_analysis/
+    pseudogene_candidates.tsv  # All candidates with evidence columns
+    pseudogene_summary.txt     # Human-readable statistics
+    pseudogene_candidates.pep.fa  # Protein sequences of candidates
+    pseudogene_candidates.cds.fa  # CDS sequences of candidates
+    pseudogene_candidates.bed  # BED file for genome browser
+    family_pseudogene_enrichment.tsv  # Per-family pseudogene rates
+    chromosomal_distribution.tsv      # Per-chromosome density
+    species_comparison.tsv            # Cross-species rates
   final_families/              # All confirmed families (incl. HMMER-rescued genes)
   summary.tsv                  # family_id, round, n_genes, n_species, gene_list
   pipeline.log
@@ -514,6 +651,7 @@ Addressed issues found during the 5-species (143K sequences) production run:
 ```
 family_finder/
   family_finder.py          # CLI entry point
+  find_pseudogenes.py       # Standalone pseudogene detection script
   config.py                 # Config dataclass + JSON loader
   pipeline.py               # Iterative loop orchestrator
   steps/
@@ -523,6 +661,7 @@ family_finder/
     prune.py                 # TreeShrink + species-aware pruning
     codeml.py                # PAML/codeml wrapper
     hmmer_rescue.py          # HMMER profile-based rescue of unplaced genes
+    pseudogene.py            # Pseudogene detection (evidence collection + reporting)
   utils/
     seqio.py                 # FASTA I/O, species splitting
     species.py               # Species tree loading, pairwise distances

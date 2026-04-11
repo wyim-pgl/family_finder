@@ -319,8 +319,55 @@ def run(
             config=config,
         )
 
-    # Final: Assemble all confirmed families
+    # Final: Assemble all confirmed families (must run before pseudogene detection
+    # so that final_families/ tree files are available for branch-length scanning)
     _write_final_output(all_confirmed_families, current_pool, cds_pool, outdir, config)
+
+    # Pseudogene detection (post-convergence, after final output is written)
+    if config.pseudogene_detection:
+        logger.info("=== Pseudogene Detection ===")
+        from steps.pseudogene import (
+            detect_pseudogenes,
+            write_pseudogene_report,
+            write_pseudogene_summary,
+            write_pseudogene_fasta,
+            write_family_pseudogene_report,
+            write_species_comparison,
+            write_pseudogene_bed,
+            write_chromosomal_distribution,
+        )
+
+        # Rebuild full protein pool for analysis
+        from utils.seqio import build_seq_map as _build_seq_map
+        full_prot = _build_seq_map(protein_dir)
+
+        sp_filter = config.pseudogene_species_filter or None
+
+        n_analyzed = len(full_prot)
+        if sp_filter:
+            n_analyzed = sum(
+                1 for gid in full_prot
+                if gid.split(config.species_delimiter, 1)[0] == sp_filter
+            )
+
+        evidence = detect_pseudogenes(
+            protein_seqs=full_prot,
+            cds_seqs=cds_pool,
+            families=all_confirmed_families,
+            outdir=outdir,
+            config=config,
+            species_filter=sp_filter,
+        )
+
+        pseudo_dir = outdir / "pseudogene_analysis"
+        write_pseudogene_report(evidence, pseudo_dir / "pseudogene_candidates.tsv", sp_filter)
+        write_pseudogene_summary(evidence, pseudo_dir / "pseudogene_summary.txt", n_analyzed, sp_filter)
+        write_pseudogene_fasta(evidence, full_prot, cds_pool, pseudo_dir)
+        write_family_pseudogene_report(evidence, all_confirmed_families, pseudo_dir / "family_pseudogene_enrichment.tsv")
+        if not sp_filter:
+            write_species_comparison(evidence, full_prot, all_confirmed_families, pseudo_dir / "species_comparison.tsv", config.species_delimiter)
+        write_pseudogene_bed(evidence, pseudo_dir / "pseudogene_candidates.bed")
+        write_chromosomal_distribution(evidence, full_prot, pseudo_dir / "chromosomal_distribution.tsv", sp_filter, config.species_delimiter)
 
     logger.info(f"Pipeline complete: {len(all_confirmed_families)} total families across {round_num} rounds")
 

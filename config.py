@@ -50,6 +50,11 @@ class Config:
     run_codeml: bool = False
     codeml_models: list = field(default_factory=lambda: ["M0", "M1a", "M2a", "M7", "M8"])
 
+    # Pseudogene detection
+    pseudogene_detection: bool = True
+    pseudogene_truncation_threshold: float = 0.5  # flag if gene < 50% of family median
+    pseudogene_species_filter: str = ""           # restrict to one species (e.g. "Ococ")
+
     # Gene ID format: species extracted from prefix before this delimiter
     species_delimiter: str = "_"
 
