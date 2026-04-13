@@ -523,7 +523,139 @@ family_id    round    n_genes    n_species    gene_list
 R1_OG0002940    1    9    5    CgigH_...,Cgig_...,Mcry_...,Obas_...,Ococ_...
 ```
 
-## Example: 5-species cactus CAM gene analysis
+## Examples
+
+### Example 1: Standard 5-species run
+
+Build gene families across 5 species with all defaults (HMMER rescue + pseudogene detection enabled):
+
+```bash
+python family_finder.py \
+  --protein-dir data/pep \
+  --cds-dir data/cds \
+  --species-tree data/species_tree.nwk \
+  --outdir output_5sp \
+  --config config_5sp.json \
+  --threads 8 \
+  --verbose
+```
+
+### Example 2: Resume after interruption
+
+```bash
+python family_finder.py \
+  --protein-dir data/pep --cds-dir data/cds \
+  --species-tree data/species_tree.nwk \
+  --outdir output_5sp --resume --threads 8
+```
+
+### Example 3: Pseudogene detection only (standalone)
+
+Run on a completed pipeline output without re-running the full pipeline:
+
+```bash
+# All species
+python find_pseudogenes.py \
+  --protein-dir data/pep --cds-dir data/cds \
+  --outdir output_5sp
+
+# Single species (Opuntia cochenillifera)
+python find_pseudogenes.py \
+  --protein-dir data/pep --cds-dir data/cds \
+  --outdir output_5sp --species Ococ
+```
+
+### Example 4: Filter pseudogenes from GFF3
+
+Create a clean GFF3 by removing pseudogene candidates detected by the pipeline:
+
+```python
+# filter_pseudogenes.py
+pseudo_ids = set()
+with open("output_5sp/pseudogene_analysis/pseudogene_candidates_Ococ.tsv") as f:
+    f.readline()  # skip header
+    for line in f:
+        parts = line.strip().split("\t")
+        cls = parts[2]
+        if cls.startswith("pseudogene"):  # all confidence levels
+            # Strip species prefix: "Ococ_OcoChr01G00010" -> "OcoChr01G00010"
+            pseudo_ids.add(parts[0].split("_", 1)[1])
+
+skip_gene = False
+with open("Ococ/Oco_clean.gff3") as fin, open("Ococ/Oco_nopseudo.gff3", "w") as fout:
+    for line in fin:
+        if line.startswith("#"):
+            fout.write(line); continue
+        parts = line.strip().split("\t")
+        if len(parts) < 9:
+            fout.write(line); continue
+        if parts[2] == "gene":
+            gene_id = next((a[3:] for a in parts[8].split(";") if a.startswith("ID=")), None)
+            skip_gene = gene_id in pseudo_ids
+            if not skip_gene:
+                fout.write(line)
+        elif not skip_gene:
+            fout.write(line)
+```
+
+To extract a pseudogene-only GFF3 (with classification annotations):
+
+```python
+# Same setup, but invert the logic:
+if parts[2] == "gene" and gene_id in pseudo_ids:
+    cls, score = pseudo_meta[gene_id]
+    parts[8] = f"{parts[8]};pseudogene_class={cls};confidence={score}"
+    fout.write("\t".join(parts) + "\n")
+```
+
+### Example 5: Disable pseudogene detection
+
+For runs where you only need gene families (no pseudogene analysis):
+
+```bash
+python family_finder.py \
+  --protein-dir data/pep --cds-dir data/cds \
+  --species-tree data/species_tree.nwk \
+  --outdir output_5sp --no-pseudogene-detection
+```
+
+### Example 6: Adjust pruning strictness
+
+For divergent species (e.g., paleopolyploids), loosen the distance ratio threshold:
+
+```bash
+python family_finder.py \
+  --protein-dir data/pep --cds-dir data/cds \
+  --species-tree data/species_tree.nwk \
+  --outdir output_loose --threshold 8.0 --threads 16
+```
+
+### Example 7: IQ-TREE for higher-quality trees
+
+Slower but more accurate gene trees with bootstrap support:
+
+```bash
+python family_finder.py \
+  --protein-dir data/pep --cds-dir data/cds \
+  --species-tree data/species_tree.nwk \
+  --outdir output_iqtree --tree-builder iqtree --threads 16
+```
+
+### Example 8: Run codeml selection analysis
+
+Compute dN/dS for each confirmed family using PAML:
+
+```bash
+python family_finder.py \
+  --protein-dir data/pep --cds-dir data/cds \
+  --species-tree data/species_tree.nwk \
+  --outdir output_5sp --run-codeml
+# Results in: output_5sp/codeml/<family_id>/<model>/results.txt
+```
+
+---
+
+## Example Results: 5-species cactus CAM gene analysis
 
 Input: 4 cactus species + 1 alternative annotation
 
@@ -574,6 +706,57 @@ CgigH (Helixer annotation) recovered PPC4 and PPCK genes that were present but u
 - **R9:** Hkl1
 
 These genes would have been lost in a single-pass OrthoFinder analysis.
+
+### Pseudogene detection results
+
+Cross-species comparison from `species_comparison.tsv`:
+
+| Species | Total Genes | Placed | Orphan | Pseudo High | Pseudo Medium | Pseudo Low | Pseudo Total | Pseudo Rate |
+|---|---|---|---|---|---|---|---|---|
+| *C. gigantea* (MAKER) | 29,163 | 27,465 | 1,698 | 0 | 916 | 2,110 | 3,026 | 10.4% |
+| *C. gigantea* (Helixer) | 27,583 | 24,086 | 3,497 | 0 | 1,451 | 3,792 | 5,243 | 19.0% |
+| *M. cristata* | 25,226 | 21,461 | 3,765 | 0 | 1,522 | 4,027 | 5,549 | 22.0% |
+| *O. basilaris* | 28,244 | 25,880 | 2,364 | 0 | 1,414 | 2,597 | 4,011 | 14.2% |
+| *O. cochenillifera* | 33,745 | 31,106 | 2,639 | 4 | 2,174 | 2,930 | 5,108 | 15.1% |
+
+(values from initial 6-evidence run with strong/weak counting; rerun with the score-based classification produces 181 high / 4,020 medium / 142 low for Ococ — see updated table below).
+
+### Top high-confidence pseudogenes (Ococ)
+
+After re-running with score-based classification (`score >= 0.50`), 181 Ococ genes were classified as `pseudogene_high`. Examples:
+
+| Gene | Confidence | Evidence |
+|---|---|---|
+| Ococ_OcoScaf00040937_210000_219999G00010 | 0.90 | 6 internal stops + truncated (32% of median) + long branch (16.7x) |
+| Ococ_OcoScaf00009120G00010 | 0.90 | 1 internal stop + truncated (38%) + extreme long branch |
+| Ococ_OcoScaf00040926_306000_316999G00010 | 0.90 | 1 internal stop + truncated (21%) + long branch (7.2x) |
+| Ococ_OcoScaf00009117G00010 | 0.85 | 1 internal stop + truncated (30%) + GC3 outlier (z=3.36) |
+
+### Pseudogene-enriched gene families (Ococ)
+
+Top families with the highest pseudogene fractions, from `family_pseudogene_enrichment_Ococ.tsv`:
+
+| Family | Members | Pseudo | Fraction | Avg Confidence |
+|---|---|---|---|---|
+| R2_OG0000680 | 5 | 5 | 100.0% | 0.40 |
+| R2_OG0000040 | 24 | 21 | 87.5% | 0.42 |
+| R2_OG0001015 | 4 | 3 | 75.0% | 0.15 |
+| R1_OG0000467 | 18 | 11 | 61.1% | 0.15 |
+| R2_OG0000678 | 5 | 3 | 60.0% | 0.27 |
+
+These families likely represent dying gene families undergoing recent pseudogenization.
+
+### GFF3 filtering results (Ococ)
+
+Using the pseudogene calls to filter the original annotation:
+
+| File | Genes | Size | Description |
+|---|---|---|---|
+| `Oco_clean.gff3` | 33,745 | 39 MB | Original annotation |
+| `Oco_nopseudo.gff3` | 29,402 | 36 MB | Functional only (all 4,343 pseudogenes removed) |
+| `Oco_pseudogenes.gff3` | 4,343 | 3.3 MB | Pseudogene candidates (with class + confidence attrs) |
+
+This produces a cleaner gene set for downstream analyses (BUSCO, synteny, ortholog inference) by removing 12.9% of mis-annotated or non-functional gene models.
 
 ## Development History & Iterative Improvements
 
