@@ -96,6 +96,21 @@ class Config:
     pseudogene_truncation_threshold: float = 0.5  # flag if gene < 50% of family median
     pseudogene_species_filter: str = ""           # restrict to one species (e.g. "Ococ")
 
+    # Structural tier + annotation layers (issues #17, #18, #20).
+    # The *_cmd fields are command TEMPLATES ("{fasta}"/"{input}"/"{outdir}"
+    # placeholders, shlex-split after formatting) because the cluster tooling
+    # varies (esm-extract vs custom scripts, separate conda envs). Empty
+    # template = that step is unavailable and its wrapper raises.
+    esm_embed_cmd: str = ""    # e.g. "esm-extract esm2_t33_650M_UR50D {fasta} {outdir} --include mean"
+    esmfold_cmd: str = ""      # e.g. "esm-fold -i {fasta} -o {outdir}"
+    foldseek_bin: str = "foldseek"
+    plddt_flag_below: float = 50.0    # mean pLDDT below this -> pseudogene-evidence flag
+    tier3_min_tmscore: float = 0.5    # min alntmscore for a tier-3 structural assignment
+    tier3_margin_tm: float = 0.05     # best-vs-second alntmscore margin (ties -> ambiguous)
+    embed_tiebreak_min_delta: float = 0.02  # mean-cosine margin for the #13 ambiguous tie-break
+    glm_score_cmd: str = ""    # plant gLM adapter (PlantCaduceus/AgroNT/Evo 2), issue #18
+    ecforest_cmd: str = ""     # ESM-ECForest wrapper (own conda env), issue #20
+
     # Gene ID format: species extracted from prefix before this delimiter
     species_delimiter: str = "_"
 
