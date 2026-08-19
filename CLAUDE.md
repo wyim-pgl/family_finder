@@ -4,71 +4,160 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Iterative gene family construction pipeline for comparative genomics. Runs repeated rounds of OrthoFinder clustering → MAFFT alignment → pal2nal codon alignment → FastTree gene tree → species-aware pruning, then a post-convergence HMMER profile rescue step for divergent homologs.
+Iterative gene family construction pipeline for comparative genomics (Caryophyllales:
+cacti + *Mesembryanthemum crystallinum* outgroup). Repeated rounds of OrthoFinder
+clustering → MAFFT alignment → pal2nal codon alignment → FastTree gene tree →
+species-aware pruning, with an optional per-round HMM profile assignment step and a
+post-convergence HMMER rescue. Standalone analysis modules build on the confirmed
+families: pseudogene detection and DeepLoc-retargeting + branch-site dN/dS
+neofunctionalization detection.
 
-## Running the Pipeline
+## Commands
 
 ```bash
-# Activate the conda environment (required for OrthoFinder, MAFFT, FastTree, etc.)
-conda activate orthofinder
-# OR: micromamba activate family_finder
-
-# 5-species run
+# Run the pipeline (needs the conda env for OrthoFinder, MAFFT, FastTree, mcl)
+conda activate orthofinder   # or: micromamba activate family_finder
 python family_finder.py \
   --protein-dir data/pep --cds-dir data/cds \
   --species-tree data/species_tree.nwk \
   --outdir output_5sp --config config_5sp.json --threads 8 --verbose
 
-# 11-species run
-python family_finder.py \
-  --protein-dir data_11sp/pep --cds-dir data_11sp/cds \
-  --species-tree data_11sp/species_tree.nwk \
-  --outdir output_11sp --config config_11sp.json --threads 16 --verbose
-```
+# Tests — run anywhere, NO conda env needed (ete4 is stubbed via sys.modules,
+# external tools are mocked; only pytest + Biopython required)
+python3 -m pytest tests/ -q
+# Single test
+python3 -m pytest tests/test_size_gate.py::test_emits_small_family_when_two_survive_pruning -v
 
-There are no automated tests. The `tests/` directory is empty. To verify the pipeline works, run on a small dataset and check `output/summary.tsv`.
+# Standalone analyses (post-run)
+python find_pseudogenes.py --help
+python find_neofunctionalization.py --help   # stage 1 (--events-only) runs anywhere; stage 2 needs PAML
+```
 
 ## Architecture
 
-The pipeline has a single control flow path:
+Single control-flow path: `family_finder.py` (CLI, env setup) → `pipeline.run()`.
 
-1. **`family_finder.py`** — CLI entry point. Parses args, loads `Config`, calls `pipeline.run()`.
-2. **`pipeline.py`** — Orchestrator. Runs the iterative loop and HMMER rescue. The core worker function `process_single_orthogroup()` is defined here (not in a step module) because it sequences align → tree → prune for a single OG and is called via `parallel_map`.
-3. **`steps/`** — Each file wraps one external tool via `subprocess.run()`:
-   - `orthofinder.py` — runs OrthoFinder, parses `Orthogroups.tsv`
-   - `align.py` — MAFFT protein alignment + pal2nal codon alignment (with internal stop codon filter)
-   - `tree.py` — FastTree or IQ-TREE wrapper (auto-detects nucleotide vs protein)
-   - `prune.py` — two-stage pruning: TreeShrink (if available) then species-aware median-of-ratios
-   - `hmmer_rescue.py` — parallel hmmbuild + hmmsearch + result parsing + re-alignment
-   - `codeml.py` — PAML/codeml wrapper (optional)
-4. **`utils/`** — Pure Python helpers: FASTA I/O (`seqio.py`), species tree distances (`species.py`), `ProcessPoolExecutor` wrapper (`parallel.py`), checkpoint/resume (`checkpoint.py`).
-5. **`config.py`** — Single `@dataclass` with all parameters. Loads from JSON with unknown-key warnings.
+**`pipeline.py`** owns the iterative loop. `process_single_orthogroup()` (align → tree
+→ prune for one OG, called via `utils/parallel.parallel_map`) lives here, not in a step
+module. Each round: split pool by species → OrthoFinder → per-OG processing → collect
+confirmed families and outliers → gene-conservation audit (leaked genes are forced back
+into the pool) → optional profile assignment → outliers become next round's pool.
+Resume reads per-round `round_NN/confirmed_families.tsv` and the newest **completed**
+checkpoint — `summary.tsv` is only written at the very end.
+
+**Assignment tiers** (a gene can be placed by any of):
+1. OrthoFinder DIAMOND+MCL clustering, every round (`steps/orthofinder.py`)
+2. Per-round HMM profile assignment (`steps/profile_assign.py`), opt-in via
+   `profile_assign_per_round: true` — offers pruned/dissolved genes back to existing
+   family profiles BEFORE they re-enter clustering. Decisions use bit scores with
+   coverage + best-vs-second margin; **never compare E-values** (HMMER prints ties —
+   underflow to 0 and 2-sig-fig rounding — and lexicographic order then decides, with
+   `R10_*` sorting before `R1_*`)
+3. Legacy post-convergence rescue (`steps/hmmer_rescue.py`), `hmmer_rescue: true`
+4. Planned: structural tier via ESM/Foldseek (issue #17)
+
+**Two size gates, deliberately different**: `min_orthogroup_size` (4) is the floor to
+*start* align/tree work; `min_family_size` (2) is the floor to *emit* a family after
+pruning. Never dissolve a whole OG because pruning shrank it — that discards genes that
+passed pruning (the historical bug behind outgroup-only families).
+
+**Pruning** (`steps/prune.py`): `prune_criterion: "relative"` (default — terminal
+branches subtracted, per-family median normalization, dual threshold
+`prune_relative_threshold`/`prune_score_floor`) or `"absolute"` (legacy
+`distance_ratio_threshold`). The math lives in pure ete4-free helper functions so it is
+unit-testable. `utils/species.validate_species_tree` runs at pipeline start and raises
+when tree leaves share zero names with data prefixes (which would silently disable
+pruning: every gene scores 0.0).
+
+**`utils/newick.py`** is a self-contained Newick parser + Fitch parsimony + `#1`
+clade-marking used by the retargeting/codeml modules and tests — it exists so that
+analysis code runs without ete4. `steps/prune.py` still uses ete4 (`from ete4 import
+Tree` at module level — tests must stub it, see below).
+
+**Neofunctionalization** (`find_neofunctionalization.py`, issue #16):
+`steps/deeploc.py` (DeepLoc once per proteome, probability vectors cached — dual
+targeting stays ambiguous) → `steps/retargeting.py` (Fitch on family trees, switching
+branches; truncated genes excluded — they fake retargeting) → `steps/codeml.py`
+branch-site Model A vs null, LRT via `erfc` (no scipy), BH-FDR. DeepLoc is an
+annotation layer, never a clustering criterion: families are homology units and
+localization changes within them.
 
 ### Data flow between rounds
 
 ```
 Round N: current_pool (protein seqs) → split_by_species → OrthoFinder
   → per-OG: extract seqs → align → tree → prune → (confirmed, outliers)
-  → all outliers become current_pool for Round N+1
+  → conservation audit → [optional profile assignment against existing families]
+  → outliers become current_pool for Round N+1
 After convergence: unplaced genes → HMMER profiles from families → rescue
+Final output includes unplaced_proteins.fa / unplaced_cds.fa and id_agreement.tsv
 ```
 
 ### Key design choices to know about
 
-- **Gene IDs must be `SpeciesPrefix_GeneID`**. The species is extracted by splitting on the first `_`. This convention is assumed everywhere (seqio, species utils, pruning).
-- **Per-OG sequence subsetting**: Workers receive only their OG's sequences, not the full pool. This was a critical performance fix (143K seqs × pickle per worker was the bottleneck).
-- **Protein tree fallback**: When pal2nal fails (internal stop codons), the pipeline builds a protein-only tree instead of crashing.
-- **HMMER rescue runs once post-convergence**, not per-round. DIAMOND repeatedly fails on the same divergent genes, so re-searching every round adds cost without benefit.
-- **`MAFFT_BINARIES` env var** is popped at module level in both `family_finder.py` and `hmmer_rescue.py` to avoid conda conflicts.
-- **OrthoFinder conda env PATH** is prepended in `family_finder.py` for `mcl`/`diamond` discovery.
+- **Gene IDs must be `SpeciesPrefix_GeneID`** — species is the prefix before the first
+  `_`. Assumed everywhere (seqio, species utils, pruning, all analysis modules).
+- **`codon_align` returns `(path_or_None, removed_ids)`** — the removed set (internal
+  stop codons) must be recycled by callers or the genes vanish from every output.
+- **Per-OG sequence subsetting**: workers receive only their OG's sequences (pickling
+  the 143K-seq pool per worker was the original bottleneck).
+- **Worker logging**: `parallel_map` relays worker log records to the parent via
+  QueueHandler/QueueListener — without it, ProcessPoolExecutor children log into the void.
+- **Protein tree fallback** when pal2nal fails; the same pruning threshold then applies
+  to protein distances.
+- **`MAFFT_BINARIES` env var** is popped at module level in `family_finder.py` and
+  `steps/hmmer_rescue.py` to avoid conda conflicts; `family_finder.py` also prepends the
+  orthofinder conda env to PATH for `mcl`/`diamond` discovery.
+
+## Test conventions
+
+`tests/` uses pytest. ete4 is not installed locally: stub it before importing
+pipeline/prune (`sys.modules["ete4"] = types.ModuleType(...)` — copy the pattern from
+`tests/test_size_gate.py`). External tools (MAFFT, FastTree, hmmer, codeml, DeepLoc)
+are never invoked in tests — wrappers are module-level functions monkeypatched with
+fakes, and parsers are fed synthetic text fixtures. Pure-math helpers (pruning scores,
+coverage merging, Fitch) take plain dicts precisely so they test without dependencies.
+
+## Investigation record
+
+**Read `resume.md` before re-diagnosing any clustering problem.** It records the
+completed Mcry investigation with verdicts: pep/CDS integrity ✗, DIAMOND sensitivity ✗,
+pruning ✗ (for Mcry), taxon sampling ✗ — the confirmed cause is MCL/graph fragmentation
+(90% of failures had strong DIAMOND hits or splinter OGs). It maps every finding to a
+GitHub issue. Diagnostic scripts live on the cluster (`forensics_r8.py`,
+`score_recluster.py`, `task*.py` under `~/scratch/bin/family_finder/`).
 
 ## HPC Environment
 
-This runs on a CentOS 7 HPC cluster at `/data/gpfs/assoc/pgl/bin/family_finder/`. Tool binaries are in conda envs — paths are set in `config_5sp.json` / `config_11sp.json`. The hardcoded PATH in `family_finder.py` points to `/data/gpfs/assoc/pgl/bin/conda/conda_envs/orthofinder/bin`.
+Runs on the Pronghorn cluster (`ssh pronghorn`); run directory
+`~/scratch/bin/family_finder/` (= `/data/gpfs/home/wyim/scratch/bin/family_finder`),
+5-species artifacts in `output_5sp/`. Tool paths are set in `config_5sp.json`
+(conda envs under `/data/gpfs/.../conda_envs/orthofinder`; a separate `iqtree2` env
+exists). SLURM: partition `cpu-s2-core-0`, `--account=cpu-s2-pgl-0`.
+`config_11sp.json` and the data dirs exist only on the cluster, not in this repo.
 
 ## Common Pitfalls
 
-- **OrthoFinder + DIAMOND version mismatch**: OrthoFinder 3.1.3 passes `--ignore-warnings` which DIAMOND 2.1.24 rejects. Must patch OrthoFinder's `config.json`.
-- **TreeShrink requires Python ≤3.9** but OrthoFinder needs 3.11+. Pipeline gracefully skips TreeShrink when unavailable.
-- **Species tree must use substitution-rate branch lengths** (IQ-TREE), not coalescent units (ASTRAL). The pruning algorithm divides observed by expected distances.
-- **Pep/CDS ID mismatch** will silently reduce orthogroup sizes. Always validate IDs match before running.
+- **OrthoFinder 3.1.3 + DIAMOND 2.1.24**: OrthoFinder passes `--ignore-warnings` which
+  this DIAMOND rejects — patch OrthoFinder's `config.json`.
+- **`-og` is accepted by OrthoFinder 3.1.3 but hidden from `-h`** — never probe support
+  by parsing help output. `-og` also suppresses `Comparative_Genomics_Statistics/`
+  (per-species stats); `Orthogroups*.tsv` survive.
+- **Standalone `orthofinder -b` runs need the conda env on PATH** (`mcl` discovery) —
+  only pipeline runs get it injected by `family_finder.py`. sbatch scripts must
+  `export PATH=$HOME/scratch/bin/conda/conda_envs/orthofinder/bin:$PATH`.
+- **Hardlink copies of WorkingDirectory** (`cp -al`, for `-b` sweeps): unlink any
+  pre-existing `OrthoFinder_graph.txt` / `clusters_*` before re-running, or OrthoFinder
+  may reuse a stale graph or open hardlinked originals for write.
+- **Species tree must use substitution-rate branch lengths** (IQ-TREE nucleotide GTR+G
+  to match FastTree `-nt -gtr -gamma`), NOT ASTRAL coalescent units.
+  `validate_species_tree` warns on suspicious scales. The committed
+  `data/species_tree.nwk` values were hand-written; a data-estimated replacement is
+  tracked in issue #14.
+- **Cgig and CgigH are the same *Carnegiea gigantea* genome annotated twice** (MAKER vs
+  Helixer). Their species-tree distance (0.02) makes the legacy absolute pruning
+  criterion eject ~10% of Cgig leaves — measured, see resume.md.
+- **TreeShrink requires Python ≤3.9** (OrthoFinder needs 3.11+); the pipeline warns and
+  skips when unavailable.
+- **OrthoFinder v3 default MCL inflation is 1.2** (not v2's 1.5) — the config default
+  `orthofinder_inflation: 1.2` reproduces it explicitly.
