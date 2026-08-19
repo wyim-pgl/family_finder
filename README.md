@@ -321,12 +321,12 @@ Each species needs one protein file and one CDS file in separate directories:
 
 ```
 data/pep/
-  Mcry.pep.fa      # Mammillaria protein sequences
+  Mcry.pep.fa      # Mesembryanthemum crystallinum protein sequences
   Ococ.pep.fa      # Opuntia cochenillifera proteins
   Cgig.pep.fa      # Carnegiea gigantea proteins
 
 data/cds/
-  Mcry.cds.fa      # Mammillaria CDS sequences
+  Mcry.cds.fa      # Mesembryanthemum crystallinum CDS sequences
   Ococ.cds.fa      # Opuntia cochenillifera CDS
   Cgig.cds.fa      # Carnegiea gigantea CDS
 ```
@@ -661,7 +661,7 @@ Input: 4 cactus species + 1 alternative annotation
 
 | Species | Prefix | Genes | Source |
 |---|---|---|---|
-| *Mammillaria cristata* | Mcry | 25,226 | MAKER |
+| *Mesembryanthemum crystallinum* | Mcry | 25,226 | MAKER |
 | *Opuntia cochenillifera* | Ococ | 33,745 | MAKER |
 | *Opuntia basilaris* | Obas | 28,244 | MAKER |
 | *Carnegiea gigantea* | Cgig | 29,163 | MAKER |

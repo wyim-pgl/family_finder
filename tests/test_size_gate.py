@@ -37,7 +37,7 @@ def _run_og(tmp_path, monkeypatch, confirmed, outliers):
         pipeline, "align_protein",
         lambda seqs, out, cfg: Path(out).write_text("stub") or Path(out),
     )
-    monkeypatch.setattr(pipeline, "codon_align", lambda *a, **k: None)
+    monkeypatch.setattr(pipeline, "codon_align", lambda *a, **k: (None, set()))
     monkeypatch.setattr(
         pipeline, "build_tree",
         lambda aln, out, cfg: Path(out).write_text("(stub);") or Path(out),

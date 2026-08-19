@@ -59,7 +59,7 @@ def process_single_orthogroup(args: tuple):
 
         # 2. Protein alignment (guide) → codon alignment via pal2nal
         prot_aln = align_protein(prot_seqs, og_dir / "proteins.afa", config)
-        codon_aln = codon_align(
+        codon_aln, stop_removed = codon_align(
             og_dir / "proteins.afa", cds_seqs, og_dir / "codon.afa", config
         )
 
@@ -77,6 +77,11 @@ def process_single_orthogroup(args: tuple):
         confirmed, outliers = prune_orthogroup(
             str(tree_path), gene_to_species, expected_distances, config
         )
+
+        # Genes removed by the internal-stop filter are not leaves of the
+        # codon tree: pruning never sees them, so they would land in neither
+        # confirmed nor outliers. Recycle them explicitly (issue #15).
+        outliers = set(outliers) | (set(stop_removed) - set(confirmed))
 
         # 5. If enough confirmed members survive pruning, emit the family.
         # Uses min_family_size (not min_orthogroup_size): dissolving a whole OG
@@ -100,7 +105,9 @@ def process_single_orthogroup(args: tuple):
                 confirmed_prot_aln = align_protein(
                     confirmed_prots, og_dir / "confirmed_proteins.afa", config
                 )
-                confirmed_codon = codon_align(
+                # Genes removed here stay members of the family (they passed
+                # pruning); they are only excluded from the codon alignment.
+                confirmed_codon, _ = codon_align(
                     og_dir / "confirmed_proteins.afa",
                     confirmed_cds,
                     og_dir / "confirmed_codon.afa",
@@ -128,6 +135,125 @@ def process_single_orthogroup(args: tuple):
     except Exception as e:
         logger.error(f"Failed to process {og_id}: {e}")
         return (og_id, None, set(gene_ids))
+
+
+def _audit_gene_conservation(
+    pool_ids,
+    new_families: Dict[str, Set[str]],
+    outlier_gene_ids: Set[str],
+    delimiter: str = "_",
+) -> Set[str]:
+    """Round-level gene-conservation audit (issue #15).
+
+    Every gene entering a round must either be placed in a new family or
+    recycled as an outlier. Returns the set of leaked genes (neither placed
+    nor recycled), logging any leak at ERROR with a per-species breakdown.
+    """
+    placed_genes: Set[str] = set()
+    for genes in new_families.values():
+        placed_genes.update(genes)
+
+    leaked = set(pool_ids) - placed_genes - set(outlier_gene_ids)
+    if leaked:
+        by_species: Dict[str, int] = {}
+        for gid in leaked:
+            sp = gid.split(delimiter, 1)[0]
+            by_species[sp] = by_species.get(sp, 0) + 1
+        breakdown = ", ".join(
+            f"{sp}={n}" for sp, n in sorted(by_species.items())
+        )
+        examples = ", ".join(sorted(leaked)[:10])
+        logger.error(
+            f"Gene-conservation audit: {len(leaked)} gene(s) neither placed "
+            f"nor recycled this round ({breakdown}); forcing back into the "
+            f"outlier pool. Examples: {examples}"
+        )
+    return leaked
+
+
+def _check_id_agreement(
+    protein_pool: Dict[str, str],
+    cds_pool: Dict[str, str],
+    outdir,
+    delimiter: str = "_",
+    warn_pct: float = 95.0,
+) -> Dict[str, tuple]:
+    """Per-species pep/CDS ID agreement report (issue #2).
+
+    A pep/CDS ID mismatch silently shrinks orthogroups (genes lacking a CDS
+    partner are dropped from every OG). This makes the dropout visible:
+    writes outdir/id_agreement.tsv and warns per species when the shared
+    fraction falls below warn_pct of the protein IDs.
+
+    Returns dict of species -> (species, n_pep, n_cds, n_shared, pct_shared).
+    """
+    pep_by_sp: Dict[str, Set[str]] = {}
+    cds_by_sp: Dict[str, Set[str]] = {}
+    for gid in protein_pool:
+        pep_by_sp.setdefault(gid.split(delimiter, 1)[0], set()).add(gid)
+    for gid in cds_pool:
+        cds_by_sp.setdefault(gid.split(delimiter, 1)[0], set()).add(gid)
+
+    stats: Dict[str, tuple] = {}
+    for sp in sorted(set(pep_by_sp) | set(cds_by_sp)):
+        pep = pep_by_sp.get(sp, set())
+        cds = cds_by_sp.get(sp, set())
+        shared = pep & cds
+        pct = 100.0 * len(shared) / len(pep) if pep else 0.0
+        stats[sp] = (sp, len(pep), len(cds), len(shared), pct)
+        if pct < warn_pct:
+            logger.warning(
+                f"ID agreement: species {sp} has only {len(shared)}/{len(pep)} "
+                f"({pct:.1f}%) protein IDs with a matching CDS ID — genes "
+                f"without a CDS partner are silently dropped from orthogroups. "
+                f"Check pep/CDS ID consistency."
+            )
+
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    with open(outdir / "id_agreement.tsv", "w") as f:
+        f.write("species\tn_pep\tn_cds\tn_shared\tpct_shared\n")
+        for sp in sorted(stats):
+            _, n_pep, n_cds, n_shared, pct = stats[sp]
+            f.write(f"{sp}\t{n_pep}\t{n_cds}\t{n_shared}\t{pct:.1f}\n")
+    return stats
+
+
+def _write_round_families(round_dir, new_families: Dict[str, Set[str]]):
+    """Write this round's confirmed families incrementally (resume support).
+
+    Format: family_id<TAB>comma-joined gene ids, one family per line.
+    """
+    round_dir = Path(round_dir)
+    round_dir.mkdir(parents=True, exist_ok=True)
+    with open(round_dir / "confirmed_families.tsv", "w") as f:
+        for family_id in sorted(new_families):
+            f.write(f"{family_id}\t{','.join(sorted(new_families[family_id]))}\n")
+
+
+def _load_round_families(outdir, max_round: int) -> Dict[str, Set[str]]:
+    """Rebuild confirmed families from per-round confirmed_families.tsv files.
+
+    Only rounds <= max_round (the newest COMPLETED round) are loaded, so a
+    partially processed later round cannot contaminate the resumed state.
+    """
+    families: Dict[str, Set[str]] = {}
+    for round_dir in sorted(Path(outdir).glob("round_*")):
+        try:
+            round_num = int(round_dir.name.split("_", 1)[1])
+        except (ValueError, IndexError):
+            continue
+        if round_num > max_round:
+            continue
+        tsv = round_dir / "confirmed_families.tsv"
+        if not tsv.exists():
+            continue
+        with open(tsv) as f:
+            for line in f:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) == 2 and parts[1]:
+                    families[parts[0]] = set(parts[1].split(","))
+    return families
 
 
 def run(
@@ -180,6 +306,10 @@ def run(
     cds_pool = build_seq_map(cds_dir)
     logger.info(f"Loaded {len(cds_pool)} CDS sequences")
 
+    # Startup validation: pep/CDS ID agreement per species (issue #2)
+    _check_id_agreement(current_pool, cds_pool, outdir, config.species_delimiter)
+    logger.info(f"ID agreement report: {outdir / 'id_agreement.tsv'}")
+
     # Resume handling
     start_round = 1
     all_confirmed_families: Dict[str, Set[str]] = {}
@@ -195,18 +325,13 @@ def run(
                 current_pool = read_fasta(str(pool_fasta))
                 logger.info(f"Resuming from round {start_round} with {len(current_pool)} sequences")
 
-            # Reload previously confirmed families from summary or round dirs
-            summary_file = outdir / "summary.tsv"
-            if summary_file.exists():
-                with open(summary_file) as f:
-                    f.readline()  # skip header
-                    for line in f:
-                        parts = line.strip().split("\t")
-                        if len(parts) >= 5:
-                            fam_id = parts[0]
-                            genes = set(parts[4].split(","))
-                            all_confirmed_families[fam_id] = genes
-                logger.info(f"Reloaded {len(all_confirmed_families)} confirmed families from previous rounds")
+            # Reload previously confirmed families from the incremental
+            # per-round confirmed_families.tsv files (summary.tsv is only
+            # written at the very end, so it cannot support mid-run resume)
+            all_confirmed_families = _load_round_families(
+                outdir, cp["round_number"]
+            )
+            logger.info(f"Reloaded {len(all_confirmed_families)} confirmed families from previous rounds")
 
     round_num = start_round - 1
     rounds_with_no_new = 0
@@ -263,6 +388,16 @@ def run(
 
             if confirmed is not None:
                 family_id = f"R{round_num}_{og_id}"
+                # Defensive uniqueness check (issue #4): family ids are
+                # R{round}_{og_id}; a duplicate means the same round number
+                # ran twice (resume/round-numbering bug) and would silently
+                # overwrite a previously confirmed family.
+                if family_id in all_confirmed_families:
+                    logger.error(
+                        f"Duplicate family id {family_id}: overwriting a "
+                        f"previously confirmed family — this indicates a "
+                        f"round-numbering or resume bug"
+                    )
                 new_families[family_id] = confirmed
                 all_confirmed_families[family_id] = confirmed
 
@@ -275,6 +410,17 @@ def run(
         for gid in current_pool:
             if gid not in all_og_genes:
                 outlier_gene_ids.add(gid)
+
+        # Gene-conservation audit: every gene in this round's pool must be
+        # placed or recycled; force any leak back into the pool (issue #15)
+        leaked = _audit_gene_conservation(
+            current_pool, new_families, outlier_gene_ids,
+            config.species_delimiter,
+        )
+        outlier_gene_ids.update(leaked)
+
+        # Incremental record of this round's families (resume support)
+        _write_round_families(round_dir, new_families)
 
         # Build outlier pool with sequences from current_pool
         new_outlier_pool = {gid: current_pool[gid] for gid in outlier_gene_ids if gid in current_pool}
@@ -470,6 +616,26 @@ def _write_final_output(
             }
             gene_list = ",".join(sorted(gene_ids))
             f.write(f"{family_id}\t{round_num}\t{len(gene_ids)}\t{len(species)}\t{gene_list}\n")
+
+    # Write on-disk record of what the pipeline failed to place (issue #15).
+    # remaining_pool may still contain genes later placed by HMMER rescue,
+    # so subtract everything that ended up in a family.
+    placed_genes: Set[str] = set()
+    for gene_ids in families.values():
+        placed_genes.update(gene_ids)
+    unplaced_prot = {
+        gid: seq for gid, seq in remaining_pool.items() if gid not in placed_genes
+    }
+    unplaced_cds = {
+        gid: cds_pool[gid] for gid in unplaced_prot if gid in cds_pool
+    }
+    write_fasta(unplaced_prot, str(outdir / "unplaced_proteins.fa"))
+    write_fasta(unplaced_cds, str(outdir / "unplaced_cds.fa"))
+    logger.info(
+        f"Unplaced genes: {len(unplaced_prot)} proteins "
+        f"({len(unplaced_cds)} with CDS) written to "
+        f"{outdir / 'unplaced_proteins.fa'}"
+    )
 
     logger.info(f"Final output written to {final_dir}")
     logger.info(f"Summary: {outdir / 'summary.tsv'}")

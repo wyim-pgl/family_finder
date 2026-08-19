@@ -108,12 +108,18 @@ def _run_treeshrink(tree_path: str, config: Config) -> Set[str]:
         )
 
         if result.returncode != 0:
-            logger.debug(f"TreeShrink warning: {result.stderr[:200]}")
+            logger.warning(
+                f"TreeShrink failed (rc={result.returncode}), skipping: "
+                f"{result.stderr[:200]}"
+            )
             return set()
 
         # Parse output: output/gene1/output.txt lists removed taxa
         removed_file = outdir / "gene1" / "output.txt"
         if not removed_file.exists():
+            logger.warning(
+                f"TreeShrink produced no output file ({removed_file}), skipping"
+            )
             return set()
 
         outliers = set()
@@ -124,13 +130,17 @@ def _run_treeshrink(tree_path: str, config: Config) -> Set[str]:
                     gene_id = gene_id.strip()
                     if gene_id:
                         outliers.add(gene_id)
+        logger.info(
+            f"TreeShrink ran on {Path(tree_path).name}: "
+            f"{len(outliers)} outlier(s) flagged"
+        )
         return outliers
 
     except subprocess.TimeoutExpired:
-        logger.debug("TreeShrink timed out, skipping")
+        logger.warning("TreeShrink timed out, skipping")
         return set()
     except Exception as e:
-        logger.debug(f"TreeShrink failed: {e}")
+        logger.warning(f"TreeShrink unavailable or failed, skipping: {e}")
         return set()
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
