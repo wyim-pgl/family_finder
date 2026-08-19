@@ -185,6 +185,33 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
 - [#16](https://github.com/wyim-pgl/family_finder/issues/16) 신규 — DeepLoc retargeting 가지 +
   branch-site dN/dS로 신기능화 탐지 (codeml.py에 branch-site Model A 추가 필요; #10·#13 선행)
 
+**진단·구현 2차 라운드 (2026-08-19, 서브에이전트 4개):**
+- **#5 기각** — pep/CDS ID 완전 일치(5종 모두 pep_only=0), round_01 누수 0. 데이터 정합성은 원인이 아님
+- **#6 확정** — Round-1 원시 클러스터링에서 Mcry 최하위: 86.8% 배정(cactus 90.2–95.9%),
+  outlier pool이 R05에 14.9–15.0%로 정체(cactus는 계속 빠짐). 원인은 클러스터링 단계로 확정
+- **#9 판정** — 1,918개 트리 재채점: 임계값 5.0에서 **Mcry 0개 프루닝**(면책).
+  단 **Cgig 10.8%·CgigH 4.9%가 임계 초과** — d_exp(Cgig,CgigH)=0.02 병리가 실측됨.
+  #14가 "방법론 방어"에서 "Cgig/CgigH 실질 정확도 수정"으로 격상.
+  실제 사용 트리 확인: data/species_tree.nwk = 손으로 쓴 값 맞음
+- **#19 신규** — ProcessPoolExecutor 워커 로그가 메인 로그로 전파되지 않아 per-OG 진단이
+  전부 유실됨 (--verbose여도 pipeline.log에 워커 줄 0개). QueueHandler 패턴 필요
+- **#12 진행** — CgigH 제외 재클러스터링 SLURM job **6088858** 제출됨 (완료 후 채점)
+- **#3 차단** — 5종 모두 isoform-level 단백질 없음(Helixer는 설계상 단일 isoform). Sof만 다중
+- **#13 구현·병합** — steps/profile_assign.py (+1,179줄, 테스트 24건). per-round 훅은
+  `profile_assign_per_round: true` opt-in
+- **#14 코드 파트 구현·병합** — relative 프루닝 기준(terminal branch 제외 + family 정규화 +
+  이중 조건), validate_species_tree, ASTRAL 문서 수정. 종 트리 추정(클러스터)만 남음
+- **#15·#2·#4 구현·병합 후 닫힘** — 조용한 손실 경로 폐쇄, ID agreement 리포트,
+  #4 원인 = 깨진 resume가 R1_* 재생성(수정됨)
+- **#17·#18 신규** — ESM-2/ESMFold/Foldseek 3차 구조 배정 / 식물 gLM(AlphaGenome은
+  human/mouse 전용이라 기각 기록)
+- 테스트 73건 통과, master push됨 (ff4002a)
+
+**다음 실행 항목:** ① job 6088858 완료 후 #12 채점 (rescue-truth co-clustering + Mcry 배정률
+vs 86.8% 기준선), ② `-I` 스윕 {1.05,1.1,1.15,1.2,1.3} — 같은 `-b` 캐시로 즉시 가능,
+③ `profile_assign_per_round: true`로 5종 재실행 → Mcry 미배치율 14.9% 대비 개선 측정,
+④ #14 종 트리 추정(BUSCO 코돈 concat + IQ-TREE GTR+G)
+
 ## 7. 재현 정보
 
 - 5종 런: `python family_finder.py --protein-dir data/pep --cds-dir data/cds
