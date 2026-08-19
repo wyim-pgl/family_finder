@@ -36,11 +36,22 @@ def load_checkpoint(round_dir: Path) -> Optional[dict]:
 
 
 def find_latest_checkpoint(outdir: Path) -> Optional[dict]:
-    """Find the latest checkpoint across all rounds."""
+    """Find the newest COMPLETED checkpoint across all rounds.
+
+    Scans backwards and skips checkpoints that are not completed (a run that
+    died mid-round leaves a 'started'/'processing' checkpoint; resuming from
+    it would silently restart from round 1 with the full pool — issue #15).
+    """
     round_dirs = sorted(outdir.glob("round_*"))
     for rd in reversed(round_dirs):
         cp = load_checkpoint(rd)
-        if cp:
+        if cp is None:
+            continue
+        if cp.get("status") == "completed":
             logger.info(f"Found checkpoint: round {cp['round_number']}, status={cp['status']}")
             return cp
+        logger.warning(
+            f"Skipping incomplete checkpoint: round {cp.get('round_number')}, "
+            f"status={cp.get('status')}"
+        )
     return None

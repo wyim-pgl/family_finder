@@ -69,7 +69,10 @@ def _filter_internal_stops(
     prot_seqs = read_fasta(str(protein_aln))
     removed = set()
     for gid, seq in prot_seqs.items():
-        seq_clean = seq.rstrip("*")
+        # Aligned sequences may end in gaps: "...PROT*----" has a TERMINAL
+        # stop, not an internal one. Strip trailing gaps first, then the
+        # terminal stop, before checking for internal stops (issue #15).
+        seq_clean = seq.rstrip("-.").rstrip("*")
         if "*" in seq_clean:
             removed.add(gid)
             logger.debug(
@@ -99,7 +102,7 @@ def _filter_internal_stops(
 
 def codon_align(
     protein_aln: Path, cds_seqs: Dict[str, str], outpath: Path, config: Config
-) -> Path:
+) -> tuple:
     """Generate codon alignment using pal2nal.
 
     Filters out genes with internal stop codons before running pal2nal,
@@ -111,7 +114,10 @@ def codon_align(
         outpath: Output path for codon alignment.
         config: Pipeline configuration.
 
-    Returns path to codon-aligned FASTA file, or None on failure.
+    Returns:
+        (codon_alignment_path or None, removed_gene_ids) — callers must
+        recycle removed_gene_ids (internal-stop genes are no longer tree
+        leaves and would otherwise vanish; issue #15).
     """
     outpath = Path(outpath)
     outpath.parent.mkdir(parents=True, exist_ok=True)
@@ -127,7 +133,7 @@ def codon_align(
         )
     if filtered_aln is None:
         logger.warning(f"pal2nal: too few sequences after stop-codon filtering")
-        return None
+        return None, removed
 
     # Write CDS sequences to temp file
     cds_fa = outpath.parent / "cds_unaligned.fa"
@@ -145,14 +151,14 @@ def codon_align(
 
     if result.returncode != 0:
         logger.warning(f"pal2nal failed:\n{result.stderr[:300]}")
-        return None
+        return None, removed
 
     # Check output is non-empty
     if not result.stdout.strip():
         logger.warning(f"pal2nal produced empty output for {protein_aln}")
-        return None
+        return None, removed
 
     with open(outpath, "w") as out_f:
         out_f.write(result.stdout)
 
-    return outpath
+    return outpath, removed

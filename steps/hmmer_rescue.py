@@ -297,8 +297,10 @@ def _realign_family(
         # Protein alignment
         prot_aln = align_protein(prot_seqs, rescue_fam_dir / "proteins.afa", config)
 
-        # Codon alignment
-        codon_aln = codon_align(
+        # Codon alignment. Genes removed by the internal-stop filter remain
+        # family members (they are already placed); they are only excluded
+        # from the codon alignment.
+        codon_aln, _stop_removed = codon_align(
             rescue_fam_dir / "proteins.afa", cds_seqs,
             rescue_fam_dir / "codon.afa", config,
         )
