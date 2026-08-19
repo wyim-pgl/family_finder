@@ -67,6 +67,12 @@ class Config:
     run_codeml: bool = False
     codeml_models: list = field(default_factory=lambda: ["M0", "M1a", "M2a", "M7", "M8"])
 
+    # DeepLoc (issue #16: retargeting / neofunctionalization module)
+    deeploc_bin: str = "deeploc2"
+    deeploc_model: str = "Fast"      # Fast | Accurate
+    deeploc_device: str = ""         # e.g. "cuda"; empty = DeepLoc default
+    deeploc_min_prob: float = 0.5    # class prob below this = uninformative leaf
+
     # Pseudogene detection
     pseudogene_detection: bool = True
     pseudogene_truncation_threshold: float = 0.5  # flag if gene < 50% of family median

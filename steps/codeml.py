@@ -58,6 +58,45 @@ CTL_TEMPLATE = """\
 """
 
 
+# Branch-site Model A (issue #16): tests for positive selection on a marked
+# foreground branch — the standard test for neofunctionalization after a
+# retargeting event. Site models above cannot ask branch-specific questions.
+BRANCH_SITE_CTL_TEMPLATE = """\
+      seqfile = {seqfile}
+     treefile = {treefile}
+      outfile = {outfile}
+
+        noisy = 3
+      verbose = 1
+      runmode = 0
+
+      seqtype = 1
+    CodonFreq = 2
+        clock = 0
+
+        model = 2
+      NSsites = 2
+
+        icode = 0
+    fix_kappa = 0
+        kappa = 2
+    fix_omega = {fix_omega}
+        omega = {omega}
+
+    fix_alpha = 1
+        alpha = 0
+       Malpha = 0
+        ncatG = 10
+
+        getSE = 0
+ RateAncestor = 0
+   Small_Diff = .5e-6
+    cleandata = 1
+  fix_blength = 0
+       method = 0
+"""
+
+
 def fasta_to_phylip(fasta_path: Path, phylip_path: Path):
     """Convert FASTA alignment to sequential PHYLIP format for codeml."""
     alignment = AlignIO.read(str(fasta_path), "fasta")
@@ -96,6 +135,92 @@ def generate_ctl(
         f.write(ctl_content)
 
     return ctl_path
+
+
+def write_marked_tree(tree_path: Path, clade_leaves, out_path: Path) -> Path:
+    """Write a codeml-ready tree with the given clade tagged '#1' as the
+    foreground branch. Branch lengths and internal support labels are dropped
+    (PAML does not need the former and chokes on the latter).
+
+    Raises ValueError if the leaves do not form a clade in this tree — events
+    produced by steps.retargeting on the same tree always do.
+    """
+    from utils.newick import mark_clade, parse_newick, write_newick
+
+    root = parse_newick(Path(tree_path).read_text())
+    if not mark_clade(root, set(clade_leaves)):
+        raise ValueError(
+            f"Leaves {sorted(clade_leaves)} do not form a clade in {tree_path}"
+        )
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        write_newick(root, with_dist=False, keep_internal_names=False) + "\n"
+    )
+    return out_path
+
+
+def generate_branch_site_ctl(
+    family_id: str,
+    codon_aln: Path,
+    marked_tree: Path,
+    work_dir: Path,
+    null: bool,
+) -> Path:
+    """Control file for branch-site Model A (null=False) or its null
+    (null=True: fix_omega=1, omega=1). LRT df=1 between the pair."""
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    phylip_path = work_dir / "alignment.phy"
+    fasta_to_phylip(codon_aln, phylip_path)
+
+    ctl_content = BRANCH_SITE_CTL_TEMPLATE.format(
+        seqfile=str(phylip_path),
+        treefile=str(marked_tree),
+        outfile=str(work_dir / "results.txt"),
+        fix_omega=1 if null else 0,
+        omega=1 if null else 1.5,
+    )
+    ctl_path = work_dir / "codeml.ctl"
+    ctl_path.write_text(ctl_content)
+    return ctl_path
+
+
+def parse_lnl(results_path: Path) -> float:
+    """Extract lnL from a codeml results file (line 'lnL(...): <value> ...')."""
+    import re
+
+    for line in open(results_path):
+        if line.startswith("lnL"):
+            m = re.search(r"lnL.*?:\s*(-?\d+\.\d+)", line)
+            if m:
+                return float(m.group(1))
+    raise ValueError(f"No lnL line found in {results_path}")
+
+
+def lrt_pvalue(lnl_alt: float, lnl_null: float) -> float:
+    """LRT p-value for df=1: 2*(lnL_alt - lnL_null) ~ chi2(1), and
+    P(chi2(1) > x) = erfc(sqrt(x/2)) — no scipy needed."""
+    import math
+
+    delta = max(0.0, lnl_alt - lnl_null)  # LR statistic = 2*delta
+    return math.erfc(math.sqrt(delta))
+
+
+def benjamini_hochberg(pvalues) -> list:
+    """BH FDR q-values, preserving input order."""
+    n = len(pvalues)
+    if n == 0:
+        return []
+    order = sorted(range(n), key=lambda i: pvalues[i])
+    q = [0.0] * n
+    prev = 1.0
+    for rank_from_end, idx in enumerate(reversed(order)):
+        rank = n - rank_from_end  # 1-based rank of this p-value
+        val = min(prev, pvalues[idx] * n / rank)
+        q[idx] = val
+        prev = val
+    return q
 
 
 def run_codeml(ctl_path: Path, work_dir: Path, config: Config) -> Path:
