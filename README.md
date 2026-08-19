@@ -372,7 +372,7 @@ Provide a Newick-format species tree with branch lengths. Leaf names must match 
 ((Mcry:0.5,Cgig:0.5):0.3,(Ococ:0.2,Obas:0.2):0.3);
 ```
 
-Recommended approach: build from low-copy-number orthologs using ASTRAL.
+Recommended approach: estimate branch lengths from a concatenated single-copy ortholog (e.g. BUSCO) codon alignment with IQ-TREE. Do NOT use ASTRAL output directly — its coalescent-unit branch lengths break the observed/expected distance ratio used for pruning.
 
 To include two annotations of the same genome (e.g., MAKER vs Helixer), add them as sister taxa with near-zero distance:
 
@@ -433,7 +433,7 @@ python family_finder.py \
 |---|---|
 | `--protein-dir` | Directory of per-species protein FASTA files (e.g., `Mcry.pep.fa`) |
 | `--cds-dir` | Directory of per-species CDS FASTA files (e.g., `Mcry.cds.fa`) |
-| `--species-tree` | Newick species tree (e.g., from ASTRAL) |
+| `--species-tree` | Newick species tree with substitution-rate branch lengths (e.g. IQ-TREE concatenation; NOT ASTRAL coalescent units) |
 | `--outdir` | Output directory |
 
 ### Optional arguments

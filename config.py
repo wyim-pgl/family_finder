@@ -40,6 +40,15 @@ class Config:
 
     # Pruning parameters
     distance_ratio_threshold: float = 5.0
+    # Pruning criterion (issue #14):
+    #   "relative" (default) — terminal-branch-subtracted internal-path ratio,
+    #     normalized by the family-wide median ratio. Prune iff
+    #     S_norm > prune_relative_threshold AND S_raw > prune_score_floor.
+    #   "absolute" — legacy behavior: median(d_obs/d_exp) compared against
+    #     distance_ratio_threshold (kept for reproducibility of old runs).
+    prune_criterion: str = "relative"
+    prune_relative_threshold: float = 3.0
+    prune_score_floor: float = 2.0
     min_species_for_pruning: int = 3
     treeshrink_quantile: float = 0.05  # TreeShrink quantile (lower = stricter)
 

@@ -41,7 +41,7 @@ def parse_args():
     )
     parser.add_argument(
         "--species-tree", required=True,
-        help="Newick species tree file (e.g., from ASTRAL)",
+        help="Newick species tree file (substitution-rate branch lengths, e.g. IQ-TREE concatenation; NOT ASTRAL coalescent units)",
     )
     parser.add_argument(
         "--outdir", required=True,

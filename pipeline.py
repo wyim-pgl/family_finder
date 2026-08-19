@@ -20,6 +20,7 @@ from utils.species import (
     load_species_tree,
     compute_pairwise_distances,
     get_species,
+    validate_species_tree,
 )
 from utils.checkpoint import save_checkpoint, find_latest_checkpoint
 from utils.parallel import parallel_map
@@ -161,6 +162,19 @@ def run(
     logger.info(f"Loading protein sequences from {protein_dir}")
     current_pool = build_seq_map(protein_dir)
     logger.info(f"Loaded {len(current_pool)} protein sequences")
+
+    # Validate species tree against data species prefixes (issue #14)
+    data_species = {get_species(g, config.species_delimiter) for g in current_pool}
+    for problem in validate_species_tree(species_tree, data_species):
+        logger.warning(f"Species tree validation: {problem}")
+    tree_species = {leaf.name for leaf in species_tree.leaves()}
+    if not (tree_species & data_species):
+        raise ValueError(
+            "Species tree leaf names have NO overlap with data species prefixes "
+            f"(tree: {sorted(tree_species)}; data: {sorted(data_species)}). "
+            "Pruning would be silently disabled for every gene — fix the tree "
+            "leaf names or the gene ID prefixes."
+        )
 
     logger.info(f"Loading CDS sequences from {cds_dir}")
     cds_pool = build_seq_map(cds_dir)
