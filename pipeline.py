@@ -77,8 +77,12 @@ def process_single_orthogroup(args: tuple):
             str(tree_path), gene_to_species, expected_distances, config
         )
 
-        # 5. If confirmed set is large enough, produce final outputs
-        if len(confirmed) >= config.min_orthogroup_size:
+        # 5. If enough confirmed members survive pruning, emit the family.
+        # Uses min_family_size (not min_orthogroup_size): dissolving a whole OG
+        # because pruning left it below the processing floor discards genes that
+        # PASSED pruning, and makes small-but-real families (e.g. one outgroup
+        # gene + 2-3 ingroup orthologs) impossible to form. See issue #11.
+        if len(confirmed) >= config.min_family_size:
             confirmed_prots = {gid: protein_pool[gid] for gid in confirmed if gid in protein_pool}
             confirmed_cds = {gid: cds_pool[gid] for gid in confirmed if gid in cds_pool}
             write_fasta(confirmed_prots, str(og_dir / "confirmed_proteins.fa"))

@@ -24,7 +24,8 @@ class Config:
 
     # Pipeline parameters
     max_rounds: int = 10
-    min_orthogroup_size: int = 4
+    min_orthogroup_size: int = 4  # floor to START align/tree work (cost gate)
+    min_family_size: int = 2      # floor to EMIT a family after pruning
     convergence_threshold: int = 5
     convergence_no_new_families: int = 2
 
@@ -35,6 +36,22 @@ class Config:
 
     # OrthoFinder parameters
     orthofinder_threads: int = 8
+    # MCL inflation (-I). OrthoFinder v3 default is 1.2 (v2.x was 1.5); passing
+    # it explicitly makes the value visible in logs and sweepable via config.
+    orthofinder_inflation: float = 1.2
+    # Search program (-S). Empty = OrthoFinder default (diamond --more-sensitive).
+    # Options include: diamond, diamond_ultra_sens, blast, mmseqs.
+    orthofinder_search_program: str = ""
+    # Stop after orthogroup inference (-og). Skips per-OG gene trees, species
+    # tree, and ortholog inference that this pipeline never reads — a large
+    # wall-clock saving. Caveat: also skips Comparative_Genomics_Statistics/
+    # (per-species stats). NOTE: -og is accepted by OrthoFinder v3.1.3 but
+    # absent from its -h output — do not probe support by parsing -h.
+    orthofinder_stop_after_orthogroups: bool = True
+    # Reuse a previous WorkingDirectory of cached DIAMOND results (-b).
+    # Only valid for re-running the SAME sequence set (e.g. inflation sweeps
+    # on round 1) — later rounds have different pools and cannot reuse.
+    orthofinder_reuse_blast_dir: str = ""
     orthofinder_extra_args: str = ""
 
     # MAFFT parameters
