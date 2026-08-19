@@ -265,6 +265,42 @@ def run(
         # Build outlier pool with sequences from current_pool
         new_outlier_pool = {gid: current_pool[gid] for gid in outlier_gene_ids if gid in current_pool}
 
+        # Per-round profile assignment (issue #13): offer this round's outliers
+        # to the confirmed families' HMM profiles BEFORE recycling them into
+        # the next outliers-only OrthoFinder run. Errors must never kill a round.
+        if config.profile_assign_per_round and all_confirmed_families and new_outlier_pool:
+            try:
+                from steps.profile_assign import run_profile_assignment
+                from steps.hmmer_rescue import _find_family_alignment
+
+                assigned, _ = run_profile_assignment(
+                    families=all_confirmed_families,
+                    unplaced_pool=new_outlier_pool,
+                    protein_lookup=lambda fam_id: _find_family_alignment(fam_id, outdir),
+                    outdir=round_dir / "profile_assign",
+                    config=config,
+                )
+                n_assigned = 0
+                for fam_id, genes in assigned.items():
+                    if fam_id not in all_confirmed_families:
+                        continue
+                    merged = all_confirmed_families[fam_id] | genes
+                    all_confirmed_families[fam_id] = merged
+                    if fam_id in new_families:
+                        new_families[fam_id] = merged
+                    n_assigned += len(genes)
+                    for gid in genes:
+                        new_outlier_pool.pop(gid, None)
+                logger.info(
+                    f"Round {round_num}: profile assignment placed {n_assigned} "
+                    f"outlier genes into {len(assigned)} families"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Round {round_num}: profile assignment failed "
+                    f"(continuing without it): {e}"
+                )
+
         # Save outlier pool for resume
         write_fasta(new_outlier_pool, str(round_dir / "outlier_pool.fa"))
 

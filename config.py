@@ -22,6 +22,15 @@ class Config:
     hmmer_rescue: bool = False
     hmmer_evalue: float = 1e-5
 
+    # Per-round profile assignment (issue #13; steps/profile_assign.py)
+    profile_assign_per_round: bool = False  # off by default: behavior change is opt-in
+    profile_min_coverage: float = 0.5        # min fraction of HMM covered by domains
+    profile_min_query_coverage: float = 0.4  # min fraction of query covered by domains
+    profile_margin_bits: float = 10.0        # best-vs-second bit-score margin (absolute)
+    profile_margin_frac: float = 0.05        # ... or this fraction of best bits, if larger
+    profile_reassign_margin_nbits: float = 0.15  # length-normalized bits margin for moves
+    merge_min_reciprocal: float = 0.6        # min reciprocal cross-hit fraction for merges
+
     # Pipeline parameters
     max_rounds: int = 10
     min_orthogroup_size: int = 4  # floor to START align/tree work (cost gate)
