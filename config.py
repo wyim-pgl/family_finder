@@ -125,6 +125,11 @@ class Config:
                                             # pendant_length above this (0.0 = disabled)
     sonicparanoid_cmd: str = ""  # e.g. "sonicparanoid -i {pep_dir} -o {outdir} -t 16"
     clustering_method: str = "orthofinder"  # "orthofinder" | "sonicparanoid"
+    # Species prefixes kept OUT of tier-1 clustering every round (issue #12:
+    # CgigH duplicate annotation distorts MCL cliques; excluding it gains
+    # 9.0% co-clustering). Excluded genes are merged back into the unplaced
+    # pool after convergence so profile mapping / HMMER rescue can place them.
+    clustering_species_exclude: list = field(default_factory=list)
 
     # Gene ID format: species extracted from prefix before this delimiter
     species_delimiter: str = "_"

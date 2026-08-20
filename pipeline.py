@@ -256,6 +256,37 @@ def _load_round_families(outdir, max_round: int) -> Dict[str, Set[str]]:
     return families
 
 
+def partition_excluded_species(
+    pool: Dict[str, str], exclude: list, delimiter: str = "_"
+) -> tuple:
+    """Split a sequence pool into (clustering_pool, excluded_pool) by the
+    species prefixes in `exclude` (issue #12: clustering_species_exclude).
+
+    Prefix matching is exact per get_species (so excluding "Cgig" leaves
+    "CgigH_*" alone). A listed species with no genes in the pool is a
+    likely config typo and is logged as a warning. Inputs are not mutated.
+    """
+    if not exclude:
+        return dict(pool), {}
+
+    exclude_set = set(exclude)
+    kept: Dict[str, str] = {}
+    excluded: Dict[str, str] = {}
+    for gene_id, seq in pool.items():
+        if get_species(gene_id, delimiter) in exclude_set:
+            excluded[gene_id] = seq
+        else:
+            kept[gene_id] = seq
+
+    seen = {get_species(g, delimiter) for g in excluded}
+    for sp in sorted(exclude_set - seen):
+        logger.warning(
+            f"clustering_species_exclude lists '{sp}' but no gene in the "
+            f"pool has that species prefix — check the config"
+        )
+    return kept, excluded
+
+
 def run(
     protein_dir: str,
     cds_dir: str,
@@ -332,6 +363,19 @@ def run(
                 outdir, cp["round_number"]
             )
             logger.info(f"Reloaded {len(all_confirmed_families)} confirmed families from previous rounds")
+
+    # Keep excluded species out of tier-1 clustering for every round
+    # (issue #12: CgigH). Their genes rejoin the unplaced pool after
+    # convergence for profile mapping / HMMER rescue.
+    current_pool, clustering_excluded_pool = partition_excluded_species(
+        current_pool, config.clustering_species_exclude, config.species_delimiter
+    )
+    if clustering_excluded_pool:
+        logger.info(
+            f"Excluding {len(clustering_excluded_pool)} genes from clustering "
+            f"(species: {sorted(config.clustering_species_exclude)}) — they "
+            f"will be offered to family profiles after convergence"
+        )
 
     round_num = start_round - 1
     rounds_with_no_new = 0
@@ -513,6 +557,15 @@ def run(
             break
 
         current_pool = new_outlier_pool
+
+    # Excluded species rejoin the unplaced pool here so profile mapping /
+    # HMMER rescue and the final unplaced outputs see them (issue #12).
+    if clustering_excluded_pool:
+        logger.info(
+            f"Merging {len(clustering_excluded_pool)} clustering-excluded "
+            f"genes into the unplaced pool for post-run assignment"
+        )
+        current_pool = {**current_pool, **clustering_excluded_pool}
 
     # HMMER rescue: assign unplaced genes to existing families via HMM profiles
     if config.hmmer_rescue and all_confirmed_families and current_pool:
