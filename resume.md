@@ -264,7 +264,7 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
 - 기능 잔기 519/780/890 (ATH 좌표): 3 SF 모두 불변 E/T/R — 촉매 분화 없음 (purslane 좌표
   재매핑 필요, #26)
 - **이슈 재편**: #25 = 전체 파이프라인 SPEC(정본) / #26 = 실시간 트래커 / #21 닫힘(증거 로그).
-  오픈: #18, #24, #25, #26 (등록 26건 중 22건 해결)
+  오픈: #24, #25, #26 (등록 26건 중 23건 해결; #18은 2026-08-20 구조적 차단으로 닫힘)
 - DeepLoc 2.1 설치 완료(라이선스 tarball, transgenic env, setuptools<81 + sentencepiece 함정),
   wiki guide/installs.md에 전체 설치 기록 push됨
 
