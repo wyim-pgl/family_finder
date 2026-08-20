@@ -117,10 +117,14 @@ class Config:
     raxml_ng_bin: str = "raxml-ng"          # re-evaluates FastTree branch lengths/model
     hmmalign_bin: str = "hmmalign"
     epa_query_align: str = "hmmalign"       # query-alignment backend: "hmmalign" | "mafft-add"
-    # UNCALIBRATED: no published LWR cutoff exists — defaults are starting
-    # points to be calibrated on the 5sp panel (issue #23).
-    epa_min_lwr: float = 0.8                # min like_weight_ratio to accept a placement
-    epa_lwr_margin: float = 0.3             # best-vs-second LWR margin (ties -> ambiguous)
+    # Calibrated on the PEPC clan via PEWO prune-and-place (issue #23,
+    # 2026-08-20: 30 prunings, 189 queries, epa-ng h1): thresholds in
+    # [0.1, 0.3] give recall(nd=0)=1.0 and precision(nd<=2)=0.97; the old
+    # 0.8 default lost ~9% of correct placements for no precision gain.
+    # Margin was a dead knob (zero effect at every value) — catastrophic
+    # misplacements are short fragments (<150 aa), not low-margin ties.
+    epa_min_lwr: float = 0.2                # min like_weight_ratio to accept a placement
+    epa_lwr_margin: float = 0.0             # best-vs-second LWR margin (exact ties still ambiguous)
     epa_max_pendant: float = 0.0            # abstention gate: reject placements with
                                             # pendant_length above this (0.0 = disabled)
     sonicparanoid_cmd: str = ""  # e.g. "sonicparanoid -i {pep_dir} -o {outdir} -t 16"

@@ -147,12 +147,12 @@ def test_accept_single_high_lwr_placement():
 
 
 def test_accept_rejects_low_lwr():
-    config = Config()  # epa_min_lwr = 0.8
-    assert accept_placement([_placement(0, 0.79)], config) is None
+    config = Config()  # epa_min_lwr = 0.2 (PEWO-calibrated, issue #23)
+    assert accept_placement([_placement(0, 0.15)], config) is None
 
 
 def test_accept_rejects_failing_margin():
-    config = Config()  # epa_lwr_margin = 0.3
+    config = Config(epa_lwr_margin=0.3)  # margin gate opt-in since calibration
     placements = [_placement(0, 0.85), _placement(5, 0.7)]  # margin 0.15
     assert accept_placement(placements, config) is None
 
@@ -405,6 +405,6 @@ def test_epa_config_defaults():
     assert config.raxml_ng_bin == "raxml-ng"
     assert config.hmmalign_bin == "hmmalign"
     assert config.epa_query_align == "hmmalign"
-    assert config.epa_min_lwr == 0.8
-    assert config.epa_lwr_margin == 0.3
+    assert config.epa_min_lwr == 0.2   # PEWO-calibrated (issue #23)
+    assert config.epa_lwr_margin == 0.0  # dead knob per calibration; ties still ambiguous
     assert config.epa_max_pendant == 0.0  # abstention gate off by default
