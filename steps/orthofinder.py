@@ -113,7 +113,14 @@ def parse_orthogroups(results_dir: Path) -> Dict[str, List[str]]:
     if not og_file.exists():
         raise FileNotFoundError(f"Orthogroups.tsv not found at {og_file}")
 
+    # A gene ID must reach exactly ONE orthogroup. Duplicated IDs (across
+    # orthogroups or twice inside one cell) would be processed twice and can
+    # be confirmed into two families — the conservation audit checks
+    # placed-or-recycled, not uniqueness, so the parser is the choke point:
+    # keep the first occurrence, drop the rest, log every drop as an error.
     orthogroups = {}
+    seen = {}
+    n_dupes = 0
     with open(og_file) as f:
         header = f.readline()  # skip header
         for line in f:
@@ -122,10 +129,27 @@ def parse_orthogroups(results_dir: Path) -> Dict[str, List[str]]:
             genes = []
             for cell in parts[1:]:
                 if cell.strip():
-                    genes.extend(g.strip() for g in cell.split(",") if g.strip())
+                    for g in (x.strip() for x in cell.split(",")):
+                        if not g:
+                            continue
+                        if g in seen:
+                            n_dupes += 1
+                            logger.error(
+                                f"Duplicate gene ID in OrthoFinder output: "
+                                f"{g} in {og_id} (kept in {seen[g]}) — dropped"
+                            )
+                            continue
+                        seen[g] = og_id
+                        genes.append(g)
             if genes:
                 orthogroups[og_id] = genes
 
+    if n_dupes:
+        logger.error(
+            f"OrthoFinder output reused {n_dupes} gene ID(s) across "
+            f"orthogroups — kept first occurrence only. Check the run's "
+            f"WorkingDirectory for stale SequenceIDs/graph reuse."
+        )
     logger.info(f"Parsed {len(orthogroups)} orthogroups")
     return orthogroups
 
