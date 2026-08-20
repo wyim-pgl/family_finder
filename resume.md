@@ -293,7 +293,18 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
   불변" 문장은 이 예외 명시로 정정됨. 스크립트 gpu `verify_residue_numbering.py`.
 - 멀티세션 협업: cluster-diag(코돈 정렬·hyphy·RELAX·DeepLoc -p) + ecforest-runner
   (ECForest 완주·잔기 재매핑). ec_classifier 다운로드 중복 프로세스 정리(단일 curl 완주).
-- PEWO 설치 진행(gpu ~/PEWO, env 생성 중) — EPA-ng LWR 보정용.
+- **EPA-ng LWR 보정 완료** (PEWO PAC, PEPC clan 30 prunings/189 queries):
+  **min_lwr 0.8→0.2, margin 0.3→0.0(죽은 노브)** — 구 0.8은 recall 9% 손실·precision
+  이득 0. 오배치 대부분 LWR=1.0 인접 가지(nd≤2), 파국적 오배치는 전원 80–129aa 조각
+  → 길이 게이트가 실질 방어선. 코드 반영 0fc9f89+ee97a2d, 데이터 gpu
+  `~/pepc_pilot/lwr_calibration.tsv`, 런 `~/pewo_pepc/`. PEWO 함정: snakemake<8 핀,
+  --recursive 클론+ant 빌드, 잔여 트리 <4 가드 java 패치.
+- **clustering_species_exclude 구현·병합**(0fdcfde) + **5sp v2 재실행 제출**(pronghorn
+  6091850, output_5sp_v2/): CgigH 27,583개 제외 확인(풀 116,378), 추정 종 트리 +
+  per-round 프로파일 + relative 프루닝. 완주 후 Mcry 미배치율 vs 14.9% 대조.
+- **DeepLoc -p 완료**(#24 1단계): per-residue attribution 102서열,
+  `~/pepc_pilot/deeploc_p_out/alpha_*.csv` (+ results_20260820-114221.csv).
+  signal_windows 추출은 cluster-diag 진행 중.
 
 ---
 
