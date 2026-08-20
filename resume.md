@@ -254,6 +254,66 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
 4. clan 병합 실행: PEPC 5개 fragment → 구조 소속 + EPA 트리 심판으로 재구성 (Ppc1 쌍 TOGETHER 확인)
 5. Mcry 미배치율 14.9% 대비 v2 최종 측정
 
+**5차 라운드 — 서브패밀리 방법 확정 + 기능 축 + 이슈 재편 (2026-08-20 후반):**
+- **서브패밀리 top-3 비교 완료**: Possvm(‑r 앵커, min_support 95, bacterial 루팅; numpy<1.24 핀 +
+  -skipprint 필요) 30 OG / TreeCluster(s=0,t=1.0) 9클러스터 / 기존 greedy 3 SF —
+  **완전한 계층적 중첩, 경계 충돌 0** (SF3 ≡ Possvm OG2 정확히 10/10). 방법론 채택:
+  HOG 정의 + Possvm 주분할 + TreeCluster 교차검증 (dossier 전문은 세션 로그, 요약은 #21 코멘트)
+- **subfunctionalization 4축**: 발현 ✅ 양성(SF3 단독 Ococ 사본 = 전체 PEPC 발현 74%, 4,777 TPM) /
+  위치 ✅ 음성(전원 세포질; NES/NLS 상관 → #24) / EC 🔄(ECForest 실행 중) / 선택압 ⏳(미착수)
+- 기능 잔기 519/780/890 (ATH 좌표): 3 SF 모두 불변 E/T/R — 촉매 분화 없음 (purslane 좌표
+  재매핑 필요, #26)
+- **이슈 재편**: #25 = 전체 파이프라인 SPEC(정본) / #26 = 실시간 트래커 / #21 닫힘(증거 로그).
+  오픈: #18, #24, #25, #26 (등록 26건 중 22건 해결)
+- DeepLoc 2.1 설치 완료(라이선스 tarball, transgenic env, setuptools<81 + sentencepiece 함정),
+  wiki guide/installs.md에 전체 설치 기록 push됨
+
+---
+
+## /clear 후 세션 재개 가이드 (2026-08-20 기준)
+
+**정본 문서**: 이 파일(조사 기록) + 이슈 **#25**(파이프라인 스펙) + **#26**(작업 트래커).
+서브에이전트·모니터는 세션 종료와 함께 사라짐 — 아래 "확인할 것"부터 시작.
+
+### 즉시 확인할 것
+1. **ESM-ECForest 결과** (세션 종료 시점 실행 중이던 유일한 작업): pgl-gpu에서
+   `ls ~/ESM-ECForest* ~/pepc_pilot/*ecforest* 2>/dev/null` — 결과 있으면 SF2 array 사본
+   (OcoChr03G21430/21450/21460 등)의 enzyme/non-enzyme 판정 확인 → #26 체크 + #20/#25 기록.
+   미완이면 repo ~/ESM-ECForest, 모델 Zenodo 10.5281/zenodo.21699471 (1.9GB)로 재개.
+2. `gh issue view 26 --repo wyim-pgl/family_finder` — 대기열 순서대로 진행.
+
+### 다음 작업 레시피 (#26 대기열 1번: 선택압 검정)
+```
+# clan 코돈 정렬: 멤버 CDS는 pronghorn data_15sp/cds (+ 5sp data/cds),
+#   앵커 CDS는 /data/gpfs/assoc/pgl/data/sequence_data/plaza/cds/selected (ath, aco)
+# pal2nal을 gpu:~/pepc_pilot/clan_anchor.aln 에 맞춰 실행 → clan_codon.aln
+# SF3 stem(10-leaf flux clade, 지지도 100)에 #1 마킹: steps/codeml.py write_marked_tree
+# branch-site alt/null: steps/codeml.py generate_branch_site_ctl + lrt_pvalue
+# RELAX: hyphy 설치 필요 (micromamba -n phylo -c bioconda hyphy)
+```
+
+### 자산 위치
+- **pgl-gpu** (`ssh gpu`): `~/pepc_pilot/` — clan_anchor.{fa,aln}, clan_tree.treefile(+rooted),
+  pdb/ (111 ESMFold 구조), plddt.tsv, aln_esm.tsv, aln_p5.tsv, db_p5/db_ath/db_aco,
+  possvm_mcl/pepc.ortholog_groups.csv, tc_*.txt, deeploc_out/results_*.csv, anchors.tsv,
+  excluded.txt(truncation 16개). envs: phylo(mafft/iqtree3/epa-ng/raxml-ng),
+  subfam(possvm deps/treecluster), sonic, transgenic(torch+DeepLoc2.1). foldseek ~/bin/foldseek,
+  ProstT5 ~/pepc_pilot/prostt5_weights. SonicParanoid 결과 ~/sonic{5,15}sp/
+- **pronghorn** (`ssh pronghorn`, FF=~/scratch/bin/family_finder): output_5sp/, output_15sp/,
+  forensics_r8/per_gene.tsv, score_recluster.py, check_pairs.py, cam_pairs.tsv, ath_ppc.fa,
+  aco_ppc.fa, species_tree_est/species_tree_busco.treefile(추정 종 트리 — 채택 대기),
+  sonic{5,15}sp_results/, wd_I*/wd15_I*/wd_noCgigH(스윕 산출물)
+- **로컬 repo**: master 64f2323+ (테스트 165), 신규 모듈 steps/{profile_assign,epa,esm,
+  plant_glm,ecforest,deeploc,retargeting,sonicparanoid}.py, utils/newick.py,
+  find_neofunctionalization.py, annotate_families.py
+- **wiki**: pgl-wiki guide/installs.md 2026-08-20 항목 (설치·함정 전체)
+
+### 핵심 결론 요약 (재론 금지)
+Round-1 문제 원인 = MCL 파편화(포함 임계값이 MCL 이전에 edge 절단) — 인플레이션·taxon
+sampling·BBH·pep/CDS·프루닝 전부 실측 기각. 해법 = CgigH 제외(9.0%) + 프로파일(#13) +
+구조 tier(ProstT5 재현, Ppc1 쌍 TM 0.90+) + EPA 심판. 두 Ppc1은 한 family, 다른 서브패밀리
+(SF1 vs SF3). SF3 = 발현 주도 subfunctionalization(74%). AlphaGenome 기각(human/mouse 전용).
+
 ## 7. 재현 정보
 
 - 5종 런: `python family_finder.py --protein-dir data/pep --cds-dir data/cds
