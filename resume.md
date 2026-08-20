@@ -291,8 +291,22 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
   완장 — RELAX 이완과 정합), `Ococ_OcoChr03G21480.t1` T→D+R결손 (OG5, SF2 array 아님).
   21430은 T/R 컬럼 gap(절단) — catalytic incompleteness 부합. 5차 라운드의 "3 SF 모두
   불변" 문장은 이 예외 명시로 정정됨. 스크립트 gpu `verify_residue_numbering.py`.
-- 멀티세션 협업: cluster-diag(코돈 정렬·hyphy·RELAX·DeepLoc -p) + ecforest-runner
-  (ECForest 완주·잔기 재매핑). ec_classifier 다운로드 중복 프로세스 정리(단일 curl 완주).
+- **MEME·aBSREL 완료 (gpu, hyphy 2.5.100)**: MEME — 1,371코돈 중 FDR 통과 0
+  (명목 p≤0.1 26개; attention 영역 col165–209 내 0개; 촉매 E/R 인접 codon 857/858·
+  1285/1290은 명목 수준 기록만). aBSREL — 19 test 가지 중 보정 유의 1개 =
+  **Tfru 말단**(p=6.0e-13, 5.7% 사이트 ω≈40; 조건적 CAM 종의 종 특이 후행 에피소드),
+  SF3 stem 비유의. 산출 `~/pepc_pilot/{meme,absrel}_sf3.{json,log}`.
+  함정: hyphy_new env는 scratch 쪽 micromamba-root에 있음 — `-n` 말고 바이너리 직접 경로.
+- **fast-track codeml BEB** (pronghorn seltest_fast/, 6091859 alt/6091860 null):
+  46서열 서브셋(SF3 10 + 앵커 7 + OG별 최장 대표 2) — **정렬 컬럼 무손상**이라 BEB
+  사이트 번호가 signal_windows 컬럼과 직접 호환. full(102-taxa)은 robustness 확인용으로
+  병행 유지(과학적 필수는 아님 — HyPhy 삼중으로 가설 판정 완료).
+- **15sp v2 예상 소요** (5sp 실측 외삽, 입력 ~48만 = 4.1배): 8코어 ~2일
+  (R1: DIAMOND ~11h + per-OG 12–15h + 프로파일 5–8h), **32코어 ~10–14시간**.
+  반복 실험은 `-b` BLAST 재사용(#10)으로 R1 DIAMOND 비용 회피. 15sp 패널엔 CgigH 원래 없음.
+- README 갱신(eeec64c): JSON 예시에 v2 키 + "Key v2 parameters" 표(실측 근거 포함).
+- 멀티세션 협업: cluster-diag(코돈 정렬·hyphy·RELAX·DeepLoc -p·signal_windows) +
+  ecforest-runner(ECForest 완주·잔기 재매핑). ec_classifier 다운로드 중복 프로세스 정리.
 - **EPA-ng LWR 보정 완료** (PEWO PAC, PEPC clan 30 prunings/189 queries):
   **min_lwr 0.8→0.2, margin 0.3→0.0(죽은 노브)** — 구 0.8은 recall 9% 손실·precision
   이득 0. 오배치 대부분 LWR=1.0 인접 가지(nd≤2), 파국적 오배치는 전원 80–129aa 조각
@@ -320,11 +334,16 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
 
 ### 즉시 확인할 것
 1. ~~ESM-ECForest~~ **완료 (6차 라운드): known-answer 실패로 도구 기각** — #26/#20 기록됨.
-2. **branch-site codeml 결과** (pronghorn 6091847 alt / 6091848 null,
-   `$FF/pepc_pilot/seltest/{alt,null}/results.txt`): 완료 시 `steps/codeml.py parse_lnl` +
-   `lrt_pvalue`(df=1)로 LRT → #26 기록. 실패 시 slurm-*.out 확인.
-3. ~~RELAX~~ **완료: K=0.636, LRT=68.3, p=1.1e-16 — SF3 이완 확정** (#26 기록됨).
-4. `gh issue view 26 --repo wyim-pgl/family_finder` — 대기열 순서대로 진행.
+2. **branch-site codeml 결과**: fast-track(46-taxa, **BEB 정본**) pronghorn 6091859 alt/
+   6091860 null `$FF/pepc_pilot/seltest_fast/` + full(102-taxa, robustness) 6091847/48
+   `seltest/`. 완료 시 `parse_lnl`+`lrt_pvalue`(df=1) → alt의 results.txt BEB 섹션
+   사이트를 signal_windows 컬럼과 교차(#24 마지막 단계) → #24 닫기.
+   full이 내일까지 미수렴이면 kill해도 무방(HyPhy 삼중으로 판정 완료).
+3. **5sp v2 런** (6091850, output_5sp_v2/): 완주 시 Mcry 미배치율 vs 14.9% 대조 → #26.
+   R1 실측: 클러스터링 39분 + per-OG 1h54 + 프로파일 배정(hmmsearch 장시간 정상).
+4. ~~RELAX·MEME·aBSREL~~ **완료 — SF3 순수 subfunctionalization 확정** (#26 기록됨).
+5. `gh issue view 26 --repo wyim-pgl/family_finder` — 대기열 순서대로 진행.
+   (#18은 구조적 차단으로 닫힘; 오픈 #24/#25/#26)
 
 ### 다음 작업 레시피 (#26 대기열 1번: 선택압 검정)
 ```
