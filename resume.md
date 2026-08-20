@@ -305,6 +305,14 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
   (R1: DIAMOND ~11h + per-OG 12–15h + 프로파일 5–8h), **32코어 ~10–14시간**.
   반복 실험은 `-b` BLAST 재사용(#10)으로 R1 DIAMOND 비용 회피. 15sp 패널엔 CgigH 원래 없음.
 - README 갱신(eeec64c): JSON 예시에 v2 키 + "Key v2 parameters" 표(실측 근거 포함).
+- **PEPC clan 병합 실행 완료** (round-4 실행 항목 4번): 15sp fragment 정확히 5개 →
+  단일 PEPC_clan(서브패밀리 라벨 유지). **Ppc1 쌍 TOGETHER ✔ + Ppc2 쌍 TOGETHER ✔**,
+  bacterial 침입 0/95 (plant vs bacterial anchor 분리 1,978 bits). flagship 분열 실체:
+  15sp에서 Mcry_Mcr8G11630=R2_OG0000399 vs Ococ_21370=R1_OG0000440.
+  레코드 gpu `~/pepc_pilot/clan_merge.tsv` (95행) + merge_clan.py.
+  꼬리: truncation 16개는 레코드 밖 — v2 조각 정책(epa_min_query_len)과 함께.
+- **EPA 엘라스틱 게이트 구현**(454069a): `epa_lwr_aggregate="family"`(질량 합 판정,
+  opt-in) + `epa_min_query_len=150`(조각 사전 거부, 기본 on). 테스트 184.
 - 멀티세션 협업: cluster-diag(코돈 정렬·hyphy·RELAX·DeepLoc -p·signal_windows) +
   ecforest-runner(ECForest 완주·잔기 재매핑). ec_classifier 다운로드 중복 프로세스 정리.
 - **EPA-ng LWR 보정 완료** (PEWO PAC, PEPC clan 30 prunings/189 queries):
