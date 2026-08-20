@@ -304,7 +304,12 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
   per-round 프로파일 + relative 프루닝. 완주 후 Mcry 미배치율 vs 14.9% 대조.
 - **DeepLoc -p 완료**(#24 1단계): per-residue attribution 102서열,
   `~/pepc_pilot/deeploc_p_out/alpha_*.csv` (+ results_20260820-114221.csv).
-  signal_windows 추출은 cluster-diag 진행 중.
+- **signal_windows 완료 — SF3 특이 N말단 영역 발견**: `signal_windows.tsv`
+  (86윈도우/74서열). SF별 공통 컬럼 스캔에서 **SF3만 통과(col 174–177+198–202)**;
+  SF3 10멤버 중 9개가 N말단 13–35aa 윈도우(col 165–209 수렴), 7멤버 NLS 예측
+  (flagship 포함, aa22–30=col174–202). 단 **K/R-rich 고전 NLS 조성 아님** — 비고전
+  NLS 클래스 대조 필요. NES 40/40 소수성 통과. RELAX 이완·발현 74%와 같은 clade.
+  남은 것: BEB 교차(branch-site 대기). 상세 #24 코멘트.
 
 ---
 
