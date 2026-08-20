@@ -472,11 +472,29 @@ All parameters can be set via a JSON config file:
   "n_workers": 8,
   "max_rounds": 10,
   "min_orthogroup_size": 4,
+  "min_family_size": 2,
   "distance_ratio_threshold": 5.0,
   "treeshrink_quantile": 0.05,
-  "tree_builder": "fasttree"
+  "tree_builder": "fasttree",
+  "orthofinder_inflation": 1.2,
+  "clustering_species_exclude": [],
+  "profile_assign_per_round": false,
+  "prune_criterion": "relative"
 }
 ```
+
+### Key v2 parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `orthofinder_inflation` | `1.2` | MCL inflation (`-I`); reproduces the OrthoFinder v3 default explicitly. Sweep {1.05–1.3} measured flat — treat as a dead knob (issue #10/#25) |
+| `clustering_species_exclude` | `[]` | Species prefixes kept OUT of tier-1 clustering every round (e.g. `["CgigH"]` — duplicate annotation distorting MCL, +9.0% co-clustering when excluded). Excluded genes rejoin the unplaced pool after convergence for profile mapping / HMMER rescue (issue #12) |
+| `profile_assign_per_round` | `false` | Tier-2: offer each round's outliers to existing family HMM profiles before re-clustering (issue #13). Bit-score based — never compares E-values |
+| `prune_criterion` | `"relative"` | Terminal-branch-subtracted, family-median-normalized pruning with dual threshold (`prune_relative_threshold`=3.0, `prune_score_floor`=2.0); `"absolute"` = legacy `distance_ratio_threshold` (issue #14) |
+| `min_family_size` | `2` | Floor to EMIT a family after pruning — deliberately separate from `min_orthogroup_size` (issue #11) |
+| `epa_min_lwr` | `0.2` | EPA-ng adjudicator: min like-weight ratio to accept a placement. Calibrated by PEWO prune-and-place on the PEPC clan (issue #23): thresholds 0.1–0.3 give recall 1.0 / precision(nd≤2) 0.97; the old 0.8 lost ~9% recall for nothing |
+| `epa_lwr_margin` | `0.0` | Best-vs-second LWR margin — measured as a dead knob in calibration; exact ties remain ambiguous regardless. Catastrophic misplacements are short fragments (<150 aa), so gate on length, not margin |
+| `clustering_method` | `"orthofinder"` | Tier-1 backend; `"sonicparanoid"` adapter exists but was rejected on measured assignment rates (issue #22) |
 
 ## Output
 
