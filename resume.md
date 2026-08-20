@@ -255,7 +255,7 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
 5. Mcry 미배치율 14.9% 대비 v2 최종 측정
 
 **5차 라운드 — 서브패밀리 방법 확정 + 기능 축 + 이슈 재편 (2026-08-20 후반):**
-- **서브패밀리 top-3 비교 완료**: Possvm(‑r 앵커, min_support 95, bacterial 루팅; numpy<1.24 핀 +
+- **서브패밀리 top-3 비교 완료**: Possvm(-r 앵커, min_support 95, bacterial 루팅; numpy<1.24 핀 +
   -skipprint 필요) 30 OG / TreeCluster(s=0,t=1.0) 9클러스터 / 기존 greedy 3 SF —
   **완전한 계층적 중첩, 경계 충돌 0** (SF3 ≡ Possvm OG2 정확히 10/10). 방법론 채택:
   HOG 정의 + Possvm 주분할 + TreeCluster 교차검증 (dossier 전문은 세션 로그, 요약은 #21 코멘트)
@@ -327,7 +327,7 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
 
 ---
 
-## /clear 후 세션 재개 가이드 (2026-08-20 기준)
+## 7. /clear 후 세션 재개 가이드 (2026-08-20 기준)
 
 **정본 문서**: 이 파일(조사 기록) + 이슈 **#25**(파이프라인 스펙) + **#26**(작업 트래커).
 서브에이전트·모니터는 세션 종료와 함께 사라짐 — 아래 "확인할 것"부터 시작.
@@ -352,7 +352,7 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
 # pal2nal을 gpu:~/pepc_pilot/clan_anchor.aln 에 맞춰 실행 → clan_codon.aln
 # SF3 stem(10-leaf flux clade, 지지도 100)에 #1 마킹: steps/codeml.py write_marked_tree
 # branch-site alt/null: steps/codeml.py generate_branch_site_ctl + lrt_pvalue
-# RELAX: hyphy 설치 필요 (micromamba -n phylo -c bioconda hyphy)
+# RELAX: hyphy 설치 필요 (이미 완료 — hyphy_new env(scratch micromamba-root), 바이너리 직접 경로 사용; 신규 설치 시: micromamba create -y -n NAME -c conda-forge -c bioconda hyphy (채널 순서 필수))
 ```
 
 ### 자산 위치
@@ -382,7 +382,7 @@ ESM-ECForest 기각(known-answer 실패) — EC 축은 도메인/촉매잔기 �
 유일한 양성선택은 Tfru 말단 가지(p=6e-13, 종 특이 후행) — 별도 관찰 가치.
 codeml BEB(사이트 목록)만 남음: full(6091847/48) + 46-taxa fast(6091859/60, 컬럼 보존).
 
-## 7. 재현 정보
+## 8. 재현 정보
 
 - 5종 런: `python family_finder.py --protein-dir data/pep --cds-dir data/cds
   --species-tree data/species_tree.nwk --outdir output_5sp --config config_5sp.json
