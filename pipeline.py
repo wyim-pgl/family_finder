@@ -348,13 +348,26 @@ def run(
         input_dir = round_dir / "input"
         split_by_species(current_pool, str(input_dir), config.species_delimiter)
 
-        # Step 2: Run OrthoFinder + parse orthogroups
+        # Step 2: Cluster the pool (tier 1) + parse orthogroups. Backend
+        # selected by config.clustering_method (issue #22): OrthoFinder
+        # (default) or the SonicParanoid2 adapter — both yield the same
+        # og_id -> gene_ids dict, everything downstream is unchanged.
         of_dir = round_dir / "orthofinder"
         try:
-            results_dir = run_orthofinder(input_dir, of_dir, config)
-            orthogroups = parse_orthogroups(results_dir)
+            if config.clustering_method == "sonicparanoid":
+                from steps.sonicparanoid import (
+                    find_groups_file, parse_groups, run_sonicparanoid,
+                )
+                sp_dir = run_sonicparanoid(input_dir, of_dir, config)
+                orthogroups = parse_groups(find_groups_file(sp_dir))
+            else:
+                results_dir = run_orthofinder(input_dir, of_dir, config)
+                orthogroups = parse_orthogroups(results_dir)
         except Exception as e:
-            logger.error(f"OrthoFinder failed in round {round_num}: {e}")
+            logger.error(
+                f"Clustering ({config.clustering_method}) failed in "
+                f"round {round_num}: {e}"
+            )
             break
         logger.info(f"Round {round_num}: {len(orthogroups)} orthogroups found")
 

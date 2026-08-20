@@ -111,6 +111,21 @@ class Config:
     glm_score_cmd: str = ""    # plant gLM adapter (PlantCaduceus/AgroNT/Evo 2), issue #18
     ecforest_cmd: str = ""     # ESM-ECForest wrapper (own conda env), issue #20
 
+    # EPA-ng placement adjudicator (issue #23; steps/epa.py) and tier-1
+    # clustering backend selection (issue #22; steps/sonicparanoid.py).
+    epa_ng_bin: str = "epa-ng"
+    raxml_ng_bin: str = "raxml-ng"          # re-evaluates FastTree branch lengths/model
+    hmmalign_bin: str = "hmmalign"
+    epa_query_align: str = "hmmalign"       # query-alignment backend: "hmmalign" | "mafft-add"
+    # UNCALIBRATED: no published LWR cutoff exists — defaults are starting
+    # points to be calibrated on the 5sp panel (issue #23).
+    epa_min_lwr: float = 0.8                # min like_weight_ratio to accept a placement
+    epa_lwr_margin: float = 0.3             # best-vs-second LWR margin (ties -> ambiguous)
+    epa_max_pendant: float = 0.0            # abstention gate: reject placements with
+                                            # pendant_length above this (0.0 = disabled)
+    sonicparanoid_cmd: str = ""  # e.g. "sonicparanoid -i {pep_dir} -o {outdir} -t 16"
+    clustering_method: str = "orthofinder"  # "orthofinder" | "sonicparanoid"
+
     # Gene ID format: species extracted from prefix before this delimiter
     species_delimiter: str = "_"
 
