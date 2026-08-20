@@ -310,6 +310,8 @@ def _patch_adjudicate_stack(monkeypatch, tmp_path, placement_entries):
                              CLAN_TREE, placement_entries)
 
     monkeypatch.setattr(epa, "run_epa", fake_run_epa)
+    # query fasta for the epa_min_query_len gate (200 aa = passes default 150)
+    (tmp_path / "q.fa").write_text(">Sp1_q\n" + "M" * 200 + "\n")
 
 
 def _clan_ref(tmp_path):
@@ -411,3 +413,93 @@ def test_epa_config_defaults():
     assert config.epa_min_lwr == 0.2   # PEWO-calibrated (issue #23)
     assert config.epa_lwr_margin == 0.0  # dead knob per calibration; ties still ambiguous
     assert config.epa_max_pendant == 0.0  # abstention gate off by default
+
+
+# ---------------------------------------------------------------------------
+# family-mass aggregation + query-length gate (PEWO calibration follow-up)
+# ---------------------------------------------------------------------------
+
+from steps.epa import accept_family_mass  # noqa: E402
+
+EDGE_FAM = {0: "famA", 1: "famA", 2: "famA", 3: "famB", 4: "famB", 5: "famB"}
+
+
+def test_config_defaults_for_aggregation_and_length():
+    config = Config()
+    assert config.epa_lwr_aggregate == "edge"  # existing behavior stays default
+    assert config.epa_min_query_len == 150     # calibration: catastrophic = 80-129 aa
+
+
+def test_family_mass_sums_split_lwr_within_family():
+    # Adjacent-edge split INSIDE famA: each edge low, family mass high.
+    placements = [_placement(0, 0.4), _placement(1, 0.35), _placement(3, 0.25)]
+    config = Config(epa_min_lwr=0.5)
+    got = accept_family_mass(placements, EDGE_FAM, config)
+    assert got is not None
+    family, mass = got
+    assert family == "famA"
+    assert mass == pytest.approx(0.75)
+
+
+def test_family_mass_edge_mode_would_reject_same_case():
+    # Same placements: single-edge gate at 0.5 rejects (best edge 0.4).
+    placements = [_placement(0, 0.4), _placement(1, 0.35), _placement(3, 0.25)]
+    assert accept_placement(placements, Config(epa_min_lwr=0.5)) is None
+
+
+def test_family_mass_margin_and_exact_tie():
+    placements = [_placement(0, 0.5), _placement(3, 0.5)]
+    assert accept_family_mass(placements, EDGE_FAM, Config()) is None  # tie
+    config = Config(epa_lwr_margin=0.3)
+    placements = [_placement(0, 0.55), _placement(3, 0.45)]  # margin 0.10
+    assert accept_family_mass(placements, EDGE_FAM, config) is None
+
+
+def test_family_mass_ignores_unmapped_edges():
+    # Edge 99 has no family majority: its mass counts for nobody.
+    placements = [_placement(99, 0.6), _placement(0, 0.3)]
+    got = accept_family_mass(placements, EDGE_FAM, Config(epa_min_lwr=0.25))
+    assert got is not None and got[0] == "famA"
+    assert accept_family_mass([_placement(99, 0.9)], EDGE_FAM, Config()) is None
+
+
+def test_family_mass_pendant_gate_uses_winning_family_best():
+    placements = [_placement(0, 0.6, pendant=5.0), _placement(1, 0.3)]
+    config = Config(epa_max_pendant=1.0)
+    assert accept_family_mass(placements, EDGE_FAM, config) is None
+
+
+def test_adjudicate_family_mode_rescues_adjacent_edge_split(tmp_path, monkeypatch):
+    # famA mass 0.75 split over edges 0+1, famB 0.25; strict floor 0.5:
+    # edge mode -> ambiguous, family mode -> famA.
+    entry = {"p": [_row(DEFAULT_FIELDS, edge=0, lwr=0.4),
+                   _row(DEFAULT_FIELDS, edge=1, lwr=0.35),
+                   _row(DEFAULT_FIELDS, edge=3, lwr=0.25)], "n": ["Sp1_q"]}
+    _patch_adjudicate_stack(monkeypatch, tmp_path, [entry])
+    edge_cfg = Config(epa_min_lwr=0.5)
+    assert adjudicate("Sp1_q", ["famA", "famB"], _clan_ref(tmp_path),
+                      tmp_path / "q.fa", tmp_path / "adj", edge_cfg) is None
+    fam_cfg = Config(epa_min_lwr=0.5, epa_lwr_aggregate="family")
+    assert adjudicate("Sp1_q", ["famA", "famB"], _clan_ref(tmp_path),
+                      tmp_path / "q.fa", tmp_path / "adj2", fam_cfg) == "famA"
+
+
+def test_adjudicate_rejects_short_query(tmp_path, monkeypatch):
+    entry = {"p": [_row(DEFAULT_FIELDS, edge=2, lwr=0.95)], "n": ["Sp1_q"]}
+    _patch_adjudicate_stack(monkeypatch, tmp_path, [entry])
+    (tmp_path / "q.fa").write_text(">Sp1_q\n" + "M" * 100 + "\n")  # 100 < 150
+    assert adjudicate("Sp1_q", ["famA", "famB"], _clan_ref(tmp_path),
+                      tmp_path / "q.fa", tmp_path / "adj", Config()) is None
+    # gate off -> accepted
+    off = Config(epa_min_query_len=0)
+    assert adjudicate("Sp1_q", ["famA", "famB"], _clan_ref(tmp_path),
+                      tmp_path / "q.fa", tmp_path / "adj2", off) == "famA"
+
+
+def test_adjudicate_unknown_aggregate_mode_raises(tmp_path, monkeypatch):
+    entry = {"p": [_row(DEFAULT_FIELDS, edge=2, lwr=0.95)], "n": ["Sp1_q"]}
+    _patch_adjudicate_stack(monkeypatch, tmp_path, [entry])
+    with pytest.raises(ValueError, match="epa_lwr_aggregate"):
+        adjudicate("Sp1_q", ["famA", "famB"], _clan_ref(tmp_path),
+                   tmp_path / "q.fa", tmp_path / "adj",
+                   Config(epa_lwr_aggregate="clade"))

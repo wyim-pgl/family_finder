@@ -344,6 +344,56 @@ def accept_placement(
     return best if has_margin else None
 
 
+def accept_family_mass(
+    placements: List[Placement],
+    edge_to_family: Dict[int, str],
+    config: Config,
+) -> Optional[tuple]:
+    """Accept the family with the highest SUMMED like-weight ratio.
+
+    PEWO calibration (issue #23) showed the dominant failure of the
+    single-edge gate: a correct placement's LWR mass splits across the
+    correct family's ADJACENT edges, so no single edge clears the floor.
+    Summing per family recovers exactly that mass. Gates mirror
+    accept_placement: family mass >= epa_min_lwr, best-vs-second family
+    mass margin >= epa_lwr_margin with exact ties always ambiguous, and
+    the pendant abstention gate applied to the winning family's strongest
+    placement. Mass on edges absent from edge_to_family (no family
+    majority) counts for nobody.
+
+    Returns (family_id, mass) or None.
+    """
+    if not placements:
+        return None
+    mass: Dict[str, float] = {}
+    strongest: Dict[str, Placement] = {}
+    for p in placements:
+        family = edge_to_family.get(p.edge_num)
+        if family is None:
+            continue
+        mass[family] = mass.get(family, 0.0) + p.like_weight_ratio
+        best = strongest.get(family)
+        if best is None or p.like_weight_ratio > best.like_weight_ratio:
+            strongest[family] = p
+    if not mass:
+        return None
+    ranked = sorted(mass.items(), key=lambda kv: (-kv[1], kv[0]))
+    family, best_mass = ranked[0]
+    if best_mass < config.epa_min_lwr:
+        return None
+    if 0.0 < config.epa_max_pendant < strongest[family].pendant_length:
+        return None
+    if len(ranked) > 1:
+        second_mass = ranked[1][1]
+        has_margin = (
+            best_mass - second_mass >= config.epa_lwr_margin
+            and best_mass > second_mass
+        )
+        if not has_margin:
+            return None
+    return family, best_mass
+
+
 # ---------------------------------------------------------------------------
 # Edge -> family mapping + adjudication
 # ---------------------------------------------------------------------------
@@ -422,9 +472,30 @@ def adjudicate(
     or resolves outside candidate_families (defensive: the joint reference
     should only contain candidates, but the tree is the authority).
     """
+    if config.epa_lwr_aggregate not in ("edge", "family"):
+        raise ValueError(
+            f"epa_lwr_aggregate must be 'edge' or 'family', "
+            f"got {config.epa_lwr_aggregate!r}"
+        )
+
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     candidates = set(candidate_families)
+
+    # Fragment abstention (issue #23 calibration): every catastrophic
+    # misplacement was a short fragment; gate on ungapped length up front.
+    if config.epa_min_query_len > 0:
+        from utils.seqio import read_fasta
+        seq = read_fasta(str(query_fasta)).get(gene_id)
+        if seq is None:
+            raise ValueError(f"{gene_id} not found in {query_fasta}")
+        qlen = len(seq.replace("-", ""))
+        if qlen < config.epa_min_query_len:
+            logger.debug(
+                f"EPA adjudication: {gene_id} rejected — query length "
+                f"{qlen} < epa_min_query_len {config.epa_min_query_len}"
+            )
+            return None
 
     # Place on the raxml-ng EVALUATED tree (re-optimized branch lengths);
     # jplace edge numbers refer to it, and edge_family_map reads the tree
@@ -440,19 +511,29 @@ def adjudicate(
     if not placements:
         logger.debug(f"EPA adjudication: no placements for {gene_id}")
         return None
-    best = accept_placement(placements, config)
-    if best is None:
-        logger.debug(f"EPA adjudication: {gene_id} ambiguous (LWR floor/margin)")
-        return None
-
     mapping = edge_family_map(_jplace_tree(jplace), family_refs.family_of_leaf)
-    family = mapping.get(best.edge_num)
-    if family is None:
-        logger.debug(
-            f"EPA adjudication: {gene_id} placed on edge {best.edge_num} "
-            f"with no family majority"
-        )
-        return None
+
+    if config.epa_lwr_aggregate == "family":
+        accepted = accept_family_mass(placements, mapping, config)
+        if accepted is None:
+            logger.debug(
+                f"EPA adjudication: {gene_id} ambiguous "
+                f"(family-mass floor/margin)"
+            )
+            return None
+        family, _mass = accepted
+    else:
+        best = accept_placement(placements, config)
+        if best is None:
+            logger.debug(f"EPA adjudication: {gene_id} ambiguous (LWR floor/margin)")
+            return None
+        family = mapping.get(best.edge_num)
+        if family is None:
+            logger.debug(
+                f"EPA adjudication: {gene_id} placed on edge {best.edge_num} "
+                f"with no family majority"
+            )
+            return None
     if family not in candidates:
         logger.debug(
             f"EPA adjudication: {gene_id} resolved to {family}, "

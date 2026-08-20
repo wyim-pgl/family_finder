@@ -125,6 +125,14 @@ class Config:
     # misplacements are short fragments (<150 aa), not low-margin ties.
     epa_min_lwr: float = 0.2                # min like_weight_ratio to accept a placement
     epa_lwr_margin: float = 0.0             # best-vs-second LWR margin (exact ties still ambiguous)
+    # "edge" gates on the single best placement; "family" sums LWR over each
+    # family's edges first — calibration showed misplacements are mostly
+    # LWR mass SPLIT across adjacent edges of the correct family, which the
+    # single-edge gate throws away and the family sum recovers.
+    epa_lwr_aggregate: str = "edge"         # "edge" | "family"
+    # Calibration: every catastrophic misplacement (nd>=3) was an 80-129 aa
+    # fragment — length, not LWR, is the real protector. 0 disables.
+    epa_min_query_len: int = 150            # min ungapped query length (aa)
     epa_max_pendant: float = 0.0            # abstention gate: reject placements with
                                             # pendant_length above this (0.0 = disabled)
     sonicparanoid_cmd: str = ""  # e.g. "sonicparanoid -i {pep_dir} -o {outdir} -t 16"
