@@ -285,8 +285,15 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
   2.5.100 `hyphy_new` env, test=SF3 clade 19 branch, 산출 `~/pepc_pilot/relax_sf3.json`).
   subfunctionalization 정합, 강화/양성선택 주도 신기능화 배제 방향.
   hyphy 채널 순서 함정(bioconda 우선→2.5.29 구빌드)은 wiki installs.md 기록됨.
-- 멀티세션 협업: cluster-diag(코돈 정렬·hyphy·RELAX) + ecforest-runner(ECForest 완주).
-  ec_classifier 다운로드 중복 프로세스 정리(단일 curl 완주, 1,771,641,893 bytes 정합).
+- **기능 잔기 재매핑 완료**: ATH 좌표 유효 — E519/T780/R890 = **AT1G53310.2** 기준(정렬
+  컬럼 861/1152/1289), purslane 자체 번호로는 성립 안 함 → ATH 번호로 인용.
+  **invariance 예외 2건**: `Obas__JBFLFP010000003.1_000523` E→D (**SF3 구성원**, 941aa
+  완장 — RELAX 이완과 정합), `Ococ_OcoChr03G21480.t1` T→D+R결손 (OG5, SF2 array 아님).
+  21430은 T/R 컬럼 gap(절단) — catalytic incompleteness 부합. 5차 라운드의 "3 SF 모두
+  불변" 문장은 이 예외 명시로 정정됨. 스크립트 gpu `verify_residue_numbering.py`.
+- 멀티세션 협업: cluster-diag(코돈 정렬·hyphy·RELAX·DeepLoc -p) + ecforest-runner
+  (ECForest 완주·잔기 재매핑). ec_classifier 다운로드 중복 프로세스 정리(단일 curl 완주).
+- PEWO 설치 진행(gpu ~/PEWO, env 생성 중) — EPA-ng LWR 보정용.
 
 ---
 
