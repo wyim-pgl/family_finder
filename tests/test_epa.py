@@ -337,11 +337,14 @@ def test_adjudicate_places_query_on_famB_side(tmp_path, monkeypatch):
 
 
 def test_adjudicate_ambiguous_on_low_lwr_or_margin(tmp_path, monkeypatch):
+    # Gates opt-in explicitly: calibrated defaults (0.2/0.0) would accept
+    # this 0.55-vs-0.45 split — the strict gates must still reject it.
     entry = {"p": [_row(DEFAULT_FIELDS, edge=2, lwr=0.55),
                    _row(DEFAULT_FIELDS, edge=4, lwr=0.45)], "n": ["Sp1_q"]}
     _patch_adjudicate_stack(monkeypatch, tmp_path, [entry])
+    strict = Config(epa_min_lwr=0.8, epa_lwr_margin=0.3)
     assert adjudicate("Sp1_q", ["famA", "famB"], _clan_ref(tmp_path),
-                      tmp_path / "q.fa", tmp_path / "adj", Config()) is None
+                      tmp_path / "q.fa", tmp_path / "adj", strict) is None
 
 
 def test_adjudicate_tied_root_edge_is_ambiguous(tmp_path, monkeypatch):
