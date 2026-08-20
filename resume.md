@@ -226,10 +226,33 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
   SonicParanoid2 5sp/15sp(--graph-only, d2v ZeroDivisionError 우회). 문헌 dossier 요점은 #21 코멘트.
 - 신규 모듈: steps/{epa,sonicparanoid,esm,plant_glm,ecforest}.py + annotate_families.py
 
-**다음 실행 항목:** ① job 6088858 완료 후 #12 채점 (rescue-truth co-clustering + Mcry 배정률
-vs 86.8% 기준선), ② `-I` 스윕 {1.05,1.1,1.15,1.2,1.3} — 같은 `-b` 캐시로 즉시 가능,
-③ `profile_assign_per_round: true`로 5종 재실행 → Mcry 미배치율 14.9% 대비 개선 측정,
-④ #14 종 트리 추정(BUSCO 코돈 concat + IQ-TREE GTR+G)
+**4차 라운드 — GPU 파일럿 완결, v2 구성 확정 (2026-08-20):**
+- **구조 판정 (flagship)**: ESMFold(111/111, 두 flagship pLDDT 89.3) + foldseek —
+  **Ppc1 쌍 qtmscore 0.90/0.93, E~1e-100, 한 클러스터** ✅. Ppc2 쌍도 동일 클러스터.
+  97/111이 단일 구조 클러스터 = 구조는 clan 전체를 한 family로 봄(과병합 주의 → 소속 채널로만).
+- **ProstT5 (접기 생략)**: 같은 쌍을 E=0.0 / bits ~6,020으로 재현 → 게놈 스크린은 ProstT5,
+  접기는 최종 확인용. 주의: ProstT5 DB엔 CA 좌표 없음 → TM류 출력 불가(bits/E만).
+- **SonicParanoid2 기각** (#22 닫힘): --graph-only(2.0.9 d2v ZeroDivisionError 우회) 실측 —
+  배정률 5sp Mcry 65.1%/Cgig 68.2%(OF 86.8/95.9 대비 붕괴), 15sp Mcry 74.7%.
+  Ppc1 양 패널 SPLIT(15sp에선 배정은 됨, Ppc2는 15sp TOGETHER — 부분 점수). BBH 문헌 예측 적중.
+- **15sp 인플레이션 스윕 완결**: I∈{1.05,1.1,1.15,1.2} 전부 Mcry Ppc1 미배정, 지표 평탄 —
+  포함 임계값이 MCL 이전에 자르므로 원리적으로 무효(5sp 대조군은 원본과 완전 동일 = 결정적 구축).
+- **ATH 앵커 검증** (PLAZA selected ath): PPC1/2/3/4 4개 앵커 vs clan ProstT5 —
+  두 flagship 모두 plant-type 확정(세 앵커에 E=0 동급 hit, bacterial-type과 ~2,500 bits 분리).
+  plant-type 내부 구분은 마진 2–25 bits로 불가 → 하위 계보는 트리(EPA-ng) 소관.
+  ATH 앵커는 clan 참조 트리의 라벨링 leaf로 재사용 가능.
+- **v2 최종 구성 (전부 실측 근거)**: Tier1 = OrthoFinder + clustering_species_exclude(CgigH,
+  co-cl 9.0%) · I=1.2 유지 / Tier2 = per-round 프로파일(#13) / Tier3 = ProstT5-foldseek
+  (접기는 확인용) / 심판 = EPA-ng + ATH 앵커(#23) / 프루닝 = relative + 추정 종 트리(#14)
+- flagship 스코어보드: 서열 그래프 ❌(모든 인플레이션·양 패널) · taxon ❌ · CgigH 제외 ❌(clan) ·
+  BBH ❌ · 프로파일 단독 ❌(모호) → **구조 ✅ + 외부 앵커 ✅ + 트리 심판(설계)**
+
+**다음 실행 항목:**
+1. `clustering_species_exclude=[CgigH]` 소형 기능 구현 + 5sp v2 재실행(프로파일 per-round on)
+2. ProstT5 게놈 전체 스크린: 최종 미배치 pool + family 대표 → 3Di 검색 → tier3_assign
+3. EPA-ng LWR 보정: PEWO prune-and-replace를 PEPC clan에서(ATH 앵커 포함 IQ-TREE 참조)
+4. clan 병합 실행: PEPC 5개 fragment → 구조 소속 + EPA 트리 심판으로 재구성 (Ppc1 쌍 TOGETHER 확인)
+5. Mcry 미배치율 14.9% 대비 v2 최종 측정
 
 ## 7. 재현 정보
 
