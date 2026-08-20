@@ -281,8 +281,9 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
   (`$FF/pepc_pilot/seltest/`, 짧은 ID g001–g102 매핑 `id_map.tsv`).
   함정 2건: **cleandata=1이 clan 정렬에서 전 사이트 제거**(1차 제출 즉사 → 0으로 수정),
   **Biopython phylip 변환의 10자 ID 절단**(짧은 ID로 우회).
-- **RELAX 실행 중 — 예비 결과: SF3 선택 이완(K<1 방향), LRT p≈0.0000** (gpu, HyPhy
-  2.5.100 `hyphy_new` env, test=SF3 clade 19 branch). subfunctionalization 정합.
+- **RELAX 완료 — SF3 선택 이완 확정: K=0.636, LRT=68.3, p=1.1e-16** (gpu, HyPhy
+  2.5.100 `hyphy_new` env, test=SF3 clade 19 branch, 산출 `~/pepc_pilot/relax_sf3.json`).
+  subfunctionalization 정합, 강화/양성선택 주도 신기능화 배제 방향.
   hyphy 채널 순서 함정(bioconda 우선→2.5.29 구빌드)은 wiki installs.md 기록됨.
 - 멀티세션 협업: cluster-diag(코돈 정렬·hyphy·RELAX) + ecforest-runner(ECForest 완주).
   ec_classifier 다운로드 중복 프로세스 정리(단일 curl 완주, 1,771,641,893 bytes 정합).
@@ -299,8 +300,7 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
 2. **branch-site codeml 결과** (pronghorn 6091847 alt / 6091848 null,
    `$FF/pepc_pilot/seltest/{alt,null}/results.txt`): 완료 시 `steps/codeml.py parse_lnl` +
    `lrt_pvalue`(df=1)로 LRT → #26 기록. 실패 시 slurm-*.out 확인.
-3. **RELAX 결과** (gpu `~/pepc_pilot/relax_sf3.json` + `.log`): K값·p-value 확인
-   (예비: relaxation, p≈0.0000).
+3. ~~RELAX~~ **완료: K=0.636, LRT=68.3, p=1.1e-16 — SF3 이완 확정** (#26 기록됨).
 4. `gh issue view 26 --repo wyim-pgl/family_finder` — 대기열 순서대로 진행.
 
 ### 다음 작업 레시피 (#26 대기열 1번: 선택압 검정)
