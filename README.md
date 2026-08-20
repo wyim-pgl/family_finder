@@ -494,6 +494,8 @@ All parameters can be set via a JSON config file:
 | `min_family_size` | `2` | Floor to EMIT a family after pruning — deliberately separate from `min_orthogroup_size` (issue #11) |
 | `epa_min_lwr` | `0.2` | EPA-ng adjudicator: min like-weight ratio to accept a placement. Calibrated by PEWO prune-and-place on the PEPC clan (issue #23): thresholds 0.1–0.3 give recall 1.0 / precision(nd≤2) 0.97; the old 0.8 lost ~9% recall for nothing |
 | `epa_lwr_margin` | `0.0` | Best-vs-second LWR margin — measured as a dead knob in calibration; exact ties remain ambiguous regardless. Catastrophic misplacements are short fragments (<150 aa), so gate on length, not margin |
+| `epa_lwr_aggregate` | `"edge"` | `"family"` (opt-in) accepts on the SUM of LWR over each family's edges — recovers correct placements whose mass splits across adjacent edges of the same family (the dominant failure mode in calibration) |
+| `epa_min_query_len` | `150` | Reject fragment queries (ungapped aa) before placement — every catastrophic misplacement in calibration was an 80–129 aa fragment. `0` disables |
 | `clustering_method` | `"orthofinder"` | Tier-1 backend; `"sonicparanoid"` adapter exists but was rejected on measured assignment rates (issue #22) |
 
 ## Output
