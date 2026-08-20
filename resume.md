@@ -357,7 +357,11 @@ Round-1 문제 원인 = MCL 파편화(포함 임계값이 MCL 이전에 edge 절
 sampling·BBH·pep/CDS·프루닝 전부 실측 기각. 해법 = CgigH 제외(9.0%) + 프로파일(#13) +
 구조 tier(ProstT5 재현, Ppc1 쌍 TM 0.90+) + EPA 심판. 두 Ppc1은 한 family, 다른 서브패밀리
 (SF1 vs SF3). SF3 = 발현 주도 subfunctionalization(74%). AlphaGenome 기각(human/mouse 전용).
-ESM-ECForest 기각(known-answer 실패) — EC 축은 도메인/촉매잔기 증거로. RELAX 예비: SF3 이완(p≈0).
+ESM-ECForest 기각(known-answer 실패) — EC 축은 도메인/촉매잔기 증거로.
+**선택압 축 (HyPhy 삼중, 2026-08-20)**: RELAX 이완 K=0.636 p=1.1e-16 + MEME 사이트 FDR
+통과 0 + aBSREL stem 비유의 → **SF3 = 순수 발현 주도 subfunctionalization**.
+유일한 양성선택은 Tfru 말단 가지(p=6e-13, 종 특이 후행) — 별도 관찰 가치.
+codeml BEB(사이트 목록)만 남음: full(6091847/48) + 46-taxa fast(6091859/60, 컬럼 보존).
 
 ## 7. 재현 정보
 
