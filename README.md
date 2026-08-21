@@ -294,15 +294,65 @@ install only the axes you want; `annotation_matrix.py` merges whatever is
 present and reports what is missing. Every gotcha below was hit in practice;
 full install logs live in the lab wiki (`guide/installs.md`).
 
-| Axis | Tool | Install |
+Each axis gets its **own environment** — DeepLoc, SignalP and CLEAN pin
+mutually incompatible torch/numpy versions, so sharing one environment means
+one tool silently overwrites another's dependencies.
+
+| Axis | Tool | Device | Install |
+|---|---|---|---|
+| EC (orthology) | eggNOG-mapper 2.1.15 | CPU | `micromamba create -y -n emapper -c conda-forge -c bioconda python=3.11 eggnog-mapper`, then download the DB (~48 GB extracted) |
+| EC (embedding) | CLEAN | GPU | `git clone https://github.com/tttianhao/CLEAN`, follow its README; pulls ESM-1b weights (7.8 GB) |
+| Structure transfer | Foldseek + AFDB-SwissProt | CPU | static binary from the Foldseek releases page, then `foldseek databases Alphafold/Swiss-Prot afdb_swissprot tmp` (3.9 GB) |
+| Structures (input to the above) | ESMFold *or* ProstT5 3Di | GPU | ESMFold via `transformers.EsmForProteinFolding` in a CUDA-torch environment; ProstT5 is the fold-free alternative when no GPU is available |
+| Localization | DeepLoc 2.1 | GPU | academic licence from DTU HealthTech (registration-gated); `pip install --no-deps <package>`, then add its dependencies individually. Run with `-d cuda` |
+| Signal peptide | SignalP 6.0 fast | CPU | academic licence from DTU HealthTech; `pip install <package>/`, then copy the 1.6 GB model weights into the installed package. The CPU torch build is the right choice here |
+| Subfamilies | Possvm, TreeCluster | CPU | `pip install possvm treecluster` (or from source) |
+| Selection | HyPhy ≥2.5.60, PAML | CPU | `micromamba create -y -n hyphy -c conda-forge -c bioconda hyphy paml` |
+
+#### CPU or GPU?
+
+**The pipeline itself is CPU-only.** OrthoFinder, MAFFT, FastTree, IQ-TREE,
+pal2nal, HMMER, codeml and HyPhy have no GPU path — a CPU cluster runs
+everything in the sections above. GPUs only matter for three annotation axes
+that run protein language models.
+
+| Axis | Device | Measured |
 |---|---|---|
-| EC (orthology) | eggNOG-mapper 2.1.15 | `micromamba create -y -n emapper -c conda-forge -c bioconda python=3.11 eggnog-mapper` then download the DB (~48 GB extracted) |
-| EC (embedding) | CLEAN | `git clone https://github.com/tttianhao/CLEAN`, follow its README; pulls ESM-1b weights (7.8 GB) |
-| Structure transfer | Foldseek + AFDB-SwissProt | static binary from the Foldseek releases page, then `foldseek databases Alphafold/Swiss-Prot afdb_swissprot tmp` (3.9 GB) |
-| Localization | DeepLoc 2.1 | academic licence from DTU HealthTech (registration-gated); `pip install --no-deps <package>` |
-| Signal peptide | SignalP 6.0 fast | academic licence from DTU HealthTech; `pip install <package>/` then copy the 1.6 GB model weights into the installed package |
-| Subfamilies | Possvm, TreeCluster | `pip install possvm treecluster` (or from source) |
-| Selection | HyPhy ≥2.5.60, PAML | `micromamba create -y -n hyphy -c conda-forge -c bioconda hyphy paml` |
+| eggNOG-mapper | **CPU only** (DIAMOND) | — |
+| SignalP 6 (fast model) | **CPU is fine** | 0.23 s/seq; 1.6 s/seq on an older cluster node |
+| Foldseek search | **CPU** | seconds for ~100 structures against AFDB-SwissProt |
+| CLEAN | **GPU strongly preferred** (ESM-1b) | 102 seqs ≈ 2 min on an RTX 4090 |
+| DeepLoc 2.x `Accurate` | **GPU strongly preferred** (ProtT5-XL, ~3B params) | 29,405 proteins in 21 min on a 4090; 5.7 GB VRAM, 16.3 GB RSS |
+| ESMFold | **GPU effectively required** | ~75 s per ~930 aa protein on a 4090; 24 GB VRAM covers ~1000 aa |
+
+Install the matching PyTorch build — this is the one choice that decides
+whether an axis can use the GPU at all:
+
+```bash
+# CPU-only host (smaller download, no driver needed)
+pip install "torch==1.13.1" --index-url https://download.pytorch.org/whl/cpu
+
+# CUDA host — pick the cuXXX that matches your driver (nvidia-smi shows it)
+pip install "torch==2.1.2" --index-url https://download.pytorch.org/whl/cu121
+```
+
+`numpy<2` applies to **both** builds whenever torch is <2.x (see the traps
+below). Confirm what you actually got before running anything long:
+
+```bash
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+**⚠️ Silent CPU fallback is the recurring failure here — a run that is 50×
+slower looks exactly like a run that is working.** Three measured cases:
+
+- **DeepLoc 2.0 never touches the GPU as shipped.** There is no `.cuda()` or `.to(device)` anywhere in its model code, so the 3B-parameter encoder runs on CPU at batch size 1. Moving just the frozen encoder to CUDA fixes it and produces **byte-identical** output (verified against a `CUDA_VISIBLE_DEVICES=` run) — the patch changes speed only. DeepLoc **2.1** accepts `-d cuda` directly and needs no patch.
+- **A stray copy of the package in the working directory wins over the installed one.** After unpacking the tarball, `import DeepLoc2` resolves to `./DeepLoc2` and silently reverts to the unpatched CPU code. Delete the extracted directory and check with `python -c "import DeepLoc2; print(DeepLoc2.__file__)"`.
+- **Foldseek's ProstT5 GPU flag fell back to CPU without an error** (measured: 95 sequences took 13 min on CPU). Read the log, do not assume.
+
+While a long job runs, `nvidia-smi` should show real utilisation — for the
+DeepLoc/ESMFold axes we measured 88–100%. Near-zero means you are on the CPU
+path regardless of what you passed.
 
 **Channel order matters.** On a machine with strict channel priority,
 `-c bioconda -c conda-forge` can pin an ancient build — HyPhy resolved to a
