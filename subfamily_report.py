@@ -37,6 +37,7 @@ Example (PEPC clan):
 
 import argparse
 import csv
+import json
 import sys
 from pathlib import Path
 
@@ -81,6 +82,102 @@ def write_tsv(rows, path: Path):
                                 delimiter="\t")
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _region_bounds(region: str):
+    """'LO-HI' -> (lo, hi)."""
+    lo, hi = region.split("-")
+    return int(lo), int(hi)
+
+
+def read_branch_name_map(path: Path) -> dict:
+    """TSV short<TAB>real — HyPhy renames leaves to g### for its own runs."""
+    name_map = {}
+    with open(path) as f:
+        for line in f:
+            if not line.strip():
+                continue
+            short, real = line.rstrip("\n").split("\t")[:2]
+            name_map[short] = real
+    return name_map
+
+
+def collect_selection_evidence(args) -> dict:
+    """Gather whatever selection/partition evidence the CLI was given.
+
+    Every axis is optional; classify() degrades honestly on what is absent.
+    """
+    evidence: dict = {
+        "expression_share": args.expression_share,
+        "signal_partition": args.signal_partition or "",
+        "retargeting_events": args.retargeting_events,
+    }
+    if args.relax_json:
+        evidence["relax"] = parse_relax(Path(args.relax_json))
+
+    if args.meme_json:
+        sites = parse_meme(Path(args.meme_json))
+        evidence["meme_sites_total"] = len(sites)
+        if args.meme_region:
+            lo, hi = _region_bounds(args.meme_region)
+            evidence["meme_sites_in_region"] = sum(
+                1 for site, _p in sites if lo <= site <= hi
+            )
+
+    if args.absrel_json:
+        branches = parse_absrel(Path(args.absrel_json))
+        if args.branch_name_map:
+            branches = apply_branch_names(
+                branches, read_branch_name_map(Path(args.branch_name_map))
+            )
+        # HyPhy names internal nodes Node###; anything else is a leaf. The
+        # stem/terminal split is what separates neofunctionalization from
+        # post-split lineage fine-tuning.
+        evidence["absrel_stem"] = [b for b in branches if b[0].startswith("Node")]
+        evidence["absrel_terminal"] = [
+            b for b in branches if not b[0].startswith("Node")
+        ]
+
+    if args.branchsite_mlc:
+        from beb_cross import parse_beb  # noqa: E402
+
+        sig = [(site, p) for site, _aa, p in
+               parse_beb(Path(args.branchsite_mlc).read_text()) if p >= 0.95]
+        bs: dict = {"beb_sites_total": len(sig)}
+        if args.meme_region:
+            lo, hi = _region_bounds(args.meme_region)
+            bs["beb_sites_in_region"] = sum(1 for site, _p in sig
+                                            if lo <= site <= hi)
+        if args.branchsite_lnl:
+            alt, null = (float(x) for x in args.branchsite_lnl.split(","))
+            bs["lrt"] = 2 * (alt - null)
+            bs["p"] = lrt_pvalue(alt, null)
+        evidence["branchsite"] = bs
+
+    if args.disorder_json:
+        d = json.loads(Path(args.disorder_json).read_text())
+        evidence["disorder"] = {
+            k: d[k] for k in ("delta", "n_focal", "n_other", "p", "all_below")
+            if k in d
+        }
+    return evidence
+
+
+def write_subfunctionalization(args, verdict: dict, evidence: dict,
+                               outdir: Path) -> None:
+    """subfunctionalization.md (narrative) + .tsv (machine-readable)."""
+    text = narrative(args.family_name, args.focal_subfamily, verdict, evidence)
+    (outdir / "subfunctionalization.md").write_text(text + "\n")
+    with open(outdir / "subfunctionalization.tsv", "w") as f:
+        f.write("subfamily\tverdict\tn_evidence_for\tn_evidence_against\t"
+                "evidence_for\tevidence_against\n")
+        f.write("\t".join([
+            args.focal_subfamily, verdict["verdict"],
+            str(len(verdict["evidence_for"])),
+            str(len(verdict["evidence_against"])),
+            "; ".join(verdict["evidence_for"]),
+            "; ".join(verdict["evidence_against"]),
+        ]) + "\n")
 
 
 def main():
@@ -169,73 +266,9 @@ def main():
               f"({len(scores)} observed pairs)")
 
     if args.focal_subfamily:
-        evidence: dict = {
-            "expression_share": args.expression_share,
-            "signal_partition": args.signal_partition or "",
-            "retargeting_events": args.retargeting_events,
-        }
-        if args.relax_json:
-            evidence["relax"] = parse_relax(Path(args.relax_json))
-        if args.meme_json:
-            sites = parse_meme(Path(args.meme_json))
-            evidence["meme_sites_total"] = len(sites)
-            if args.meme_region:
-                lo, hi = (int(x) for x in args.meme_region.split("-"))
-                evidence["meme_sites_in_region"] = sum(
-                    1 for s, _ in sites if lo <= s <= hi
-                )
-        if args.absrel_json:
-            branches = parse_absrel(Path(args.absrel_json))
-            if args.branch_name_map:
-                name_map = {}
-                with open(args.branch_name_map) as f:
-                    for line in f:
-                        short, real = line.rstrip("\n").split("\t")[:2]
-                        name_map[short] = real
-                branches = apply_branch_names(branches, name_map)
-            # heuristic: HyPhy internal nodes are Node-prefixed; leaves are
-            # gene ids (possibly renamed g###). Stem = significant internals.
-            evidence["absrel_stem"] = [
-                b for b in branches if b[0].startswith("Node")
-            ]
-            evidence["absrel_terminal"] = [
-                b for b in branches if not b[0].startswith("Node")
-            ]
-        if args.branchsite_mlc:
-            from beb_cross import parse_beb  # noqa: E402
-            beb = parse_beb(Path(args.branchsite_mlc).read_text())
-            sig = [(s_, p_) for s_, _a, p_ in beb if p_ >= 0.95]
-            bs: dict = {"beb_sites_total": len(sig)}
-            if args.meme_region:
-                lo, hi = (int(x) for x in args.meme_region.split("-"))
-                bs["beb_sites_in_region"] = sum(1 for s_, _ in sig if lo <= s_ <= hi)
-            if args.branchsite_lnl:
-                alt, null = (float(x) for x in args.branchsite_lnl.split(","))
-                bs["lrt"] = 2 * (alt - null)
-                bs["p"] = lrt_pvalue(alt, null)
-            evidence["branchsite"] = bs
-
-        if args.disorder_json:
-            import json as _json
-            d = _json.loads(Path(args.disorder_json).read_text())
-            evidence["disorder"] = {k: d[k] for k in
-                                    ("delta", "n_focal", "n_other", "p",
-                                     "all_below") if k in d}
-
+        evidence = collect_selection_evidence(args)
         verdict = classify(evidence)
-        text = narrative(args.family_name, args.focal_subfamily,
-                         verdict, evidence)
-        (outdir / "subfunctionalization.md").write_text(text + "\n")
-        with open(outdir / "subfunctionalization.tsv", "w") as f:
-            f.write("subfamily\tverdict\tn_evidence_for\tn_evidence_against\t"
-                    "evidence_for\tevidence_against\n")
-            f.write("\t".join([
-                args.focal_subfamily, verdict["verdict"],
-                str(len(verdict["evidence_for"])),
-                str(len(verdict["evidence_against"])),
-                "; ".join(verdict["evidence_for"]),
-                "; ".join(verdict["evidence_against"]),
-            ]) + "\n")
+        write_subfunctionalization(args, verdict, evidence, outdir)
         print(f"subfunctionalization.md: {args.focal_subfamily} -> "
               f"{verdict['verdict']}")
 
