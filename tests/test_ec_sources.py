@@ -133,3 +133,11 @@ def test_merge_output_compatible_with_ecforest_cache(tmp_path):
     loaded = load_cache(cache)
     assert loaded["ATH_AT1G53310.2"]["ec"] == "4.1.1.31"
     assert loaded["Ccac_g10054"]["is_enzyme"] is False
+
+
+def test_parse_clean_strips_fasta_description(tmp_path):
+    # CLEAN echoes the full FASTA header; gene ids never contain spaces
+    p = tmp_path / "maxsep.csv"
+    p.write_text("Sund_HU01G00894 R1_OG0000440,EC:4.1.1.31/0.99\n")
+    preds = parse_clean(p)
+    assert list(preds) == ["Sund_HU01G00894"]

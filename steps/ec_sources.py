@@ -80,6 +80,7 @@ def parse_clean(path: Path) -> Dict[str, dict]:
             if not line:
                 continue
             gene, _, rest = line.partition(",")
+            gene = gene.split()[0]  # CLEAN echoes full FASTA headers; ids have no spaces
             best_ec, best_conf = "", -1.0
             for cand in rest.split(";"):
                 cand = cand.strip()
