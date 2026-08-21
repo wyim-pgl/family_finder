@@ -18,6 +18,10 @@ Evidence axes (all optional; the verdict degrades honestly):
              = partitioned ancestral role)
   signals    a subfamily-specific localization-signal region (DeepLoc
              attention windows) and Fitch retargeting events
+  disorder   pLDDT inside that region vs the whole protein, CONTROLLED
+             against the same alignment columns in non-focal members —
+             protein termini are floppy in every structure, so the
+             uncontrolled number means nothing
 
 Classification logic (the PEPC SF3 case is the reference pattern):
   subfunctionalization  relaxed selection (K<1, p<alpha) AND no positive
@@ -39,6 +43,7 @@ from typing import Dict, List, Tuple
 
 RELAX_ALPHA = 0.05
 BRANCH_ALPHA = 0.05
+DISORDER_ALPHA = 0.05
 EXPRESSION_DOMINANCE = 0.5   # focal subfamily carries >half the family's expression
 
 
@@ -158,6 +163,16 @@ def classify(evidence: Dict) -> Dict:
             ev_for.append("no BEB positively-selected site inside the signal "
                           "region either (branch-site: 0 sites)")
 
+    dis = evidence.get("disorder")
+    if dis and dis.get("p") is not None and dis["p"] <= DISORDER_ALPHA \
+            and dis.get("delta", 0) < 0:
+        ev_for.append(
+            f"signal region is structurally disordered and specifically so "
+            f"(mean pLDDT {dis['delta']:+.3f} vs the whole protein, "
+            f"p = {dis['p']:.3g} against {dis['n_other']} non-focal members "
+            f"at the same alignment columns)"
+        )
+
     if stem_positive or retarget:
         verdict = "neofunctionalization"
         if retarget:
@@ -235,6 +250,21 @@ def narrative(family: str, subfamily: str, verdict: Dict, evidence: Dict) -> str
                 "site-level methods (MEME and BEB) independently agree that the "
                 "region defining this subfamily is free of positive selection, "
                 "while adaptive change sits elsewhere in the protein body."
+            )
+        dis = evidence.get("disorder")
+        if dis and dis.get("p") is not None and dis["p"] <= DISORDER_ALPHA \
+                and dis.get("delta", 0) < 0:
+            lines.append(
+                f"5. **The region is disordered, and only here.** Mean pLDDT "
+                f"inside the region runs {dis['delta']:+.3f} below the rest of "
+                f"the protein across {dis['n_focal']}/{dis['n_focal']} focal "
+                "members. Protein termini are floppy in every structure, so "
+                "that alone would prove nothing — the control is what counts: "
+                f"the same alignment columns in {dis['n_other']} non-focal "
+                "clan members show no such drop "
+                f"(Mann-Whitney p = {dis['p']:.3g}). A disordered, "
+                "subfamily-specific segment is what relaxed constraint "
+                "produces; adaptive remodelling would leave an ordered one."
             )
         if stem == [] and terminal:
             lines.append(

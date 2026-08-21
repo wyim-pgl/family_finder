@@ -176,3 +176,37 @@ def test_narrative_reports_branchsite_and_its_localization():
     assert "14" in text
     # the region stays clean on BOTH site-level methods
     assert "MEME" in text and "BEB" in text
+
+
+# --- structural disorder axis (pLDDT in the signal region) ---------------
+
+def test_classify_uses_disorder_as_support():
+    """A subfamily-specific region that is structurally DISORDERED supports
+    divergence under relaxed constraint rather than adaptive remodelling."""
+    ev = _sf3_evidence()
+    ev["disorder"] = {"delta": -0.304, "n_focal": 9, "n_other": 76,
+                      "p": 1.95e-05, "all_below": True}
+    v = classify(ev)
+    assert v["verdict"] == "subfunctionalization"
+    assert any("disorder" in e.lower() or "pLDDT" in e for e in v["evidence_for"])
+
+
+def test_disorder_without_significance_is_not_counted():
+    """An unremarkable region must not be dressed up as evidence."""
+    ev = _sf3_evidence()
+    ev["disorder"] = {"delta": -0.02, "n_focal": 9, "n_other": 76,
+                      "p": 0.6, "all_below": False}
+    v = classify(ev)
+    assert not any("pLDDT" in e for e in v["evidence_for"])
+
+
+def test_narrative_reports_the_disorder_control():
+    """The control (non-focal members at the same columns) is what makes the
+    number meaningful — the narrative must carry it, not just the delta."""
+    ev = _sf3_evidence()
+    ev["disorder"] = {"delta": -0.304, "n_focal": 9, "n_other": 76,
+                      "p": 1.95e-05, "all_below": True}
+    text = narrative("PEPC clan", "SF3", classify(ev), ev)
+    assert "76" in text and "9" in text
+    assert "1.95e-05" in text or "1.9e-05" in text
+    assert "disorder" in text.lower()

@@ -23,7 +23,7 @@ splitter) and writes three TSVs into --outdir:
 
 With --focal-subfamily plus the selection-evidence inputs (--relax-json,
 --meme-json/--meme-region, --absrel-json, --expression-share,
---signal-partition), also writes subfunctionalization.md — a narrative
+--signal-partition, --disorder-json), also writes subfunctionalization.md — a narrative
 explaining HOW the subfamily diverged (sub- vs neo-functionalization
 verdict with the per-axis evidence) — and subfunctionalization.tsv.
 
@@ -129,6 +129,10 @@ def main():
                     help="codeml branch-site Model A output (BEB section)")
     ap.add_argument("--branchsite-lnl", default=None,
                     help="'ALT,NULL' lnL pair for the branch-site LRT")
+    ap.add_argument("--disorder-json", default=None,
+                    help="region_disorder.py output — pLDDT of the signal "
+                         "region vs the rest, controlled against non-focal "
+                         "members at the same alignment columns")
     ap.add_argument("--retargeting-events", type=int, default=0,
                     help="Fitch retargeting events gained by the focal clade")
     args = ap.parse_args()
@@ -210,6 +214,13 @@ def main():
                 bs["lrt"] = 2 * (alt - null)
                 bs["p"] = lrt_pvalue(alt, null)
             evidence["branchsite"] = bs
+
+        if args.disorder_json:
+            import json as _json
+            d = _json.loads(Path(args.disorder_json).read_text())
+            evidence["disorder"] = {k: d[k] for k in
+                                    ("delta", "n_focal", "n_other", "p",
+                                     "all_below") if k in d}
 
         verdict = classify(evidence)
         text = narrative(args.family_name, args.focal_subfamily,
