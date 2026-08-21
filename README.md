@@ -235,17 +235,45 @@ Top evidence types: orphan/unplaced (2,639), truncated (1,200), GC3 outlier (365
 
 ## Installation
 
-### Option 1: micromamba (recommended)
+All environments here use **micromamba** — a single static binary, no base
+environment, and the fastest solver of the three. (`conda` and `mamba` accept
+the same subcommands if you already have one; substitute freely.)
+
+### 1. Install micromamba
 
 ```bash
-# Install micromamba if not available
 "${SHELL}" <(curl -L micro.mamba.pm/install.sh)
 
-# Create environment from environment.yml
-micromamba create -f environment.yml
+# one-time shell setup, so `micromamba activate` works in new shells
+micromamba shell init -s bash -r ~/micromamba
+exec $SHELL
+```
+
+### 2. Create the pipeline environment
+
+```bash
+micromamba create -y -f environment.yml
+micromamba activate family_finder
+```
+
+Or build it explicitly, without `environment.yml`:
+
+```bash
+micromamba create -y -n family_finder -c conda-forge -c bioconda \
+  python=3.11 orthofinder mafft fasttree iqtree paml pal2nal ete4 biopython rich
 micromamba activate family_finder
 
-# Verify installation
+# Optional: TreeShrink needs Python <=3.9, so give it its own environment
+micromamba create -y -n treeshrink -c conda-forge -c bioconda treeshrink
+```
+
+**Put `conda-forge` before `bioconda`.** With strict channel priority the
+reverse order can pin a years-old build — measured: HyPhy resolved to 2.5.29
+(2021) that way, and pinning a newer version made the solve unsatisfiable.
+
+### 3. Verify
+
+```bash
 python -c "from ete4 import Tree; from Bio import SeqIO; print('OK')"
 orthofinder -h | head -1
 mafft --version
@@ -253,24 +281,10 @@ FastTree 2>&1 | head -1
 pal2nal.pl 2>&1 | head -1
 ```
 
-### Option 2: conda
+Running a command without activating first (handy in scripts and SLURM jobs):
 
 ```bash
-conda env create -f environment.yml
-conda activate family_finder
-```
-
-### Option 3: Manual installation
-
-```bash
-# Create conda env with bioconda tools
-conda create -n family_finder -c conda-forge -c bioconda \
-  python=3.11 orthofinder mafft fasttree iqtree paml pal2nal ete4 biopython rich
-
-conda activate family_finder
-
-# Optional: TreeShrink (requires Python <=3.9, separate env recommended)
-conda create -n treeshrink -c bioconda treeshrink
+micromamba run -n family_finder python family_finder.py --help
 ```
 
 ### Annotation stack (optional, per axis)
@@ -282,13 +296,13 @@ full install logs live in the lab wiki (`guide/installs.md`).
 
 | Axis | Tool | Install |
 |---|---|---|
-| EC (orthology) | eggNOG-mapper 2.1.15 | `micromamba create -n emapper -c conda-forge -c bioconda python=3.11 eggnog-mapper` then download the DB (~48 GB extracted) |
+| EC (orthology) | eggNOG-mapper 2.1.15 | `micromamba create -y -n emapper -c conda-forge -c bioconda python=3.11 eggnog-mapper` then download the DB (~48 GB extracted) |
 | EC (embedding) | CLEAN | `git clone https://github.com/tttianhao/CLEAN`, follow its README; pulls ESM-1b weights (7.8 GB) |
 | Structure transfer | Foldseek + AFDB-SwissProt | static binary from the Foldseek releases page, then `foldseek databases Alphafold/Swiss-Prot afdb_swissprot tmp` (3.9 GB) |
 | Localization | DeepLoc 2.1 | academic licence from DTU HealthTech (registration-gated); `pip install --no-deps <package>` |
 | Signal peptide | SignalP 6.0 fast | academic licence from DTU HealthTech; `pip install <package>/` then copy the 1.6 GB model weights into the installed package |
 | Subfamilies | Possvm, TreeCluster | `pip install possvm treecluster` (or from source) |
-| Selection | HyPhy ≥2.5.60, PAML | `micromamba create -n hyphy -c conda-forge -c bioconda hyphy paml` |
+| Selection | HyPhy ≥2.5.60, PAML | `micromamba create -y -n hyphy -c conda-forge -c bioconda hyphy paml` |
 
 **Channel order matters.** On a machine with strict channel priority,
 `-c bioconda -c conda-forge` can pin an ancient build — HyPhy resolved to a
@@ -325,13 +339,13 @@ run_treeshrink.py -h                 # TreeShrink (outlier detection)
 | Problem | Solution |
 |---|---|
 | `diamond: Invalid option: ignore-warnings` | OrthoFinder 3.1.3 + diamond <2.1.25 incompatibility. Remove `--ignore-warnings` from `orthofinder/run/config.json` |
-| `Cannot run MCL` | Ensure `mcl` is in PATH: `which mcl` or install via `conda install -c bioconda mcl` |
+| `Cannot run MCL` | Ensure `mcl` is in PATH: `which mcl` or install via `micromamba install -c conda-forge -c bioconda mcl` |
 | `MAFFT_BINARIES` conflict | Pipeline auto-clears this env var. If issues persist: `unset MAFFT_BINARIES` |
-| `No module named 'Bio'` | Run with the correct Python: the one inside your conda/micromamba env |
+| `No module named 'Bio'` | Run with the correct Python: the one inside your micromamba environment (`micromamba run -n family_finder python ...` avoids the mistake) |
 | TreeShrink won't install | Requires Python <=3.9. Use a separate env or skip (Stage 2 pruning still works) |
 | `ModuleNotFoundError: rich` | `pip install rich` in the OrthoFinder environment |
 | `RuntimeError: Numpy is not available` (SignalP/DeepLoc) | `torch<2` is ABI-incompatible with NumPy 2.x: `pip install "numpy<2"` |
-| `GLIBCXX_3.4.20 not found` | System libstdc++ is older than the conda one. Wrap the entry point with `LD_LIBRARY_PATH=$ENV/lib` |
+| `GLIBCXX_3.4.20 not found` | System libstdc++ is older than the environment's. Wrap the entry point with `LD_LIBRARY_PATH=$ENV/lib` |
 | pip builds `pillow` from source and fails on C99 | glibc too old for manylinux wheels. Install C-extension packages from conda-forge, add pure-Python ones with `pip install --no-deps` |
 | eggNOG-mapper DB download hangs/fails | The hardcoded host is dead — download from the `eggnog5.embl.de` mirror manually |
 | A codeml job shows `FAILED` but wrote results | codeml exits 1 on `error: end of tree file` **after** writing everything. Judge by the output: an `lnL` line and (if enabled) a complete `Bayes Empirical Bayes` block mean the run is usable. A missing `Time used:` line is only the trace of that exit |
@@ -341,7 +355,7 @@ run_treeshrink.py -h                 # TreeShrink (outlier detection)
 
 ```bash
 # 1. Install
-micromamba create -f environment.yml && micromamba activate family_finder
+micromamba create -y -f environment.yml && micromamba activate family_finder
 
 # 2. Prepare input (see Input Preparation below)
 
@@ -874,7 +888,7 @@ Addressed issues found during the 5-species (143K sequences) production run:
 - **Pickle overhead fix**: Workers now receive only their OG's sequences (~5-50 seqs) instead of the entire pool (143K seqs). Reduced inter-process data transfer by ~1000x
 - **Lightweight returns**: Workers return gene ID sets instead of sequence dictionaries, further reducing memory
 - **OrthoFinder diamond compatibility**: Removed `--ignore-warnings` flag incompatible with diamond 2.1.24
-- **PATH management**: Auto-adds orthofinder conda env to PATH for mcl/diamond
+- **PATH management**: Auto-adds the OrthoFinder environment to PATH for mcl/diamond
 
 ### Performance impact of optimizations
 
@@ -894,7 +908,7 @@ Addressed issues found during the 5-species (143K sequences) production run:
 ## Known Issues
 
 - **Ococ annotation quality**: 161 genes have internal stop codons in CDS, causing pal2nal failures. The pipeline auto-filters these and falls back to protein trees.
-- **TreeShrink**: Requires Python <=3.9; may not install in newer conda environments. Pipeline works without it (Stage 2 pruning only).
+- **TreeShrink**: Requires Python <=3.9; may not install in newer environments. Pipeline works without it (Stage 2 pruning only).
 - **Large outlier pools** *(v1 run; the v2 figure is pending)*: After HMMER rescue, 7,605 genes remain unplaced. Most are from orthogroups with <4 members (below `min_orthogroup_size`) or are species-specific orphans.
 
 ## Annotation & Naming Stack (post-run)

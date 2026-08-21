@@ -2,7 +2,6 @@ name: family_finder
 channels:
   - conda-forge
   - bioconda
-  - defaults
 dependencies:
   - python>=3.10,<3.13
   - orthofinder>=3.1
