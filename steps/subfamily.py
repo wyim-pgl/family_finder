@@ -7,8 +7,14 @@ tests without ete4 or external tools:
     one subfamily is conserved on a residue the rest of the family rarely
     uses. This is the "WHY does it split" evidence at residue level.
   * taxonomic_composition: is each subfamily a lineage-specific block
-    (taxonomy-driven — species/genus/family-level expansion) or does it
-    span orders (an ancient paralog split that exists "by itself")?
+    or an ancient paralog split that exists "by itself"? Default evidence
+    (issue #27) is the species tree the pipeline already requires: a
+    subfamily whose species set is a clade strictly inside the family's
+    span is lineage-specific; a non-monophyletic set (interleaved with
+    the other subfamilies' species) or one spanning the family's own
+    MRCA is a paralog split. A taxonomy TSV is an optional LABEL layer
+    on top (rank names like "Cactaceae (family)"); without a species
+    tree the legacy rank-purity verdict is used.
   * structure_coherence: given foldseek all-vs-all scores, are subfamilies
     also structurally coherent (mean within-score > mean between-score)?
 
@@ -22,6 +28,8 @@ import logging
 from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional
+
+from utils.newick import Node
 
 logger = logging.getLogger("family_finder")
 
@@ -128,55 +136,156 @@ def load_taxonomy(path: Path) -> Dict[str, Dict[str, str]]:
     return taxonomy
 
 
+def _mrca_with_depth(node: Node, targets: set, depth: int = 0):
+    """Deepest node whose subtree holds every target leaf, with its depth
+    (edges from the root). None when targets is not fully under node."""
+    for child in node.children:
+        hit = _mrca_with_depth(child, targets, depth + 1)
+        if hit is not None:
+            return hit
+    if targets <= node.leaf_names():
+        return node, depth
+    return None
+
+
+def species_monophyly(species: set, tree: Node) -> dict:
+    """Is a species set a clade on the species tree?
+
+    Judged on the species actually present in the tree; the rest are
+    reported in "missing". "intruders" are tree species inside the MRCA
+    but outside the set — empty iff the set is monophyletic (a gene-loss
+    candidate list when it is not). monophyletic is None when no species
+    is in the tree at all.
+    """
+    tree_leaves = tree.leaf_names()
+    in_tree = species & tree_leaves
+    missing = sorted(species - tree_leaves)
+    if not in_tree:
+        return {"monophyletic": None, "mrca_name": "", "mrca_depth": None,
+                "n_in_tree": 0, "intruders": [], "missing": missing}
+    node, depth = _mrca_with_depth(tree, in_tree)
+    intruders = sorted(node.leaf_names() - in_tree)
+    return {"monophyletic": not intruders, "mrca_name": node.name,
+            "mrca_depth": depth, "n_in_tree": len(in_tree),
+            "intruders": intruders, "missing": missing}
+
+
+def clade_rank_label(species: set, taxonomy: Dict[str, Dict[str, str]]) -> str:
+    """Optional label layer: the lowest rank shared by ALL species, e.g.
+    "Cactaceae (family)". Empty when taxonomy is absent/incomplete for the
+    set (a partial label would be misleading) or no rank is shared."""
+    species = set(species)
+    if len(species) == 1:
+        return f"{next(iter(species))} (species)"
+    if not taxonomy or any(s not in taxonomy for s in species):
+        return ""
+    for rank in TAXONOMY_RANKS[1:]:
+        taxa = {taxonomy[s].get(rank) for s in species}
+        if len(taxa) == 1 and None not in taxa:
+            return f"{taxa.pop()} ({rank})"
+    return ""
+
+
+def _rank_purities(species: List[str],
+                   taxonomy: Dict[str, Dict[str, str]]) -> dict:
+    """Per-rank dominant taxon + purity (largest single-taxon fraction)."""
+    cols: dict = {}
+    for rank in TAXONOMY_RANKS:
+        if rank == "species":
+            taxa = species
+        else:
+            taxa = [taxonomy.get(s, {}).get(rank, f"unknown:{s}")
+                    for s in species]
+        dominant, dom_n = Counter(taxa).most_common(1)[0]
+        cols[f"{rank}_purity"] = round(dom_n / len(taxa), 3)
+        cols[f"{rank}_dominant"] = dominant
+    return cols
+
+
 def taxonomic_composition(
     groups: Dict[str, List[str]],
-    taxonomy: Dict[str, Dict[str, str]],
+    taxonomy: Optional[Dict[str, Dict[str, str]]] = None,
     delimiter: str = "_",
+    species_tree: Optional[Node] = None,
 ) -> List[dict]:
-    """Per subfamily: does the split follow taxonomy, or cross it?
+    """Per subfamily: does the split follow the species phylogeny, or cross it?
 
-    For each rank (species < genus < family < order) the purity is the
-    largest fraction of members belonging to one taxon. The verdict is
-    "lineage-specific (<rank>)" for the LOWEST rank that is pure — i.e.
-    the split is explainable as a taxonomic block at that rank — and
-    "paralog-split (crosses order)" when even the order rank is mixed:
-    the subfamily exists across lineages, so the division is a property
-    of the gene family itself, not of taxonomy.
+    Species-tree path (default when species_tree is given, issue #27):
+    the subfamily's species set is tested for monophyly on the species
+    tree. A clade whose MRCA sits strictly below the family's own span
+    (the MRCA of ALL subfamilies' species) is "lineage-specific (clade)"
+    — the split maps onto one lineage. A non-monophyletic set, or one
+    spanning the family's span itself (e.g. two ancient paralogs each
+    present in every species), is a paralog split: the divergence
+    predates the speciations that could explain it. taxonomy, when
+    given, only adds rank labels (clade_label, per-rank purities).
 
-    Species absent from the taxonomy table still count (species-level
-    identity comes from the gene-id prefix); higher ranks treat them as
-    their own singleton taxa and the row notes them.
+    Legacy path (species_tree=None): for each rank (species < genus <
+    family < order) the purity is the largest fraction of members in one
+    taxon; the verdict is "lineage-specific (<rank>)" for the LOWEST
+    pure rank and "paralog-split (crosses order)" when even order is
+    mixed. Species absent from the taxonomy table still count (identity
+    comes from the gene-id prefix); higher ranks treat them as singleton
+    taxa and the row notes them.
     """
+    taxonomy = taxonomy or {}
+    per_group = {
+        group_id: [m.split(delimiter, 1)[0] for m in members]
+        for group_id, members in groups.items()
+    }
+
+    family_depth = None
+    if species_tree is not None:
+        union = set().union(*per_group.values()) if per_group else set()
+        span = species_monophyly(union, species_tree)
+        family_depth = span["mrca_depth"]
+
     rows: List[dict] = []
     for group_id, members in sorted(groups.items()):
-        species = [m.split(delimiter, 1)[0] for m in members]
+        species = per_group[group_id]
         unknown = sorted({s for s in species if s not in taxonomy})
-
         row: dict = {
             "subfamily": group_id,
             "n_members": len(members),
             "n_species": len(set(species)),
         }
-        verdict = "paralog-split (crosses order)"
-        for rank in TAXONOMY_RANKS:
-            if rank == "species":
-                taxa = species
+        notes: List[str] = []
+
+        if species_tree is not None:
+            mono = species_monophyly(set(species), species_tree)
+            row["n_in_tree"] = mono["n_in_tree"]
+            row["monophyletic"] = mono["monophyletic"]
+            row["mrca_name"] = mono["mrca_name"]
+            row["mrca_depth"] = mono["mrca_depth"]
+            row["clade_label"] = clade_rank_label(set(species), taxonomy)
+            if mono["monophyletic"] is None:
+                verdict = "unknown (no species in species tree)"
+            elif not mono["monophyletic"]:
+                verdict = "paralog-split (non-monophyletic)"
+            elif mono["mrca_depth"] == family_depth:
+                verdict = "paralog-split (spans family root)"
             else:
-                taxa = [taxonomy.get(s, {}).get(rank, f"unknown:{s}")
-                        for s in species]
-            counts = Counter(taxa)
-            dominant, dom_n = counts.most_common(1)[0]
-            purity = dom_n / len(taxa)
-            row[f"{rank}_purity"] = round(purity, 3)
-            row[f"{rank}_dominant"] = dominant
-        for rank in TAXONOMY_RANKS:  # lowest pure rank wins
-            if row[f"{rank}_purity"] == 1.0:
-                verdict = f"lineage-specific ({rank})"
-                break
+                verdict = "lineage-specific (clade)"
+            if mono["missing"]:
+                notes.append(
+                    "not in species tree: " + ",".join(mono["missing"]))
+            if mono["intruders"]:
+                notes.append(
+                    "interleaved species: " + ",".join(mono["intruders"]))
+            if taxonomy:
+                row.update(_rank_purities(species, taxonomy))
+        else:
+            row.update(_rank_purities(species, taxonomy))
+            verdict = "paralog-split (crosses order)"
+            for rank in TAXONOMY_RANKS:  # lowest pure rank wins
+                if row[f"{rank}_purity"] == 1.0:
+                    verdict = f"lineage-specific ({rank})"
+                    break
+
+        if unknown and (species_tree is None or taxonomy):
+            notes.append("unknown taxonomy for: " + ",".join(unknown))
         row["verdict"] = verdict
-        row["notes"] = (
-            f"unknown taxonomy for: {','.join(unknown)}" if unknown else ""
-        )
+        row["notes"] = "; ".join(notes)
         rows.append(row)
     return rows
 

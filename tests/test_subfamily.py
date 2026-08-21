@@ -15,12 +15,15 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from steps.subfamily import (  # noqa: E402
+    clade_rank_label,
     load_taxonomy,
     parse_pairwise_scores,
     sdp_scan,
+    species_monophyly,
     structure_coherence,
     taxonomic_composition,
 )
+from utils.newick import parse_newick  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +134,101 @@ def test_load_taxonomy_roundtrip(tmp_path):
                  "Sp1\tOpuntia\tCactaceae\tCaryophyllales\n")
     tax = load_taxonomy(p)
     assert tax["Sp1"]["order"] == "Caryophyllales"
+
+
+# ---------------------------------------------------------------------------
+# species-tree attribution (issue #27 — default verdict path)
+# ---------------------------------------------------------------------------
+
+# ((Sp1,Sp2),(Sp3,Sp4)) — Sp1+Sp2 are sisters (both Cactaceae in TAXONOMY).
+SPECIES_TREE = "((Sp1:1,Sp2:1)n12:1,(Sp3:1,Sp4:1)n34:1);"
+
+
+def _tree():
+    return parse_newick(SPECIES_TREE)
+
+
+def test_monophyletic_subset_is_lineage_specific_with_mrca():
+    groups = {
+        "SF_CACTUS": ["Sp1_a", "Sp2_b"],
+        "SF_ALL": ["Sp1_c", "Sp2_d", "Sp3_e", "Sp4_f"],
+    }
+    rows = taxonomic_composition(groups, species_tree=_tree())
+    cactus = next(r for r in rows if r["subfamily"] == "SF_CACTUS")
+    assert cactus["monophyletic"] is True
+    assert cactus["mrca_name"] == "n12" and cactus["mrca_depth"] == 1
+    assert cactus["verdict"] == "lineage-specific (clade)"
+
+
+def test_family_spanning_subfamilies_are_paralog_splits():
+    # Two ancient paralogs each kept in every species (the PEPC Ppc1/Ppc2
+    # shape): both species sets are trivially the root clade, so the
+    # divergence predates every speciation -> paralog split, not lineage.
+    groups = {
+        "SF_P1": ["Sp1_a", "Sp2_b", "Sp3_c", "Sp4_d"],
+        "SF_P2": ["Sp1_e", "Sp2_f", "Sp3_g", "Sp4_h"],
+    }
+    rows = taxonomic_composition(groups, species_tree=_tree())
+    assert all(r["verdict"] == "paralog-split (spans family root)"
+               for r in rows)
+
+
+def test_non_monophyletic_set_is_paralog_split_with_interleaving_note():
+    groups = {"SF_A": ["Sp1_a", "Sp3_b"], "SF_B": ["Sp2_x", "Sp4_y"]}
+    rows = taxonomic_composition(groups, species_tree=_tree())
+    a = next(r for r in rows if r["subfamily"] == "SF_A")
+    assert a["monophyletic"] is False
+    assert a["verdict"] == "paralog-split (non-monophyletic)"
+    assert "interleaved species: Sp2,Sp4" in a["notes"]
+
+
+def test_species_missing_from_tree_judged_on_intersection_and_noted():
+    groups = {"SF_M": ["Sp1_a", "Sp2_b", "Zzz_q"], "SF_O": ["Sp3_x"]}
+    rows = taxonomic_composition(groups, species_tree=_tree())
+    m = next(r for r in rows if r["subfamily"] == "SF_M")
+    assert m["n_in_tree"] == 2 and m["monophyletic"] is True
+    assert m["verdict"] == "lineage-specific (clade)"
+    assert "not in species tree: Zzz" in m["notes"]
+
+
+def test_no_species_in_tree_gives_unknown_verdict():
+    groups = {"SF_Z": ["Zzz_q1", "Yyy_q2"]}
+    rows = taxonomic_composition(groups, species_tree=_tree())
+    z = rows[0]
+    assert z["monophyletic"] is None and z["n_in_tree"] == 0
+    assert z["verdict"] == "unknown (no species in species tree)"
+
+
+def test_taxonomy_is_a_label_layer_on_the_tree_verdict():
+    groups = {
+        "SF_CACTUS": ["Sp1_a", "Sp2_b"],
+        "SF_ALL": ["Sp1_c", "Sp2_d", "Sp3_e", "Sp4_f"],
+    }
+    # absent -> works, label empty
+    bare = taxonomic_composition(groups, species_tree=_tree())
+    cactus = next(r for r in bare if r["subfamily"] == "SF_CACTUS")
+    assert cactus["clade_label"] == ""
+    assert "species_purity" not in cactus
+    # present -> same verdict, rank label + purity columns added
+    labeled = taxonomic_composition(groups, TAXONOMY, species_tree=_tree())
+    cactus_l = next(r for r in labeled if r["subfamily"] == "SF_CACTUS")
+    assert cactus_l["verdict"] == cactus["verdict"]
+    assert cactus_l["clade_label"] == "Cactaceae (family)"
+    assert cactus_l["family_purity"] == 1.0
+
+
+def test_species_monophyly_pure_helper():
+    mono = species_monophyly({"Sp3", "Sp4"}, _tree())
+    assert mono["monophyletic"] is True and mono["mrca_name"] == "n34"
+    mixed = species_monophyly({"Sp1", "Sp3"}, _tree())
+    assert mixed["monophyletic"] is False
+    assert mixed["intruders"] == ["Sp2", "Sp4"]
+
+
+def test_clade_rank_label_single_species_and_no_shared_rank():
+    assert clade_rank_label({"Sp1"}, {}) == "Sp1 (species)"
+    assert clade_rank_label({"Sp1", "Sp4"}, TAXONOMY) == ""  # crosses order
+    assert clade_rank_label({"Sp1", "Zzz"}, TAXONOMY) == ""  # incomplete
 
 
 # ---------------------------------------------------------------------------

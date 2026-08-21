@@ -7,16 +7,25 @@ splitter) and writes three TSVs into --outdir:
 
   sdp_residues.tsv          diagnostic residues per subfamily (with
                             reference numbering when --ref-seq is given)
-  taxonomy_attribution.tsv  per subfamily: lineage-specific (species/
-                            genus/family/order) vs paralog-split — is the
-                            division taxonomy-driven or intrinsic?
+  taxonomy_attribution.tsv  per subfamily: lineage-specific vs
+                            paralog-split. Default evidence (issue #27)
+                            is the species tree (--species-tree, the
+                            same data/species_tree.nwk the pipeline
+                            requires): a subfamily whose species set is
+                            a clade strictly inside the family span is
+                            lineage-specific; non-monophyletic or
+                            family-span sets are paralog splits. A
+                            taxonomy TSV (--taxonomy) is an optional
+                            label layer (rank names); without a tree it
+                            alone drives the legacy rank-purity verdict.
   structure_coherence.tsv   (with --pairs) foldseek all-vs-all within- vs
                             between-subfamily coherence
 
 Example (PEPC clan):
   python subfamily_report.py \
     --alignment clan_anchor.aln --groups possvm_groups.tsv \
-    --taxonomy taxonomy.tsv --pairs foldseek_allvsall.tsv \
+    --species-tree data/species_tree.nwk --taxonomy taxonomy.tsv \
+    --pairs foldseek_allvsall.tsv \
     --ref-seq ATH_AT1G53310.2 --outdir subfam_report
 """
 
@@ -34,6 +43,7 @@ from steps.subfamily import (  # noqa: E402
     structure_coherence,
     taxonomic_composition,
 )
+from utils.newick import parse_newick  # noqa: E402
 from utils.seqio import read_fasta  # noqa: E402
 
 
@@ -67,8 +77,14 @@ def main():
                     help="Family protein alignment (FASTA)")
     ap.add_argument("--groups", required=True,
                     help="TSV: gene_id<TAB>subfamily")
+    ap.add_argument("--species-tree", default=None,
+                    help="Species tree (Newick, leaves = species "
+                         "prefixes) — default verdict evidence: clade "
+                         "test on each subfamily's species set")
     ap.add_argument("--taxonomy", default=None,
-                    help="TSV: species<TAB>genus<TAB>family<TAB>order")
+                    help="TSV: species<TAB>genus<TAB>family<TAB>order — "
+                         "label layer with --species-tree, sole verdict "
+                         "evidence without it (legacy)")
     ap.add_argument("--pairs", default=None,
                     help="foldseek easy-search all-vs-all TSV "
                          "(query,target,evalue,bits,alntmscore)")
@@ -92,10 +108,16 @@ def main():
     print(f"sdp_residues.tsv: {len(sdp)} diagnostic columns")
 
     taxonomy = load_taxonomy(Path(args.taxonomy)) if args.taxonomy else {}
-    tax_rows = taxonomic_composition(groups, taxonomy, args.delimiter)
+    species_tree = (parse_newick(Path(args.species_tree).read_text())
+                    if args.species_tree else None)
+    tax_rows = taxonomic_composition(groups, taxonomy, args.delimiter,
+                                     species_tree=species_tree)
     write_tsv(tax_rows, outdir / "taxonomy_attribution.tsv")
+    source = "species tree" if species_tree else "taxonomy rank purity"
+    print(f"taxonomy_attribution.tsv (verdict evidence: {source})")
     for r in tax_rows:
-        print(f"  {r['subfamily']}: {r['verdict']}")
+        label = f"  [{r['clade_label']}]" if r.get("clade_label") else ""
+        print(f"  {r['subfamily']}: {r['verdict']}{label}")
 
     if args.pairs:
         scores = parse_pairwise_scores(Path(args.pairs))
