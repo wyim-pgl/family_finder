@@ -316,6 +316,48 @@ pal2nal, HMMER, codeml and HyPhy have no GPU path — a CPU cluster runs
 everything in the sections above. GPUs only matter for three annotation axes
 that run protein language models.
 
+**Reference machine** (what the measurements below were taken on):
+
+| | |
+|---|---|
+| GPU | NVIDIA RTX 4090, 24 GB VRAM |
+| Driver / CUDA | 560.35.03 / CUDA 12.6 |
+| Host | 16 cores, 62 GB RAM |
+
+**GPU requirements, by axis:**
+
+| Axis | VRAM | Host RAM | Notes |
+|---|---|---|---|
+| CLEAN (ESM-1b, 650M) | modest — fits well inside 24 GB | — | not separately profiled; the model is an order of magnitude smaller than the two below |
+| DeepLoc `Accurate` (ProtT5-XL, ~3B) | **5.7 GB measured** | **16.3 GB** (model load, not accumulation) | an 8 GB card is enough |
+| ESMFold | **the constraint** — 24 GB covers proteins up to ~1000 aa in fp16 with `chunk_size=64` | — | longer proteins need more VRAM or smaller chunks |
+
+So **8 GB of VRAM runs everything except ESMFold**, and ESMFold is itself
+optional — Foldseek can take ProstT5 3Di sequences instead of predicted
+structures when no large GPU is available (at the cost of losing TM-score,
+since ProstT5-built databases carry no CA coordinates).
+
+**Driver vs torch build.** CUDA minor-version compatibility means a driver
+new enough for the CUDA *major* version runs any build of it: this machine's
+CUDA 12.6 driver runs cu121, cu124 and cu126 wheels side by side (verified —
+three environments here hold torch 1.13.1+cpu, 2.5.1/cu124 and 2.13.0/cu126).
+Match the major version to your driver and do not chase the minor one.
+
+**Disk is the requirement people forget.** Model weights and databases
+dominate — measured on the reference machine:
+
+| Item | Size |
+|---|---|
+| eggNOG DB (extracted) | 48 GB |
+| Foldseek AFDB-SwissProt | 3.9 GB |
+| ESM weights (torch hub cache) | 7.4 GB |
+| SignalP 6 model weights | 1.6 GB |
+| CLEAN checkout + checkpoints | 0.9 GB |
+| ProtT5-XL (HuggingFace cache, DeepLoc `Accurate`) | ~11 GB |
+
+Budget **~75 GB** for the full stack, and put the caches somewhere with room
+(`HF_HOME`, `TORCH_HOME`) rather than letting them land in a small `$HOME`.
+
 | Axis | Device | Measured |
 |---|---|---|
 | eggNOG-mapper | **CPU only** (DIAMOND) | — |
