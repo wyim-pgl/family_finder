@@ -6,11 +6,16 @@ find_neofunctionalization.py) — heavy compute (ESM-2, ESMFold, foldseek,
 ESM-ECForest) happens on the cluster; this script runs anywhere.
 
 Modes (combinable):
-  --ec              EC annotation layer (issue #20): per-family EC consensus
-                    with advisory disagreement flags -> ec_consensus.tsv, and
-                    EC-switch events on family gene trees (Fitch, same
-                    machinery as retargeting) -> ec_switch_events.tsv.
-                    Requires --ecforest-cache (steps.ecforest.save_cache TSV).
+  --ec              EC annotation layer (issues #20/#28): per-family EC
+                    consensus with advisory disagreement flags ->
+                    ec_consensus.tsv, and EC-switch events on family gene
+                    trees (Fitch, same machinery as retargeting) ->
+                    ec_switch_events.tsv. Predictions come from any of
+                    --emapper (eggNOG-mapper .emapper.annotations),
+                    --clean-csv (CLEAN maxsep CSV) — both gate-validated,
+                    merged when both given (emapper EC authoritative,
+                    CLEAN confidence attached) — or the legacy
+                    --ecforest-cache TSV.
   --prep-fold-list  Tier-3 stage-1 prep (issue #17): list the genes to fold —
                     every unplaced gene (unplaced_proteins.fa) plus one
                     representative per family -> fold_list.tsv. Feed this to
@@ -30,6 +35,7 @@ from pathlib import Path
 from typing import Dict, List, Set
 
 from find_neofunctionalization import family_base_dir
+from steps.ec_sources import merge_ec_predictions, parse_clean, parse_emapper
 from steps.ecforest import (
     consensus_disagreements,
     ec_switch_events,
@@ -142,6 +148,26 @@ def prep_fold_list(
     )
 
 
+def load_ec_predictions(args) -> Dict[str, dict]:
+    """Resolve EC predictions from the CLI sources (issue #28 tiering).
+
+    emapper and/or CLEAN are merged (emapper EC authoritative, CLEAN
+    confidence attached); the legacy ECForest cache is used only when it is
+    the sole source, and warned about otherwise — it failed its
+    known-answer gate.
+    """
+    emapper = parse_emapper(Path(args.emapper)) if args.emapper else {}
+    clean = parse_clean(Path(args.clean_csv)) if args.clean_csv else {}
+    if emapper or clean:
+        if args.ecforest_cache:
+            logger.warning("--ecforest-cache ignored: gate-validated sources "
+                           "(--emapper/--clean-csv) provided")
+        if emapper and clean:
+            return merge_ec_predictions(emapper, clean)
+        return emapper or clean
+    return load_cache(Path(args.ecforest_cache))
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -149,9 +175,15 @@ def main():
     ap.add_argument("--run-dir", required=True, help="Pipeline output dir (has summary.tsv)")
     ap.add_argument("--outdir", required=True)
     ap.add_argument("--ec", action="store_true",
-                    help="EC consensus + EC-switch events (needs --ecforest-cache)")
+                    help="EC consensus + EC-switch events (needs --emapper, "
+                         "--clean-csv and/or --ecforest-cache)")
+    ap.add_argument("--emapper", default=None,
+                    help="eggNOG-mapper .emapper.annotations (issue #28)")
+    ap.add_argument("--clean-csv", default=None,
+                    help="CLEAN maxsep CSV (issue #28)")
     ap.add_argument("--ecforest-cache", default=None,
-                    help="ESM-ECForest cache TSV (steps.ecforest.save_cache format)")
+                    help="Legacy ESM-ECForest cache TSV "
+                         "(steps.ecforest.save_cache format)")
     ap.add_argument("--exclude-genes", default=None,
                     help="File of gene IDs to exclude from tree mapping "
                          "(truncated models fake EC switches — pass the "
@@ -166,8 +198,8 @@ def main():
 
     if not args.ec and not args.prep_fold_list:
         ap.error("Nothing to do: pass --ec and/or --prep-fold-list")
-    if args.ec and not args.ecforest_cache:
-        ap.error("--ec requires --ecforest-cache")
+    if args.ec and not (args.emapper or args.clean_csv or args.ecforest_cache):
+        ap.error("--ec requires --emapper, --clean-csv and/or --ecforest-cache")
 
     run_dir, outdir = Path(args.run_dir), Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -176,8 +208,8 @@ def main():
     logger.info(f"Families: {len(families)} from {run_dir / 'summary.tsv'}")
 
     if args.ec:
-        predictions = load_cache(Path(args.ecforest_cache))
-        logger.info(f"ESM-ECForest predictions: {len(predictions)} genes")
+        predictions = load_ec_predictions(args)
+        logger.info(f"EC predictions: {len(predictions)} genes")
         exclude: Set[str] = set()
         if args.exclude_genes:
             exclude = {l.strip() for l in open(args.exclude_genes) if l.strip()}
