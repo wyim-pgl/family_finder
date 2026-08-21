@@ -8,13 +8,23 @@ Iterative gene family construction pipeline with species-aware pruning.
 
 ```
 Round 1: All seqs → OrthoFinder → per-OG align/tree/prune → confirmed families + outliers
-Round 2: Outliers → OrthoFinder → per-OG align/tree/prune → new families + outliers
+           └─ optional tier-2: offer outliers to existing family HMM profiles first
+Round 2: Outliers → OrthoFinder → ... → new families + outliers
 Round N: Repeat until convergence
                                           ↓
-HMMER Rescue: Unplaced genes → hmmsearch vs family HMM profiles → rescued into existing families
+HMMER Rescue: Unplaced genes → hmmsearch vs family HMM profiles → rescued into families
                                           ↓
-Pseudogene Detection (optional): All genes scored across 6 evidence types → candidates classified high/medium/low
+Pseudogene Detection (optional): 6 evidence types → high/medium/low candidates
+                                          ↓
+Post-run analysis (standalone CLIs, see "Annotation & Naming Stack"):
+  subfamilies · EC · structure transfer · localization · naming · selection
 ```
+
+A gene can be placed by any of four tiers: OrthoFinder clustering (every
+round), per-round HMM profile assignment (`profile_assign_per_round`),
+post-convergence HMMER rescue, and — for ambiguous cases — EPA-ng
+phylogenetic placement into an IQ-TREE reference. Everything after that
+is annotation, never a membership filter.
 
 ### Why iterative?
 
@@ -263,6 +273,36 @@ conda activate family_finder
 conda create -n treeshrink -c bioconda treeshrink
 ```
 
+### Annotation stack (optional, per axis)
+
+The post-run annotation CLIs each need their own tool. They are independent —
+install only the axes you want; `annotation_matrix.py` merges whatever is
+present and reports what is missing. Every gotcha below was hit in practice;
+full install logs live in the lab wiki (`guide/installs.md`).
+
+| Axis | Tool | Install |
+|---|---|---|
+| EC (orthology) | eggNOG-mapper 2.1.15 | `micromamba create -n emapper -c conda-forge -c bioconda python=3.11 eggnog-mapper` then download the DB (~48 GB extracted) |
+| EC (embedding) | CLEAN | `git clone https://github.com/tttianhao/CLEAN`, follow its README; pulls ESM-1b weights (7.8 GB) |
+| Structure transfer | Foldseek + AFDB-SwissProt | static binary from the Foldseek releases page, then `foldseek databases Alphafold/Swiss-Prot afdb_swissprot tmp` (3.9 GB) |
+| Localization | DeepLoc 2.1 | academic licence from DTU HealthTech (registration-gated); `pip install --no-deps <package>` |
+| Signal peptide | SignalP 6.0 fast | academic licence from DTU HealthTech; `pip install <package>/` then copy the 1.6 GB model weights into the installed package |
+| Subfamilies | Possvm, TreeCluster | `pip install possvm treecluster` (or from source) |
+| Selection | HyPhy ≥2.5.60, PAML | `micromamba create -n hyphy -c conda-forge -c bioconda hyphy paml` |
+
+**Channel order matters.** On a machine with strict channel priority,
+`-c bioconda -c conda-forge` can pin an ancient build — HyPhy resolved to a
+2021 release (2.5.29) that way. Put **conda-forge first**: `-c conda-forge -c bioconda`.
+
+**Known install traps** (all measured, not hypothetical):
+
+- **SignalP 6 / DeepLoc: pin `numpy<2`.** Their `torch<2` requirement is ABI-incompatible with NumPy 2.x, which pip installs by default. Symptom: `RuntimeError: Numpy is not available` at prediction time, not install time.
+- **DeepLoc on Python 3.12: pin `setuptools<81`** (`pkg_resources` removed) and `pip install sentencepiece` (`T5Tokenizer requires the SentencePiece library`). Install with `--no-deps` or it will overwrite the env's torch.
+- **eggNOG-mapper: the hardcoded download host is dead.** `download_eggnog_data.py` points at `eggnogdb.embl.de`, which no longer resolves ([#575](https://github.com/eggnogdb/eggnog-mapper/issues/575)). Fetch the same files from the `eggnog5.embl.de` mirror manually. Also pin **Python 3.11** — 3.12+ fails on the removed `distutils` ([#516](https://github.com/eggnogdb/eggnog-mapper/issues/516)).
+- **Old glibc (RHEL7 / CentOS 7) breaks pip.** With glibc 2.17 there is no matching manylinux wheel, so pip builds from source and the system gcc (gnu89) rejects C99 code — `pillow` fails with `'for' loop initial declarations are only allowed in C99 mode`. Install C-extension packages (pillow, matplotlib, numpy, scipy) **from conda-forge** and add only pure-Python packages with `pip install --no-deps`.
+- **Old libstdc++ shadows the env's.** Even then, conda-forge matplotlib may load the system library and die with `GLIBCXX_3.4.20 not found`. `micromamba install libstdcxx-ng` alone does not fix it — wrap the entry point with `LD_LIBRARY_PATH=$ENV/lib`.
+- **ProstT5-built Foldseek databases have no CA coordinates.** Asking for TM-score output (`qtmscore`) against one dies with `Cannot open db_ca`. Use bits/E-value with `--alignment-type 2` there; TM-score works against real structure databases such as AFDB.
+
 ### Verify dependencies
 
 ```bash
@@ -290,6 +330,12 @@ run_treeshrink.py -h                 # TreeShrink (outlier detection)
 | `No module named 'Bio'` | Run with the correct Python: the one inside your conda/micromamba env |
 | TreeShrink won't install | Requires Python <=3.9. Use a separate env or skip (Stage 2 pruning still works) |
 | `ModuleNotFoundError: rich` | `pip install rich` in the OrthoFinder environment |
+| `RuntimeError: Numpy is not available` (SignalP/DeepLoc) | `torch<2` is ABI-incompatible with NumPy 2.x: `pip install "numpy<2"` |
+| `GLIBCXX_3.4.20 not found` | System libstdc++ is older than the conda one. Wrap the entry point with `LD_LIBRARY_PATH=$ENV/lib` |
+| pip builds `pillow` from source and fails on C99 | glibc too old for manylinux wheels. Install C-extension packages from conda-forge, add pure-Python ones with `pip install --no-deps` |
+| eggNOG-mapper DB download hangs/fails | The hardcoded host is dead — download from the `eggnog5.embl.de` mirror manually |
+| A codeml job shows `FAILED` but wrote results | codeml exits 1 on `error: end of tree file` **after** writing everything. Judge by the output: an `lnL` line and (if enabled) a complete `Bayes Empirical Bayes` block mean the run is usable. A missing `Time used:` line is only the trace of that exit |
+| BEB probabilities disagree with what you parsed | codeml prints a **NEB block before the BEB block**, with different values for the same site (measured: 0.931 vs 0.970). Parse only after the `Bayes Empirical Bayes` header — codeml itself says "please use the BEB results" |
 
 ## Quick Start
 
@@ -468,6 +514,7 @@ All parameters can be set via a JSON config file:
   "hmmpress_bin": "hmmpress",
   "hmmer_rescue": true,
   "hmmer_evalue": 1e-5,
+  "hmmer_chunk_size": 0,
   "orthofinder_threads": 8,
   "n_workers": 8,
   "max_rounds": 10,
@@ -496,6 +543,7 @@ All parameters can be set via a JSON config file:
 | `epa_lwr_margin` | `0.0` | Best-vs-second LWR margin — measured as a dead knob in calibration; exact ties remain ambiguous regardless. Catastrophic misplacements are short fragments (<150 aa), so gate on length, not margin |
 | `epa_lwr_aggregate` | `"edge"` | `"family"` (opt-in) accepts on the SUM of LWR over each family's edges — recovers correct placements whose mass splits across adjacent edges of the same family (the dominant failure mode in calibration) |
 | `epa_min_query_len` | `150` | Reject fragment queries (ungapped aa) before placement — every catastrophic misplacement in calibration was an 80–129 aa fragment. `0` disables |
+| `hmmer_chunk_size` | `0` | `0` = one hmmsearch call (unchanged behaviour). `>0` splits the profile database into chunks of this many profiles and runs them through a generated **SLURM-optional** script (`sbatch --wait --array` when available, bounded local pool otherwise), then merges. Measured need: rescue cost is profiles × sequences, so the 5sp run's 5.8 h extrapolates to 2.7–4.1 days at 15sp — past a 3-day limit, with no checkpoint inside hmmsearch (issue #31). Companion knobs: `hmmer_chunk_concurrent` (10), `hmmer_chunk_sbatch_extra` (partition/account flags) |
 | `clustering_method` | `"orthofinder"` | Tier-1 backend; `"sonicparanoid"` adapter exists but was rejected on measured assignment rates (issue #22) |
 
 ## Output
@@ -847,7 +895,7 @@ Addressed issues found during the 5-species (143K sequences) production run:
 
 - **Ococ annotation quality**: 161 genes have internal stop codons in CDS, causing pal2nal failures. The pipeline auto-filters these and falls back to protein trees.
 - **TreeShrink**: Requires Python <=3.9; may not install in newer conda environments. Pipeline works without it (Stage 2 pruning only).
-- **Large outlier pools**: After HMMER rescue, 7,605 genes remain unplaced. Most are from orthogroups with <4 members (below `min_orthogroup_size`) or are species-specific orphans.
+- **Large outlier pools** *(v1 run; the v2 figure is pending)*: After HMMER rescue, 7,605 genes remain unplaced. Most are from orthogroups with <4 members (below `min_orthogroup_size`) or are species-specific orphans.
 
 ## Annotation & Naming Stack (post-run)
 
@@ -868,6 +916,57 @@ Caveat that motivated the design: no sequence-, orthology-, or
 structure-based tool sees residue-level catalytic loss (the SF2 tandem-array
 lesson) — EC and structure calls are read alongside domain/catalytic-residue
 evidence.
+
+### Running the stack on one family
+
+`annotate_stack.py` declares every axis as one replayable plan instead of
+five hand-assembled invocations. `--dry-run` prints the commands and names
+whatever is blocked, without touching anything:
+
+```bash
+# what would run, and what is missing
+python annotate_stack.py --family-fasta clan.fa --workdir '~/annot/clan' \
+    --structures '~/pdb' --expected-ec 4.1.1.31 --dry-run
+
+# run the heavy axes on a GPU host, then merge locally
+python annotate_stack.py --family-fasta clan.fa --workdir '~/annot/clan' \
+    --structures '~/pdb' --expected-ec 4.1.1.31 --host gpu --outdir annot_clan
+```
+
+The merge produces `annotation_matrix.tsv` — one row per gene, one column
+block per axis, plus a membership verdict when `--expected-ec` is given:
+
+| verdict | meaning |
+|---|---|
+| `member` | ≥2 axes support the expected EC |
+| `intruder` | no axis supports it AND at least one **confidently** contradicts it (a wrong-EC structural hit at qTM ≥ 0.6, or a wrong EC at confidence ≥ 0.5) |
+| `review` | everything else — an abstention (CLEAN confidence ≈ 0, no structural hit, gene absent from an axis) is **not** evidence of intrusion |
+
+That last row is the point of the design: on the PEPC clan, the remote
+members abstain on every axis while the one true intruder is contradicted by
+two independent axes (106 member / 11 review / 1 intruder).
+
+### Explaining a subfamily split
+
+With the selection evidence in hand, `subfamily_report.py` writes a narrative
+verdict rather than only diagnostics:
+
+```bash
+python subfamily_report.py \
+    --alignment clan.aln --groups subfamilies.tsv --ref-seq ATH_AT1G53310.2 \
+    --species-tree data/species_tree.nwk --outdir subfam_report \
+    --focal-subfamily SF3 --family-name "PEPC clan" \
+    --relax-json relax.json --absrel-json absrel.json \
+    --meme-json meme.json --meme-region 165-209 \
+    --branchsite-mlc alt/results.txt --branchsite-lnl=-49044.15,-49051.83 \
+    --expression-share 0.74 --signal-partition "N-terminal NLS region"
+```
+
+`subfunctionalization.md` then states the verdict and the reasoning per axis:
+relaxed selection **plus** a partitioned ancestral role **plus** no positive
+selection on the stem ⇒ subfunctionalization; positive selection on the stem
+or a gained retargeting event ⇒ neofunctionalization; missing tests ⇒
+`insufficient evidence` rather than a guess.
 
 ## Project Structure
 
