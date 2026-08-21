@@ -21,7 +21,6 @@ source sees residue-level catalytic loss (missing PF00311 / catalytic His)
 catalytic-residue evidence layer; they are annotations, never filters.
 """
 
-import csv
 import logging
 from pathlib import Path
 from typing import Dict

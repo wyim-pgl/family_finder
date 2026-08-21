@@ -19,7 +19,6 @@ entries (P10490/P16097) at sequence identity 1.000.
 """
 
 import argparse
-import json
 import re
 import sys
 import urllib.request

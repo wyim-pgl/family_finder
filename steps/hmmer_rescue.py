@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, Optional, Set, Tuple
 
 from config import Config
-from utils.seqio import read_fasta, write_fasta
+from utils.seqio import write_fasta
 
 # Prevent MAFFT_BINARIES version conflict in conda/micromamba environments
 os.environ.pop("MAFFT_BINARIES", None)

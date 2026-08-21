@@ -35,7 +35,7 @@ meme_sf3.json / absrel_sf3.json from the PEPC pilot).
 
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 RELAX_ALPHA = 0.05
 BRANCH_ALPHA = 0.05

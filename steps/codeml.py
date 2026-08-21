@@ -8,7 +8,6 @@ from typing import Dict, Set
 from Bio import AlignIO
 
 from config import Config
-from utils.seqio import write_fasta
 
 logger = logging.getLogger("family_finder")
 
