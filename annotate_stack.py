@@ -36,6 +36,7 @@ import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional
 
 # Installed locations on the GPU box (lab wiki guide/installs.md).
@@ -179,6 +180,33 @@ def local_merge_command(plan: List[Axis], outdir: str,
     return " \\\n    ".join(parts)
 
 
+def fetch_plan(plan: List[Axis], local_dir: str) -> List[Axis]:
+    """Rewrite each axis's output to where its LOCAL copy will live.
+
+    The axes run on --host, so `Axis.output` is a remote path; the merge
+    runs locally and cannot read it. Local paths are namespaced by axis so
+    two axes cannot collide on a basename.
+    """
+    out = []
+    for a in plan:
+        local = f"{local_dir}/{a.name}/{Path(a.output).name}"
+        out.append(Axis(a.name, a.command, local, a.needs))
+    return out
+
+
+def fetch_outputs(plan: List[Axis], host: str, local_dir: str) -> List[Axis]:
+    """scp each axis output back, returning the plan with local paths."""
+    fetched = fetch_plan(plan, local_dir)
+    for remote, local_axis in zip(plan, fetched):
+        dest = Path(local_axis.output)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run(["scp", "-q", f"{host}:{remote.output}", str(dest)])
+        if r.returncode != 0:
+            print(f"could not fetch {remote.name} from {host}:{remote.output} "
+                  "— the merge tolerates a missing axis", file=sys.stderr)
+    return fetched
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -232,8 +260,11 @@ def main():
         if r.returncode != 0:
             print(f"axis {a.name} failed (exit {r.returncode}) — continuing; "
                   "the merge tolerates missing axes", file=sys.stderr)
-    print("\nAxes done. Fetch the outputs above, then run the merge command.",
-          file=sys.stderr)
+    print(f"\n=== fetching outputs to {args.outdir} ===", file=sys.stderr)
+    fetched = fetch_outputs([a for a in plan if a.name not in blocked],
+                            args.host, args.outdir)
+    print("\n## merge (local, fetched paths)")
+    print(local_merge_command(fetched, args.outdir, args.expected_ec))
     return 0
 
 

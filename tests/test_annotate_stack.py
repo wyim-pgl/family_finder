@@ -127,3 +127,34 @@ def test_foldseek_axis_calls_the_repo_transfer_script():
     fs = [a for a in _plan(structures="~/pdb") if a.name == "foldseek"][0]
     assert "fs_transfer.py" in fs.command
     assert "hits.tsv" in fs.command
+
+
+# --- fetch step (found by actually executing the driver) ------------------
+
+def test_merge_command_uses_local_paths_after_fetch(tmp_path):
+    """The axes run on --host, so their outputs are REMOTE paths. A merge
+    command that pastes remote paths into a local invocation cannot work —
+    the fetched local copies are what the merge must reference."""
+    from annotate_stack import fetch_plan, local_merge_command
+    plan = _plan(axes=["signalp", "emapper"], workdir="~/annot/clan")
+    fetched = fetch_plan(plan, local_dir="annot_clan")
+    cmd = local_merge_command(fetched, outdir="annot_clan", expected_ec=None)
+    assert "~/annot/clan" not in cmd
+    assert "annot_clan/signalp/prediction_results.txt" in cmd
+
+
+def test_fetch_plan_preserves_axis_names_and_commands(tmp_path):
+    from annotate_stack import fetch_plan
+    plan = _plan(axes=["signalp"])
+    fetched = fetch_plan(plan, local_dir="out")
+    assert [a.name for a in fetched] == ["signalp"]
+    assert fetched[0].command == plan[0].command      # unchanged
+    assert fetched[0].output.startswith("out/")
+
+
+def test_fetch_plan_keeps_basenames_unique_across_axes():
+    """Two axes must not collide on a local filename."""
+    from annotate_stack import fetch_plan
+    fetched = fetch_plan(_plan(), local_dir="out")
+    outs = [a.output for a in fetched]
+    assert len(set(outs)) == len(outs)
