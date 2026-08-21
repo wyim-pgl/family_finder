@@ -735,7 +735,7 @@ Cross-species comparison from `species_comparison.tsv`:
 |---|---|---|---|---|---|---|---|---|
 | *C. gigantea* (MAKER) | 29,163 | 27,465 | 1,698 | 0 | 916 | 2,110 | 3,026 | 10.4% |
 | *C. gigantea* (Helixer) | 27,583 | 24,086 | 3,497 | 0 | 1,451 | 3,792 | 5,243 | 19.0% |
-| *M. cristata* | 25,226 | 21,461 | 3,765 | 0 | 1,522 | 4,027 | 5,549 | 22.0% |
+| *M. crystallinum* | 25,226 | 21,461 | 3,765 | 0 | 1,522 | 4,027 | 5,549 | 22.0% |
 | *O. basilaris* | 28,244 | 25,880 | 2,364 | 0 | 1,414 | 2,597 | 4,011 | 14.2% |
 | *O. cochenillifera* | 33,745 | 31,106 | 2,639 | 4 | 2,174 | 2,930 | 5,108 | 15.1% |
 
@@ -849,12 +849,38 @@ Addressed issues found during the 5-species (143K sequences) production run:
 - **TreeShrink**: Requires Python <=3.9; may not install in newer conda environments. Pipeline works without it (Stage 2 pruning only).
 - **Large outlier pools**: After HMMER rescue, 7,605 genes remain unplaced. Most are from orthogroups with <4 members (below `min_orthogroup_size`) or are species-specific orphans.
 
+## Annotation & Naming Stack (post-run)
+
+Standalone CLIs over a finished run; every axis is gate-validated on the PEPC
+clan (known answer: EC 4.1.1.31). All are annotation layers — never
+clustering criteria or membership filters. See methods.md §2.X.6–2.X.7.
+
+| CLI | What it does |
+|---|---|
+| `annotate_families.py --ec` | Family EC consensus + Fitch EC-switch events. Sources: `--emapper` (eggNOG-mapper annotations) and/or `--clean-csv` (CLEAN maxsep), merged with the emapper EC authoritative and the CLEAN confidence attached (`steps/ec_sources.py`). ESM-ECForest failed the gate and remains only as a legacy `--ecforest-cache` fallback. |
+| `annotation_matrix.py` | Merges every axis (emapper, CLEAN, foldseek→AFDB-SwissProt transfer TSV, DeepLoc, SignalP 6) into one per-gene TSV; with `--expected-ec` adds a membership verdict — member (≥2 axes support), intruder (0 support + confident contradiction), review (abstentions are not evidence). PEPC clan: 106 member / 11 review / 1 intruder. |
+| `name_families.py` | Family/subfamily naming: direct annotation table + `--plaza-orthology` layer (DIAMOND best-hit/RBH vs PLAZA ath, built by `extract_plaza_orthology.py`), weighted majority (direct 1.0 > orthology 0.5) with provenance columns. |
+| `subfamily_report.py` | Subfamily diagnostics: SDP scan, `--species-tree` monophyly/MRCA attribution (root-span rule; taxonomy TSV = optional labels), foldseek structural coherence. |
+| `beb_cross.py` | codeml branch-site BEB sites × DeepLoc signal windows (alignment-column overlap; requires the branch-site run to use `cleandata = 0`). |
+
+Caveat that motivated the design: no sequence-, orthology-, or
+structure-based tool sees residue-level catalytic loss (the SF2 tandem-array
+lesson) — EC and structure calls are read alongside domain/catalytic-residue
+evidence.
+
 ## Project Structure
 
 ```
 family_finder/
   family_finder.py          # CLI entry point
   find_pseudogenes.py       # Standalone pseudogene detection script
+  find_neofunctionalization.py  # DeepLoc retargeting + branch-site dN/dS
+  annotate_families.py      # EC layer + tier-3 fold-list prep
+  annotation_matrix.py      # All-axis merge + membership verdicts
+  name_families.py          # Family/subfamily naming (direct + PLAZA orthology)
+  subfamily_report.py       # Subfamily diagnostics report
+  beb_cross.py              # BEB sites x signal windows
+  extract_plaza_orthology.py  # DIAMOND fwd/rev -> orthology TSV (RBH per species)
   config.py                 # Config dataclass + JSON loader
   pipeline.py               # Iterative loop orchestrator
   steps/
@@ -864,7 +890,12 @@ family_finder/
     prune.py                 # TreeShrink + species-aware pruning
     codeml.py                # PAML/codeml wrapper
     hmmer_rescue.py          # HMMER profile-based rescue of unplaced genes
+    profile_assign.py        # Per-round HMM profile assignment tier
     pseudogene.py            # Pseudogene detection (evidence collection + reporting)
+    ec_sources.py            # eggNOG-mapper + CLEAN parsers/merge
+    family_naming.py         # Naming vote logic (direct + orthology weights)
+    subfamily.py             # HOG subfamilies, SDP scan, monophyly attribution
+    deeploc.py / retargeting.py / esm.py / epa.py  # annotation & placement tiers
   utils/
     seqio.py                 # FASTA I/O, species splitting
     species.py               # Species tree loading, pairwise distances
