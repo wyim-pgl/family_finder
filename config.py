@@ -21,6 +21,14 @@ class Config:
     # HMMER rescue parameters
     hmmer_rescue: bool = False
     hmmer_evalue: float = 1e-5
+    # Chunked hmmsearch (issue #31). 0 = single hmmsearch run (default,
+    # unchanged behaviour). >0 splits the profile database into chunks of
+    # this many profiles and runs them through a generated SLURM-optional
+    # runner. Cost is profiles x sequences, so the 15sp rescue extrapolates
+    # to 2.7-4.1 days in one run against a 3-day limit with no checkpoint.
+    hmmer_chunk_size: int = 0
+    hmmer_chunk_concurrent: int = 10   # max chunks in flight (array %N / local pool)
+    hmmer_chunk_sbatch_extra: str = ""  # e.g. "--partition=cpu-s2-core-0 --account=..."
 
     # Per-round profile assignment (issue #13; steps/profile_assign.py)
     profile_assign_per_round: bool = False  # off by default: behavior change is opt-in

@@ -21,6 +21,8 @@ from utils.seqio import read_fasta, write_fasta
 # Prevent MAFFT_BINARIES version conflict in conda/micromamba environments
 os.environ.pop("MAFFT_BINARIES", None)
 
+from steps.hmm_chunks import merge_tblouts, split_hmm_file, write_runner_script
+
 logger = logging.getLogger("family_finder")
 
 
@@ -74,6 +76,37 @@ def _run_hmmsearch(
         logger.error(f"hmmsearch failed: {result.stderr[:300]}")
         raise RuntimeError(f"hmmsearch failed with return code {result.returncode}")
     return outpath
+
+
+def _run_hmmsearch_chunked(
+    combined_hmm: Path, query_fasta: Path, tblout: Path,
+    rescue_dir: Path, config
+) -> None:
+    """Split the profile DB, run the chunks (SLURM-optional), merge.
+
+    Identical output to a single run — profiles are independent, so only
+    the order of tblout blocks differs and the parser keeps the best hit
+    per gene regardless. Fails loudly on any incomplete chunk.
+    """
+    chunk_dir = rescue_dir / "chunks"
+    out_dir = rescue_dir / "chunk_out"
+    chunks = split_hmm_file(combined_hmm, chunk_dir, config.hmmer_chunk_size)
+
+    runner = write_runner_script(
+        rescue_dir / "run_hmmsearch_chunks.sh",
+        n_chunks=len(chunks), chunk_dir=chunk_dir, query_fasta=query_fasta,
+        out_dir=out_dir, hmmsearch_bin=config.hmmsearch_bin,
+        threads=min(config.n_workers, 8), evalue=config.hmmer_evalue,
+        max_concurrent=config.hmmer_chunk_concurrent,
+        sbatch_extra=config.hmmer_chunk_sbatch_extra,
+    )
+    logger.info(f"HMMER rescue: {len(chunks)} chunks of "
+                f"{config.hmmer_chunk_size} profiles -> {runner}")
+    result = subprocess.run(["bash", str(runner)], capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.error(f"chunk runner failed: {result.stderr[-500:]}")
+        raise RuntimeError(f"chunked hmmsearch failed (exit {result.returncode})")
+    merge_tblouts(out_dir, tblout, expected=len(chunks))
 
 
 def _parse_hmmsearch_tblout(
@@ -195,20 +228,26 @@ def rescue_unplaced(
         logger.warning("HMMER rescue: no HMM files to concatenate")
         return families
 
-    # hmmpress the database (-f to force overwrite existing index)
-    press_cmd = [config.hmmpress_bin, "-f", str(combined_hmm)]
-    press_result = subprocess.run(press_cmd, capture_output=True, text=True)
-    if press_result.returncode != 0:
-        logger.error(f"hmmpress failed: {press_result.stderr[:300]}")
-        return families
+    # hmmpress is only needed by hmmscan, never by hmmsearch; skip it when
+    # chunking (it costs minutes and 1.6 GB on the 5sp panel for nothing).
+    if not config.hmmer_chunk_size:
+        press_cmd = [config.hmmpress_bin, "-f", str(combined_hmm)]
+        press_result = subprocess.run(press_cmd, capture_output=True, text=True)
+        if press_result.returncode != 0:
+            logger.error(f"hmmpress failed: {press_result.stderr[:300]}")
+            return families
 
     # Step 3: Write unplaced genes to FASTA
     unplaced_fasta = rescue_dir / "unplaced_proteins.fa"
     write_fasta(unplaced_pool, str(unplaced_fasta))
 
-    # Step 4: Run hmmsearch
+    # Step 4: Run hmmsearch — one call, or chunked (issue #31)
     tblout = rescue_dir / "hmmsearch_results.tblout"
-    _run_hmmsearch(combined_hmm, unplaced_fasta, tblout, config)
+    if config.hmmer_chunk_size:
+        _run_hmmsearch_chunked(combined_hmm, unplaced_fasta, tblout,
+                               rescue_dir, config)
+    else:
+        _run_hmmsearch(combined_hmm, unplaced_fasta, tblout, config)
 
     # Step 5: Parse results and assign genes to families
     hits = _parse_hmmsearch_tblout(tblout, config.hmmer_evalue)
