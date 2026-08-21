@@ -226,6 +226,33 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
   SonicParanoid2 5sp/15sp(--graph-only, d2v ZeroDivisionError 우회). 문헌 dossier 요점은 #21 코멘트.
 - 신규 모듈: steps/{epa,sonicparanoid,esm,plant_glm,ecforest}.py + annotate_families.py
 
+**7차 라운드 — 주석 스택 완성·SF3 판정 확정 (2026-08-21):**
+- **SF3 = subfunctionalization, 6축 확정.** RELAX 이완(K=0.636, p=1.1e-16) · 발현 74% 독식 ·
+  신호영역 분할(col 165-209) · MEME 영역 내 0 · **BEB 영역 내 0** · **구조적 무질서**.
+  branch-site **LRT=15.3631, p=8.87e-05** — ω 0.5/1.5/3.0 세 시작값 **전부 lnL −49044.147942
+  (편차 0)** 로 수렴해 국소최적 유보 해제. 정본 BEB는 fast-track 46-taxa(컬럼 무손상 46×4113
+  vs 102×4113, 좌표 독립 검증: site 102→D/GAC 등). full 102-taxa는 23h/100 iteration 미수렴 —
+  정본 아님.
+- **신규 6번째 축 — region_disorder.py**: SF3 Δ pLDDT **−0.304 (9/9)**, 비-SF3 76개 동일 컬럼
+  대조 −0.071(중앙값 **+0.009**), **Mann-Whitney p=1.95e-05**. 대조군이 곧 발견 — N말단은
+  어느 단백질이나 낮으므로 focal 수치 단독은 무의미.
+- **구조 응집도 최초 실측**: 6개 중 5개 응집(비 중앙값 1.24). ⚠️ foldseek bits는 서열 유사도와
+  교란 — 통제 전 인용 금지. OG4는 비응집(0.914).
+- **ProstT5는 subfunctionalization에 직접 기여 못 함** — DB에 좌표가 없어 pLDDT·TM 불가.
+  역할은 tier-3 소속 배정(값싼 유전체 스크린)에 한정.
+- **이슈 #27·#28·#29·#30·#31 닫힘.** EC 축은 ECForest 기각 → eggNOG-mapper + CLEAN(앵커 7/7
+  통과)로 교체. 구조 기능 전이 99/100이 EC 4.1.1.31, Mcry flagship 2건이 자기 종
+  SwissProt(P10490/P16097) fident 1.000 회수.
+- **공통 한계(스펙 명문화)**: 서열·orthology·구조 어느 축도 **잔기 수준 촉매 결손을 못 봄** —
+  SF2 array를 셋 다 고신뢰 PEPC로 호출. EC·구조는 도메인 증거와 병용하는 주석 레이어.
+- **5sp v2**: 클러스터링 수렴(R1 14,233 → R5 12 → R6-8 0), HMMER rescue **5h43m**에
+  29,943 유전자 → 13,567 family. Mcry 미배치율 대조는 summary.tsv 대기.
+- **#31 청크 hmmsearch**: 실데이터 등가성 통과(배정 4,379건 전건 일치; raw는 컬럼 padding만
+  상이). 15sp는 프로파일×서열이라 2.7–4.1일 → **3일 제한 초과 위험, 옵션 필수**.
+- ⚠️ **codeml FAILED는 허위 신호일 수 있음** — `error: end of tree file`로 결과를 다 쓴 뒤
+  exit 1. 3회 재현. `lnL`+BEB 블록 존재로 판정할 것. tblout/results 파싱 시 **NEB 블록이
+  BEB보다 먼저** 나오고 값이 다름(568: NEB 0.931 vs BEB 0.970).
+
 **4차 라운드 — GPU 파일럿 완결, v2 구성 확정 (2026-08-20):**
 - **구조 판정 (flagship)**: ESMFold(111/111, 두 flagship pLDDT 89.3) + foldseek —
   **Ppc1 쌍 qtmscore 0.90/0.93, E~1e-100, 한 클러스터** ✅. Ppc2 쌍도 동일 클러스터.
