@@ -160,15 +160,39 @@ def write_marked_tree(tree_path: Path, clade_leaves, out_path: Path) -> Path:
     return out_path
 
 
+DEFAULT_START_OMEGA = 1.5
+# Standard multi-start set for the branch-site alternative: one value below
+# neutrality, one at the historical default, one well above. Measured need:
+# the PEPC SF3 fit (LRT 15.36) came from a SINGLE start and could not be
+# claimed free of a local optimum until refit from all three.
+START_OMEGAS = (0.5, 1.5, 3.0)
+
+
+def best_lnl_run(runs):
+    """Pick the (label, lnL) pair with the highest lnL from multi-start fits."""
+    runs = list(runs)
+    if not runs:
+        raise ValueError("no codeml runs to choose from")
+    return max(runs, key=lambda r: r[1])
+
+
 def generate_branch_site_ctl(
     family_id: str,
     codon_aln: Path,
     marked_tree: Path,
     work_dir: Path,
     null: bool,
+    start_omega: float = DEFAULT_START_OMEGA,
 ) -> Path:
     """Control file for branch-site Model A (null=False) or its null
-    (null=True: fix_omega=1, omega=1). LRT df=1 between the pair."""
+    (null=True: fix_omega=1, omega=1). LRT df=1 between the pair.
+
+    `start_omega` is the ALTERNATIVE model's starting omega. codeml's
+    branch-site optimizer is prone to local optima, so the standard guard
+    is to refit from several starting values (see START_OMEGAS) and keep
+    the run with the highest lnL (`best_lnl_run`). The null ignores it —
+    it fixes omega = 1 by definition.
+    """
     work_dir.mkdir(parents=True, exist_ok=True)
 
     phylip_path = work_dir / "alignment.phy"
@@ -179,7 +203,7 @@ def generate_branch_site_ctl(
         treefile=str(marked_tree),
         outfile=str(work_dir / "results.txt"),
         fix_omega=1 if null else 0,
-        omega=1 if null else 1.5,
+        omega=1 if null else start_omega,
     )
     ctl_path = work_dir / "codeml.ctl"
     ctl_path.write_text(ctl_content)

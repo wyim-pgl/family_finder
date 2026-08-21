@@ -172,3 +172,57 @@ def test_benjamini_hochberg():
     assert q[2] == pytest.approx(0.04)   # 0.03*4/3
     assert q[1] == pytest.approx(0.04)   # 0.04*4/4
     assert benjamini_hochberg([]) == []
+
+
+# --- multiple starting omega (branch-site local-optima guard) -------------
+
+def test_branch_site_ctl_accepts_start_omega(tmp_path):
+    """codeml branch-site is prone to local optima; the standard guard is to
+    refit from several starting omegas and keep the best lnL."""
+    aln = tmp_path / "codon.fa"
+    aln.write_text(">a\nATGATG\n>b\nATGATG\n")
+    marked = tmp_path / "t.nwk"
+    marked.write_text("(a #1,b);")
+    ctl = generate_branch_site_ctl("F", aln, marked, tmp_path / "w3",
+                                   null=False, start_omega=3.0)
+    text = ctl.read_text()
+    assert "omega = 3" in text.replace("omega = 3.0", "omega = 3")
+    assert "fix_omega = 0" in text
+
+
+def test_branch_site_null_ignores_start_omega(tmp_path):
+    """The null fixes omega=1 by definition — a start value must not leak in."""
+    aln = tmp_path / "codon.fa"
+    aln.write_text(">a\nATGATG\n>b\nATGATG\n")
+    marked = tmp_path / "t.nwk"
+    marked.write_text("(a #1,b);")
+    ctl = generate_branch_site_ctl("F", aln, marked, tmp_path / "wn",
+                                   null=True, start_omega=3.0)
+    text = ctl.read_text()
+    assert "fix_omega = 1" in text
+    assert "omega = 1" in text
+
+
+def test_branch_site_default_start_omega_unchanged(tmp_path):
+    """Backward compatibility: omitting start_omega keeps the historical 1.5."""
+    aln = tmp_path / "codon.fa"
+    aln.write_text(">a\nATGATG\n>b\nATGATG\n")
+    marked = tmp_path / "t.nwk"
+    marked.write_text("(a #1,b);")
+    ctl = generate_branch_site_ctl("F", aln, marked, tmp_path / "wd", null=False)
+    assert "omega = 1.5" in ctl.read_text()
+
+
+def test_best_lnl_run_picks_maximum():
+    from steps.codeml import best_lnl_run
+    runs = [("w0.5", -100.5), ("w1.5", -99.2), ("w3", -101.0)]
+    assert best_lnl_run(runs) == ("w1.5", -99.2)
+
+
+def test_best_lnl_run_rejects_empty():
+    from steps.codeml import best_lnl_run
+    try:
+        best_lnl_run([])
+    except ValueError:
+        return
+    raise AssertionError("empty run list must raise")

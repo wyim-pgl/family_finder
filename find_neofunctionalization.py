@@ -26,6 +26,8 @@ from pathlib import Path
 
 from config import Config
 from steps.codeml import (
+    START_OMEGAS,
+    best_lnl_run,
     benjamini_hochberg,
     generate_branch_site_ctl,
     lrt_pvalue,
@@ -87,12 +89,31 @@ def test_events(events, run_dir: Path, outdir: Path, config: Config):
         work = outdir / "codeml" / f"{ev.family_id}_ev{i}"
         try:
             marked = write_marked_tree(tree, ev.clade_leaves, work / "marked.nwk")
-            lnls = {}
-            for null in (False, True):
-                sub = work / ("null" if null else "alt")
-                ctl = generate_branch_site_ctl(ev.family_id, codon_aln, marked, sub, null)
+            # Null: omega fixed at 1, one fit. Alternative: refit from
+            # several starting omegas and keep the best lnL — codeml's
+            # branch-site optimizer lands in local optima otherwise.
+            null_dir = work / "null"
+            ctl = generate_branch_site_ctl(ev.family_id, codon_aln, marked,
+                                           null_dir, True)
+            run_codeml(ctl, null_dir, config)
+            lnl_null = parse_lnl(null_dir / "results.txt")
+
+            alt_runs = []
+            for w0 in START_OMEGAS:
+                sub = work / f"alt_w{w0:g}"
+                ctl = generate_branch_site_ctl(ev.family_id, codon_aln, marked,
+                                               sub, False, start_omega=w0)
                 run_codeml(ctl, sub, config)
-                lnls[null] = parse_lnl(sub / "results.txt")
+                alt_runs.append((f"w{w0:g}", parse_lnl(sub / "results.txt")))
+            best_label, lnl_alt = best_lnl_run(alt_runs)
+            spread = lnl_alt - min(l for _, l in alt_runs)
+            if spread > 0.5:
+                logger.warning(
+                    f"{ev.family_id}: branch-site alt lnL spread {spread:.2f} "
+                    f"across starting omegas (best {best_label}) — local optima "
+                    "present, multi-start was necessary"
+                )
+            lnls = {False: lnl_alt, True: lnl_null}
             p = lrt_pvalue(lnls[False], lnls[True])
             rows.append((ev, lnls[False], lnls[True], p))
             logger.info(f"{ev.family_id} {ev.parent_state}->{ev.child_state}: p={p:.3g}")
