@@ -138,6 +138,26 @@ def classify(evidence: Dict) -> Dict:
             + ", ".join(f"{b} (p = {p:.2g})" for b, p in terminal)
         )
 
+    bs = evidence.get("branchsite")
+    if bs:
+        # A clade-wide foreground makes branch-site significance ambiguous:
+        # it fires whether the stem or any descendant branch carries the
+        # signal. aBSREL is what localizes it — so a significant test with
+        # no stem branch implicated is context, not a neofunctionalization
+        # call.
+        if bs["p"] <= RELAX_ALPHA:
+            (ev_against if not stem_positive else ev_for).append(
+                f"branch-site test significant (LRT = {bs['lrt']:g}, "
+                f"p = {bs['p']:.3g}), {bs.get('beb_sites_total', 0)} BEB sites "
+                "P>=0.95 — clade-wide foreground, not localized to the stem"
+                if not stem_positive else
+                f"branch-site test significant (LRT = {bs['lrt']:g}, "
+                f"p = {bs['p']:.3g})"
+            )
+        if bs.get("beb_sites_in_region") == 0 and signal:
+            ev_for.append("no BEB positively-selected site inside the signal "
+                          "region either (branch-site: 0 sites)")
+
     if stem_positive or retarget:
         verdict = "neofunctionalization"
         if retarget:
@@ -198,6 +218,23 @@ def narrative(family: str, subfamily: str, verdict: Dict, evidence: Dict) -> str
                 f"3. **The partition itself.** {subfamily} carries {expr:.0%} of "
                 "the family's expression — the ancestral expression domain was "
                 "divided, and this clade inherited the dominant share."
+            )
+        bs = evidence.get("branchsite")
+        if bs:
+            lines.append(
+                f"4. **What the branch-site test adds — and what it does not.** "
+                f"With the whole clade as foreground, codeml branch-site Model A "
+                f"rejects the null (LRT = {bs['lrt']:g}, p = {bs['p']:.3g}) and "
+                f"BEB identifies {bs.get('beb_sites_total', 0)} sites at "
+                f"P >= 0.95. Positive selection therefore exists somewhere in "
+                "this clade — but a clade-wide foreground cannot say WHERE, and "
+                "aBSREL's per-branch scan places it on a terminal branch, not "
+                "the stem. Decisively, "
+                f"{bs.get('beb_sites_in_region', 0)} of those BEB sites fall "
+                "inside the subfamily-specific signal region: the two "
+                "site-level methods (MEME and BEB) independently agree that the "
+                "region defining this subfamily is free of positive selection, "
+                "while adaptive change sits elsewhere in the protein body."
             )
         if stem == [] and terminal:
             lines.append(

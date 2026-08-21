@@ -57,6 +57,7 @@ from steps.subfunctionalization import (  # noqa: E402
     parse_meme,
     parse_relax,
 )
+from steps.codeml import lrt_pvalue  # noqa: E402
 from utils.newick import parse_newick  # noqa: E402
 from utils.seqio import read_fasta  # noqa: E402
 
@@ -124,6 +125,10 @@ def main():
                     help="Focal subfamily's share of family expression (0-1)")
     ap.add_argument("--signal-partition", default=None,
                     help="One-line description of the signal-region partition")
+    ap.add_argument("--branchsite-mlc", default=None,
+                    help="codeml branch-site Model A output (BEB section)")
+    ap.add_argument("--branchsite-lnl", default=None,
+                    help="'ALT,NULL' lnL pair for the branch-site LRT")
     ap.add_argument("--retargeting-events", type=int, default=0,
                     help="Fitch retargeting events gained by the focal clade")
     args = ap.parse_args()
@@ -192,6 +197,20 @@ def main():
             evidence["absrel_terminal"] = [
                 b for b in branches if not b[0].startswith("Node")
             ]
+        if args.branchsite_mlc:
+            from beb_cross import parse_beb  # noqa: E402
+            beb = parse_beb(Path(args.branchsite_mlc).read_text())
+            sig = [(s_, p_) for s_, _a, p_ in beb if p_ >= 0.95]
+            bs: dict = {"beb_sites_total": len(sig)}
+            if args.meme_region:
+                lo, hi = (int(x) for x in args.meme_region.split("-"))
+                bs["beb_sites_in_region"] = sum(1 for s_, _ in sig if lo <= s_ <= hi)
+            if args.branchsite_lnl:
+                alt, null = (float(x) for x in args.branchsite_lnl.split(","))
+                bs["lrt"] = 2 * (alt - null)
+                bs["p"] = lrt_pvalue(alt, null)
+            evidence["branchsite"] = bs
+
         verdict = classify(evidence)
         text = narrative(args.family_name, args.focal_subfamily,
                          verdict, evidence)

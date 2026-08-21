@@ -152,3 +152,27 @@ def test_apply_branch_names():
         {"g101": "Tfru_contig_062_000131"},
     )
     assert renamed == [("Tfru_contig_062_000131", 6e-13), ("Node12", 0.01)]
+
+
+# --- branch-site axis ----------------------------------------------------
+
+def test_classify_branchsite_significant_but_region_clean_is_still_subfunc():
+    """Clade-wide branch-site significance driven by a TERMINAL branch does
+    not make the split neofunctionalization — the stem is what defines it."""
+    ev = _sf3_evidence()
+    ev["branchsite"] = {"lrt": 15.363, "p": 8.87e-05,
+                        "beb_sites_total": 14, "beb_sites_in_region": 0}
+    v = classify(ev)
+    assert v["verdict"] == "subfunctionalization"
+    assert any("branch-site" in e for e in v["evidence_for"] + v["evidence_against"])
+
+
+def test_narrative_reports_branchsite_and_its_localization():
+    ev = _sf3_evidence()
+    ev["branchsite"] = {"lrt": 15.363, "p": 8.87e-05,
+                        "beb_sites_total": 14, "beb_sites_in_region": 0}
+    text = narrative("PEPC clan", "SF3", classify(ev), ev)
+    assert "8.87e-05" in text
+    assert "14" in text
+    # the region stays clean on BOTH site-level methods
+    assert "MEME" in text and "BEB" in text
