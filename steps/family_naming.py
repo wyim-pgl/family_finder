@@ -10,6 +10,12 @@ Gene-id matching is deliberately forgiving: annotation tables often lack
 the pipeline's SpeciesPrefix_ convention and disagree on isoform suffixes
 (.t1 / .1). match_gene tries exact, prefixed, and suffix variants in a
 deterministic order and reports what it matched — never a silent guess.
+
+Issue #30 adds a second evidence layer: PLAZA-orthology transfer. Families
+without a direct annotation inherit ATH ortholog symbols (map_orthology),
+every row carries its provenance (source: direct | orthology), and
+name_groups weights the majority vote — a direct annotation outweighs an
+orthology transfer (DEFAULT_WEIGHTS).
 """
 
 import logging
@@ -20,6 +26,10 @@ logger = logging.getLogger("family_finder")
 
 # Isoform suffixes tried when adding/stripping variants, most common first.
 _ISOFORM_SUFFIXES = [".t1", ".1", ".t2", ".2"]
+
+# Majority-vote weights per evidence source (issue #30): a curated direct
+# annotation counts double an orthology-transferred description.
+DEFAULT_WEIGHTS = {"direct": 1.0, "orthology": 0.5}
 
 
 def index_families(families: Dict[str, Set[str]]) -> Dict[str, str]:
@@ -83,6 +93,8 @@ def map_annotations(
             "family_id": family_id,
             "subfamily": groups.get(pipeline_id, ""),
             "description": description,
+            "source": "direct",
+            "ortholog": "",
         })
     if unmatched:
         logger.warning(
@@ -92,28 +104,111 @@ def map_annotations(
     return rows, unmatched
 
 
-def name_groups(rows: List[dict], key: str = "family_id") -> List[dict]:
-    """Name each group by its most common member description.
+def map_orthology(
+    orthology: Dict[str, Tuple[str, str]],
+    families: Dict[str, Set[str]],
+    groups: Optional[Dict[str, str]] = None,
+    species: Optional[str] = None,
+) -> Tuple[List[dict], List[str]]:
+    """Per gene with an ATH ortholog: its family/subfamily, source=orthology.
 
-    support = fraction of annotated members carrying the winning
-    description — a 0.5 support name is a coin flip, report it as such.
-    Rows with an empty group value (e.g. genes without a subfamily label
-    when key="subfamily") are skipped.
+    orthology maps gene_id -> (ortholog_id, description), e.g. the output
+    of extract_plaza_orthology.py. Same row shape as map_annotations so
+    both layers feed the same name_groups vote.
     """
-    per_group: Dict[str, List[str]] = {}
+    index = index_families(families)
+    groups = groups or {}
+    rows: List[dict] = []
+    unmatched: List[str] = []
+    for gene, (ortholog, description) in sorted(orthology.items()):
+        hit = match_gene(gene, index, species)
+        if hit is None:
+            unmatched.append(gene)
+            continue
+        pipeline_id, family_id = hit
+        rows.append({
+            "annotation_gene": gene,
+            "pipeline_gene": pipeline_id,
+            "family_id": family_id,
+            "subfamily": groups.get(pipeline_id, ""),
+            "description": description,
+            "source": "orthology",
+            "ortholog": ortholog,
+        })
+    if unmatched:
+        logger.info(
+            f"{len(unmatched)} ortholog-mapped gene(s) not found in any "
+            f"family (first: {unmatched[:3]})"
+        )
+    return rows, unmatched
+
+
+def combine_sources(
+    direct_rows: List[dict], ortho_rows: List[dict]
+) -> List[dict]:
+    """Merge the two evidence layers; per gene, direct suppresses orthology.
+
+    A gene annotated directly already has curated evidence — its orthology
+    transfer would only echo (or contradict) it with weaker support, so it
+    is dropped rather than double-counted.
+    """
+    directly_annotated = {row["pipeline_gene"] for row in direct_rows}
+    kept = [
+        row for row in ortho_rows
+        if row["pipeline_gene"] not in directly_annotated
+    ]
+    return list(direct_rows) + kept
+
+
+def name_groups(
+    rows: List[dict],
+    key: str = "family_id",
+    weights: Optional[Dict[str, float]] = None,
+) -> List[dict]:
+    """Name each group by its weighted-majority member description.
+
+    Each row votes with the weight of its evidence source (rows without a
+    "source" are direct — the pre-#30 single-species layer). support =
+    winning weight / total weight — a 0.5 support name is a coin flip,
+    report it as such. Ties break toward a direct-backed description, then
+    lexicographically (deterministic output). Rows with an empty group
+    value (e.g. genes without a subfamily label when key="subfamily") are
+    skipped. provenance says what carried the winning name: direct when
+    any direct row voted for it, orthology otherwise.
+    """
+    weights = weights if weights is not None else DEFAULT_WEIGHTS
+    per_group: Dict[str, List[dict]] = {}
     for row in rows:
         group = row.get(key, "")
         if not group:
             continue
-        per_group.setdefault(group, []).append(row["description"])
+        per_group.setdefault(group, []).append(row)
 
     named: List[dict] = []
-    for group_id, descriptions in sorted(per_group.items()):
-        top, count = Counter(descriptions).most_common(1)[0]
+    for group_id, members in sorted(per_group.items()):
+        weight_of: Counter = Counter()
+        direct_backed: Set[str] = set()
+        n_direct = n_orthology = 0
+        for row in members:
+            source = row.get("source", "direct")
+            weight_of[row["description"]] += weights.get(source, 1.0)
+            if source == "orthology":
+                n_orthology += 1
+            else:
+                n_direct += 1
+                direct_backed.add(row["description"])
+        top = min(
+            weight_of,
+            key=lambda d: (-weight_of[d], d not in direct_backed, d),
+        )
+        total = sum(weight_of.values())
         named.append({
             "group_id": group_id,
             "name": top,
-            "support": count / len(descriptions),
-            "n_annotated": len(descriptions),
+            "support": weight_of[top] / total,
+            "n_annotated": len(members),
+            "n_direct": n_direct,
+            "n_orthology": n_orthology,
+            "provenance": "direct" if top in direct_backed else "orthology",
         })
     return named
