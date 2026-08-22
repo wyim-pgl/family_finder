@@ -151,61 +151,36 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
   `run_busco_species.sh` 는 `viridiplantae_odb12` 사용(`:29`).
 - `config_11sp.json`, `data/`, `output_5sp/` 도 리포에 없고 클러스터에만 존재.
 
-## 6. 다음 단계
+### 🔴 조용한 실패 — 에러 없이 그럴듯한 틀린 결과를 내는 것들 (8차 라운드에서 전부 실측)
+| 증상 | 진짜 원인 | 판정법 |
+|---|---|---|
+| foldseek `createdb`가 **0.00초**에 끝남 | `--prostt5-model`에 **`.gguf` 파일**을 줬다. 3Di 없이 **아미노산 DB**를 뱉는다(로그엔 경로가 정상 출력됨) | **디렉터리**를 줄 것. `ls <db>_ss` 로 3Di DB 존재 확인 |
+| `--gpu 1` 을 줬는데 GPU 0% | createdb가 이 플래그를 **무시**한다 (`Use GPU 0`) | ProstT5 변환은 CPU 전용으로 계획 |
+| codeml 잡이 SLURM에 **FAILED** | `error: end of tree file` — 결과를 다 쓴 **뒤** exit 1. **3회 재현** | SLURM 상태 말고 `lnL` 줄 + BEB 블록 존재로 판정 |
+| BEB 확률이 파싱값과 다름 | results.txt에 **NEB 블록이 BEB보다 먼저** 나오고 값이 다르다 (site 568: NEB 0.931 vs BEB 0.970) | `Bayes Empirical Bayes` 헤더 **이후만** 파싱 |
+| 구조 관련 대조가 이상하게 적게 매칭됨 | 구조 파일명은 유전자 ID의 `.`을 `_`로 바꾼다. 정규화 없이 대조하면 **111개 중 29개만** 매칭되고 에러가 없다 | 양쪽 ID를 canonical form으로 |
+| 서브패밀리 이름 support가 **1.00**인데 미덥지 않음 | support = 이긴 가중치 / **투표한** 가중치. 20멤버 중 2개만 주석이면 1.00이 나온다 | **`coverage`** 컬럼을 볼 것 (0703796) |
+| 청크 hmmsearch 결과가 단일 실행과 `diff`에서 다름 | HMMER가 파일 내 최장 target 이름에 맞춰 **컬럼 padding**을 맞춘다. 값은 동일 | 공백 정규화 후 비교 (`awk '{$1=$1};1'`) |
+| tblout 병합이 조용히 적은 결과를 냄 | 죽은 태스크가 **겉보기 멀쩡한 잘린 tblout**을 남긴다 | `merge_tblouts`가 `# [ok]` 검사로 차단 — 우회하지 말 것 |
+| 원격 축 결과를 로컬 merge에 넣으면 실패 | 축은 원격에서 돌아 경로가 원격이다 | `annotate_stack.py`가 fetch 후 로컬 경로로 명령을 출력 (8c5cdc4) |
+| `~/dir` 가 아니라 `~`라는 **디렉터리**가 생김 | `shlex.quote('~/x')` → `'~/x'` (리터럴) | `qpath()` 사용 |
 
-GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
+## 6. 다음 단계 — 열린 이슈 (2026-08-22 기준)
 
-**P0 진단 (이것부터 — 코드 수정 없음, 대부분 기존 산출물로 즉시 가능):**
-- [#5](https://github.com/wyim-pgl/family_finder/issues/5) pep/CDS ID 정합성 + within-OG dropout 감사 (최유력 원인, 몇 분 소요, 여기서 종료될 수 있음)
-- [#6](https://github.com/wyim-pgl/family_finder/issues/6) Round-1 OrthoFinder 종별 통계 (디스크에 이미 있음)
-- [#7](https://github.com/wyim-pgl/family_finder/issues/7) BUSCO Outgroup Join Rate 벤치마크 + 실패 5분류
-- [#8](https://github.com/wyim-pgl/family_finder/issues/8) DIAMOND/MCL 그래프 포렌식 — 실패 원인 3분할 (수정 방향 결정)
-- [#9](https://github.com/wyim-pgl/family_finder/issues/9) 실제 프루닝 발생률 측정
+`wyim-pgl/family_finder` (PUBLIC). **#1~#31 중 열린 것 없음** — 아래가 전부.
 
-**P1 클러스터링 (측정 결과에 따라 채택):**
-- [#10](https://github.com/wyim-pgl/family_finder/issues/10) OrthoFinder -og/-I/-S 타입 필드 + -b 재사용 (인플레이션 스윕 {1.05,1.1,1.15,1.2,1.3})
-- [#11](https://github.com/wyim-pgl/family_finder/issues/11) 크기 게이트 분리, OG 전체 해체 제거, max_recycles
-- [#12](https://github.com/wyim-pgl/family_finder/issues/12) CgigH 제외 실험 + 15종 taxon sampling 비교 (정보량 최대 실험)
-- [#13](https://github.com/wyim-pgl/family_finder/issues/13) HMM 프로파일 배정 1급 승격 + 재배정 + family 병합
-
-**P2:**
-- [#14](https://github.com/wyim-pgl/family_finder/issues/14) 프루닝 보정 기준 + 종 트리 데이터 추정 + ASTRAL 문서 모순
-- [#15](https://github.com/wyim-pgl/family_finder/issues/15) 조용한 데이터 손실·resume·TreeShrink 로그·종명 오기
-
-**진행 상황 (2026-08-19):**
-- #7 닫힘 (BUSCO 벤치마크 — 유지자 결정으로 제외)
-- **#8 실행 완료** — HMMER 구제 유전자 6,358개를 truth set으로 Round-1 운명 분류.
-  판정: **B+C ≈ 90%가 MCL/그래프 파편화** (C: 강한 DIAMOND hit이 있는데도 미배정 43-59%,
-  B: 파편 OG 39-47%, 전원 4개 미만 OG). D(민감도) 0.8-6.8%뿐 → `-S` 기각.
-  결과: 이슈 #8 코멘트 + 클러스터 `forensics_r8/per_gene.tsv`
-- **#10 구현 완료** — `build_orthofinder_cmd()` 분리, `-I`/`-S`/`-og`/`-b` 타입 필드,
-  `-b` 모드 rmtree 금지. 테스트 7건 통과 (tests/test_orthofinder_cmd.py)
-- **#11 핵심 구현 완료** — `min_family_size=2` 출력 게이트 분리 (`pipeline.py`),
-  테스트 4건 통과 (tests/test_size_gate.py). max_recycles는 미구현
-- [#16](https://github.com/wyim-pgl/family_finder/issues/16) 신규 — DeepLoc retargeting 가지 +
-  branch-site dN/dS로 신기능화 탐지 (codeml.py에 branch-site Model A 추가 필요; #10·#13 선행)
-
-**진단·구현 2차 라운드 (2026-08-19, 서브에이전트 4개):**
-- **#5 기각** — pep/CDS ID 완전 일치(5종 모두 pep_only=0), round_01 누수 0. 데이터 정합성은 원인이 아님
-- **#6 확정** — Round-1 원시 클러스터링에서 Mcry 최하위: 86.8% 배정(cactus 90.2–95.9%),
-  outlier pool이 R05에 14.9–15.0%로 정체(cactus는 계속 빠짐). 원인은 클러스터링 단계로 확정
-- **#9 판정** — 1,918개 트리 재채점: 임계값 5.0에서 **Mcry 0개 프루닝**(면책).
-  단 **Cgig 10.8%·CgigH 4.9%가 임계 초과** — d_exp(Cgig,CgigH)=0.02 병리가 실측됨.
-  #14가 "방법론 방어"에서 "Cgig/CgigH 실질 정확도 수정"으로 격상.
-  실제 사용 트리 확인: data/species_tree.nwk = 손으로 쓴 값 맞음
-- **#19 신규** — ProcessPoolExecutor 워커 로그가 메인 로그로 전파되지 않아 per-OG 진단이
-  전부 유실됨 (--verbose여도 pipeline.log에 워커 줄 0개). QueueHandler 패턴 필요
-- **#12 진행** — CgigH 제외 재클러스터링 SLURM job **6088858** 제출됨 (완료 후 채점)
-- **#3 차단** — 5종 모두 isoform-level 단백질 없음(Helixer는 설계상 단일 isoform). Sof만 다중
-- **#13 구현·병합** — steps/profile_assign.py (+1,179줄, 테스트 24건). per-round 훅은
-  `profile_assign_per_round: true` opt-in
-- **#14 코드 파트 구현·병합** — relative 프루닝 기준(terminal branch 제외 + family 정규화 +
-  이중 조건), validate_species_tree, ASTRAL 문서 수정. 종 트리 추정(클러스터)만 남음
-- **#15·#2·#4 구현·병합 후 닫힘** — 조용한 손실 경로 폐쇄, ID agreement 리포트,
-  #4 원인 = 깨진 resume가 R1_* 재생성(수정됨)
-- **#17·#18 신규** — ESM-2/ESMFold/Foldseek 3차 구조 배정 / 식물 gLM(AlphaGenome은
-  human/mouse 전용이라 기각 기록)
-- 테스트 73건 통과, master push됨 (ff4002a)
+| 이슈 | 우선순위 | 내용 | 막힘 |
+|---|---|---|---|
+| [#41](https://github.com/wyim-pgl/family_finder/issues/41) | **P0** | 15sp 발사 선결 3건 — 종트리 가지 길이 전부 1.0, config v1, 청크 미설정 | **결정 대기** (종트리 (a)/(b)) |
+| [#40](https://github.com/wyim-pgl/family_finder/issues/40) | **P0** | Ppc1/Ppc2 분리 — **주요부 해결**, 잔여는 Ppc2 선인장 증거(synteny) + methods 반영 | — |
+| [#35](https://github.com/wyim-pgl/family_finder/issues/35) | P0 | 15sp v2 프로덕션 런 | **#41** |
+| [#32](https://github.com/wyim-pgl/family_finder/issues/32) | P1 | Ppc1/Ppc2 진단 기록 — #40이 해결했으므로 **닫을 수 있음** | — |
+| [#33](https://github.com/wyim-pgl/family_finder/issues/33) | P1 | ATH MYB 앵커로 5종 MYB 서브클레이드 분리 | — |
+| [#34](https://github.com/wyim-pgl/family_finder/issues/34) | P1 | ProstT5 tier-3 스크린 — 함정 2건 파악됨, 분할 필요 | — |
+| [#36](https://github.com/wyim-pgl/family_finder/issues/36) | P1 | Mcry 미배치 v2로도 미해결 (13.4%) | #34 결과가 기여 |
+| [#38](https://github.com/wyim-pgl/family_finder/issues/38) | P2 | 주석 축 결손 — 유전자 구조·cis-element·발현 | — |
+| [#39](https://github.com/wyim-pgl/family_finder/issues/39) | P3 | 코드 건강 — 리팩터 3건, 미확인 버전, 구조 응집도 교란 | — |
+| [#25](https://github.com/wyim-pgl/family_finder/issues/25) [#26](https://github.com/wyim-pgl/family_finder/issues/26) | — | SPEC / 트래커 (살아있는 문서, 닫지 않음) | — |
 
 **3차 라운드 — v2 파이프라인 + 스윕 판정 (2026-08-19~20):**
 - **v2 tiered 아키텍처 확정·구현 완료** (#21): Tier1 클러스터링(OrthoFinder/SonicParanoid2 분기) →
@@ -225,6 +200,66 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
 - **GPU 파일럿 진행 중** (pgl-gpu RTX 4090): PEPC clan 95개 ESMFold 접기 + ProstT5 3Di 벤치 +
   SonicParanoid2 5sp/15sp(--graph-only, d2v ZeroDivisionError 우회). 문헌 dossier 요점은 #21 코멘트.
 - 신규 모듈: steps/{epa,sonicparanoid,esm,plant_glm,ecforest}.py + annotate_families.py
+
+**8차 라운드 — Ppc1/Ppc2 분리 성공 + 앵커 전이 가능성 진단 (2026-08-21~22):**
+- 🎯 **Ppc1/Ppc2 분리 해결 (#40).** 결정적 요인은 **뉴클레오타이드(코돈) 데이터** — 아미노산
+  트리(PMSF, LG+G, 둘 다 AA-109)는 **여전히 실패**한다. 재구축 `N1_codon123`:
+  - **ppc-1E1 (Ppc1형): 70잎, SH-aLRT 96.2 / UFBoot 94** — 식물형 선인장 PEPC **45개**
+  - **ppc-1E2 (Ppc2형): 17잎, 86.2 / 73** — 선인장 **2개** (`Obas__…_000494`,
+    `Ococ_OcoChr10G09070`, 둘 다 Opuntioideae, 서로 자매 100/100)
+  - 45+2 = **47 = 식물형 선인장 PEPC 전부**, 두 집합 **disjoint**, 합집합 = 식물형 87잎 @100/100
+  - 멤버 구성이 codon123·codon12·AA102 **세 트리에서 동일**
+  - 베이스라인 `clan_tree.treefile`에서는 **Ppc1이 Ppc2를 제외하는 clade를 아예 갖지 못했다**
+    (자기 자신 1잎, 최소 정보 clade 24잎 @ 지지도 27).
+  - ⚠️ **ppc-1E2는 채택이지 증명이 아님** — UFBoot 73으로 기준(≥95) 미달. `min_support=80`
+    게이트에서 False로 떨어진다. ppc-1E1(94)은 견고.
+  - ⚠️ Ppc2 선인장 증거 얇음: 47개 중 2개, 둘 다 Opuntia. 유일한 Cactoideae 후보
+    `Cjam__JBOBQE010000004.1_002232`는 점유율 <50% 필터에 제거됨. **다음 단계는 정렬에
+    단편을 더 넣는 게 아니라 해당 좌위의 synteny를 세 유전체에서 직접 보는 것.**
+  - 산출물: gpu `~/pepc_pilot/ppc_resolve/rebuild/`
+- **아이스플랜트에 Ppc3 없음 (사용자 확정).** Mcry PEPC는 `Mcr8G11630`(Ppc1, P10490) /
+  `Mcr7G08600`(Ppc2, P16097) / `Mcr6G09730`(세균형 PPC4) **3개뿐**. Mcry에 PPC3 라벨이
+  붙으면 **오전이(false transfer) 신호**로 판정할 것.
+- **신규 진단 도구 `anchor_transferability()`** (`steps/subfamily.py`, 228c984→**3fc5305**):
+  레퍼런스 종의 서브패밀리 **이름이 질의 종에 전이 가능한지**를 사전 판정. 라이벌 라벨을
+  포함하지 않는 **최대** clade + `min_support` 게이트(IQ-TREE `aLRT/UFBoot`는 **약한 쪽**으로
+  판정) + 중복 감지(clade 바깥이 무엇을 더하는지).
+  실측: **ATH PPC1/PPC3은 지지도 100의 자매(배추과 자체 중복) → 전이 불가**, PPC2도 미해상,
+  **PPC4(세균형)만 전이 가능**. anchor-free clade 6개 = lineage-specific expansion.
+  ⚠️ 초판(228c984)은 **최근접 이웃 clade**를 돌려주는 버그가 있어 선인장 0개로 오판했다 —
+  서브에이전트가 잡음. 3fc5305에서 수정.
+- **ATH 심볼로 명명하면 어떻게 되는지 실측**: 서로 다른 **6개 서브패밀리가 전부 "PPC1"**,
+  **PPC2는 아무도 못 받음**. SF3(=OG2)은 유전자 **1개** 히트로 "PPC1"이 되는데 support는
+  **1.00**으로 표시된다.
+  → **명명 코드 결함 수정 (0703796)**: `support = 이긴 가중치 / **투표한** 가중치`라 20멤버 중
+  2개만 주석을 가진 clade가 support 1.00으로 나왔다. **`coverage = 주석보유/전체멤버`** 필드
+  추가 + 서브패밀리 이름이 멤버 절반 미만에 근거하면 경고. v2 런에서 정확히 5개에 발동.
+- **Musa MYB 논문 방식(#33)은 우리 파이프라인에 이미 있다** — 앵커 합류·ML 트리·앵커 clade
+  소속 분류·lineage-specific clade 보고·모티프(SDP)까지. 없는 것은 intron/exon 구조,
+  cis-element, 체계화된 발현(#38). **단 논문은 "레퍼런스 서브패밀리가 전이 가능하다"를
+  가정한다** — MYB는 고대 clade라 타당하지만 PEPC는 아니었다. `anchor_transferability()`가
+  이 차이를 사전 판정한다.
+- **#37 청크 rescue 실경로 검증 완료** — 클러스터에서 실제 Config로 `_run_hmmsearch_chunked`
+  호출, **SLURM 배열 6097076_0..3** 제출·완료, 단일 실행과 **배정 31/31 일치**, 잘린 청크·
+  누락 청크 **양쪽 차단 확인**. `sbatch --wait` 분기가 실제로 동작한다.
+- ⚠️ **15sp 발사 선결 3건 (#41)**: (1) `data_15sp/species_tree.nwk`의 **가지 길이가 전부 1.0**
+  (더미) — 종 인지 프루닝이 무력화된다. (2) `config_15sp.json`이 v1 구성 —
+  `profile_assign_per_round`·`hmmer_chunk_size`가 빠져 기본값(false/0)으로 돈다.
+  (3) 입력 실측 **484,752 vs 143,961 = 3.37배** → hmmsearch 약 11.3배 ≈ **65시간**.
+  **결정 대기: 종트리를 (a) 2패스 재추정 / (b) 대체 트리 중 무엇으로 할지.** 권고는 (a).
+- ⚠️ **ProstT5 조용한 실패 2건 (#34)**: `--prostt5-model`에 **`.gguf` 파일 경로**를 주면 3Di를
+  만들지 않고 **0.00초에 아미노산 DB**를 뱉는다(에러 없음, 로그엔 경로가 정상 출력됨).
+  **디렉터리**를 줘야 `_ss` DB가 생긴다. 그리고 **`--gpu 1`은 createdb에서 무시된다**
+  (`Use GPU 0`). 실측 4.3 s/서열(16스레드) → 미배치 9,786개 ≈ 12시간, CPU 전용, 체크포인트
+  없음 → 분할 필요.
+- **`annotate_stack.py` 실행 검증에서 버그 수정 (8c5cdc4)**: 축은 원격에서 도는데 출력된 merge
+  명령이 **원격 경로를 로컬 명령에 박아넣고** 있었다. fetch 단계 추가. `qpath()`(물결표 인용)
+  수정도 실전 확인 — `~`라는 이름의 디렉터리가 생기지 않음.
+- 문서: README 전면(micromamba 통일, 주석 스택 설치, **GPU/CPU 요구사항 실측**: RTX 4090 24GB /
+  드라이버 560.35.03 / CUDA 12.6, DeepLoc 5.7GB VRAM, ESMFold가 진짜 제약, 디스크 ~75GB,
+  조용한 CPU 폴백 3사례), methods.md §2.X.6·§2.X.7 신설.
+- **테스트 352 그린.** 커밋: 496cfb4 4371899 14e5ed6 22920df 6ece01a 850b9ce 02b0181 cb09673
+  e66d2bb 0afb62e 135b621 dbe6beb 5a38495 8c5cdc4 0703796 228c984 3fc5305 + 문서 다수.
 
 **7차 라운드 — 주석 스택 완성·SF3 판정 확정 (2026-08-21):**
 - **SF3 = subfunctionalization, 6축 확정.** RELAX 이완(K=0.636, p=1.1e-16) · 발현 74% 독식 ·
@@ -369,60 +404,51 @@ GitHub 이슈로 등록됨 (`wyim-pgl/family_finder`, 2026-08-19):
 
 ---
 
-## 7. /clear 후 세션 재개 가이드 (2026-08-20 기준)
+## 7. /clear 후 세션 재개 가이드 (2026-08-22 기준)
 
-**정본 문서**: 이 파일(조사 기록) + 이슈 **#25**(파이프라인 스펙) + **#26**(작업 트래커).
-서브에이전트·모니터는 세션 종료와 함께 사라짐 — 아래 "확인할 것"부터 시작.
+**정본 문서**: 이 파일 + 이슈 **#25**(스펙) + **#26**(트래커, 이슈 색인표 있음).
+서브에이전트·모니터·워크플로는 세션 종료와 함께 사라진다.
 
 ### 즉시 확인할 것
-1. ~~ESM-ECForest~~ **완료 (6차 라운드): known-answer 실패로 도구 기각** — #26/#20 기록됨.
-2. **branch-site codeml 결과**: fast-track(46-taxa, **BEB 정본**) pronghorn 6091859 alt/
-   6091860 null `$FF/pepc_pilot/seltest_fast/` + full(102-taxa, robustness) 6091847/48
-   `seltest/`. 완료 시 `parse_lnl`+`lrt_pvalue`(df=1) → alt의 results.txt BEB 섹션
-   사이트를 signal_windows 컬럼과 교차(#24 마지막 단계) → #24 닫기.
-   full이 내일까지 미수렴이면 kill해도 무방(HyPhy 삼중으로 판정 완료).
-3. **5sp v2 런** (6091850, output_5sp_v2/): 완주 시 Mcry 미배치율 vs 14.9% 대조 → #26.
-   R1 실측: 클러스터링 39분 + per-OG 1h54 + 프로파일 배정(hmmsearch 장시간 정상).
-4. ~~RELAX·MEME·aBSREL~~ **완료 — SF3 순수 subfunctionalization 확정** (#26 기록됨).
-5. `gh issue view 26 --repo wyim-pgl/family_finder` — 대기열 순서대로 진행.
-   (#18은 구조적 차단으로 닫힘; 오픈 #24/#25/#26)
-
-### 다음 작업 레시피 (#26 대기열 1번: 선택압 검정)
+**실행 중인 잡은 없다** (2026-08-22 03:40 기준). pronghorn 큐의 `blast.part=*`,
+`calculateRSEM*`은 **다른 프로젝트(PGRP)** 잡이다. gpu는 유휴.
+```bash
+ssh pronghorn 'squeue -u wyim -o "%.10i %.14j %.9T %.11M"' | grep -viE "blast|RSEM|combine|filter"
+ssh gpu 'nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader'
+git status --short && python3 -m pytest tests/ -q | tail -1
 ```
-# clan 코돈 정렬: 멤버 CDS는 pronghorn data_15sp/cds (+ 5sp data/cds),
-#   앵커 CDS는 /data/gpfs/assoc/pgl/data/sequence_data/plaza/cds/selected (ath, aco)
-# pal2nal을 gpu:~/pepc_pilot/clan_anchor.aln 에 맞춰 실행 → clan_codon.aln
-# SF3 stem(10-leaf flux clade, 지지도 100)에 #1 마킹: steps/codeml.py write_marked_tree
-# branch-site alt/null: steps/codeml.py generate_branch_site_ctl + lrt_pvalue
-# RELAX: hyphy 설치 필요 (이미 완료 — hyphy_new env(scratch micromamba-root), 바이너리 직접 경로 사용; 신규 설치 시: micromamba create -y -n NAME -c conda-forge -c bioconda hyphy (채널 순서 필수))
-```
+기대값: 잡 0건 / GPU 0% / 워킹트리 clean / **352 passed**.
 
-### 자산 위치
-- **pgl-gpu** (`ssh gpu`): `~/pepc_pilot/` — clan_anchor.{fa,aln}, clan_tree.treefile(+rooted),
-  pdb/ (111 ESMFold 구조), plddt.tsv, aln_esm.tsv, aln_p5.tsv, db_p5/db_ath/db_aco,
-  possvm_mcl/pepc.ortholog_groups.csv, tc_*.txt, deeploc_out/results_*.csv, anchors.tsv,
-  excluded.txt(truncation 16개). envs: phylo(mafft/iqtree3/epa-ng/raxml-ng),
-  subfam(possvm deps/treecluster), sonic, transgenic(torch+DeepLoc2.1). foldseek ~/bin/foldseek,
-  ProstT5 ~/pepc_pilot/prostt5_weights. SonicParanoid 결과 ~/sonic{5,15}sp/
-- **pronghorn** (`ssh pronghorn`, FF=~/scratch/bin/family_finder): output_5sp/, output_15sp/,
-  forensics_r8/per_gene.tsv, score_recluster.py, check_pairs.py, cam_pairs.tsv, ath_ppc.fa,
-  aco_ppc.fa, species_tree_est/species_tree_busco.treefile(추정 종 트리 — 채택 대기),
-  sonic{5,15}sp_results/, wd_I*/wd15_I*/wd_noCgigH(스윕 산출물)
-- **로컬 repo**: master 64f2323+ (테스트 165), 신규 모듈 steps/{profile_assign,epa,esm,
-  plant_glm,ecforest,deeploc,retargeting,sonicparanoid}.py, utils/newick.py,
-  find_neofunctionalization.py, annotate_families.py
-- **wiki**: pgl-wiki guide/installs.md 2026-08-20 항목 (설치·함정 전체)
+### 결정이 필요한 것 (이것부터)
+**#41 — 15sp 종트리 방침.** `data_15sp/species_tree.nwk`의 가지 길이가 전부 `1.0`(더미)이라
+종 인지 프루닝이 무력화된다. 두 선택지:
+- **(a) 2패스** — 더미로 1회 돌려 단일카피 family 확보 → supermatrix → IQ-TREE → 재실행.
+  5sp가 밟은 경로이고 그때 외군 비대칭·22배 과대추정을 잡아냈다. **비용: 런 2회. 권고.**
+- **(b) 대체 트리** — 문헌 분기시간 외삽. 빠르지만 출처 명시 필요, 근거 약함.
 
-### 핵심 결론 요약 (재론 금지)
-Round-1 문제 원인 = MCL 파편화(포함 임계값이 MCL 이전에 edge 절단) — 인플레이션·taxon
-sampling·BBH·pep/CDS·프루닝 전부 실측 기각. 해법 = CgigH 제외(9.0%) + 프로파일(#13) +
-구조 tier(ProstT5 재현, Ppc1 쌍 TM 0.90+) + EPA 심판. 두 Ppc1은 한 family, 다른 서브패밀리
-(SF1 vs SF3). SF3 = 발현 주도 subfunctionalization(74%). AlphaGenome 기각(human/mouse 전용).
-ESM-ECForest 기각(known-answer 실패) — EC 축은 도메인/촉매잔기 증거로.
-**선택압 축 (HyPhy 삼중, 2026-08-20)**: RELAX 이완 K=0.636 p=1.1e-16 + MEME 사이트 FDR
-통과 0 + aBSREL stem 비유의 → **SF3 = 순수 발현 주도 subfunctionalization**.
-유일한 양성선택은 Tfru 말단 가지(p=6e-13, 종 특이 후행) — 별도 관찰 가치.
-codeml BEB(사이트 목록)만 남음: full(6091847/48) + 46-taxa fast(6091859/60, 컬럼 보존).
+### 바로 착수 가능한 것 (막힘 없음)
+1. **#40 잔여** — Ppc2의 선인장 증거 보강. `Ococ_OcoChr10G09070` / `Obas__…_000494` 좌위의
+   **synteny를 Cgig·Sund·Cjam 유전체에서 직접 확인** (정렬에 단편 추가하지 말 것).
+   그리고 ppc-1E1/ppc-1E2 결과를 methods.md에 반영.
+2. **#32 닫기** — #40이 답했으므로 요약 코멘트 후 close.
+3. **#39** — 리팩터 3건(`rescue_unplaced` 141줄/중첩5, `taxonomic_composition` 85/5,
+   `narrative()` 93줄), 도구 버전 5개(Possvm/TreeCluster/CLEAN/ESMFold/Foldseek) 확인,
+   **구조 응집도 서열 통제**. ⚠️ 리팩터는 **산출물 체크섬을 먼저 잡고 바이트 동일을 증명한 뒤**
+   테스트를 추가할 것 (5a38495에서 쓴 순서).
+4. **#34** ProstT5 스크린 — 반드시 **디렉터리** 형식 + `ls <db>_ss` 확인 + 분할.
+5. **#33** MYB — ATH MYB 132개 앵커 확보부터. 명명 전 `anchor_transferability()` 필수.
+
+### 재사용할 도구 (이번 라운드에 생긴 것)
+| 도구 | 용도 |
+|---|---|
+| `steps/subfamily.anchor_transferability()` | 레퍼런스 서브패밀리 이름이 전이 가능한지 사전 판정 |
+| `annotation_matrix.py` | 6축 병합 + member/intruder/review 판정 |
+| `annotate_stack.py` | 전 축을 1커맨드로 (dry-run으로 계획 확인 가능) |
+| `region_disorder.py` | 영역 pLDDT를 비-focal 대조군과 비교 |
+| `beb_cross.py` | codeml BEB × 신호 윈도우 |
+| `measure_v2.py` | 종별 미배치율 vs 베이스라인 |
+| `steps/hmm_chunks.py` | SLURM 선택적 청크 실행 + 실패 시 병합 거부 |
+| `fs_transfer.py` | foldseek AFDB 히트 → UniProt 기능 전이 TSV |
 
 ## 8. 재현 정보
 
