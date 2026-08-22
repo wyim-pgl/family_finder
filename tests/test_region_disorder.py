@@ -127,3 +127,35 @@ def test_measure_reports_genes_it_skipped_rather_than_dropping_them(tmp_path):
 
     assert "ghost" in result["skipped"]["not_in_alignment"]
     assert result["n_skipped"] == 1
+
+
+def test_measure_matches_transcript_suffixed_structures_through_the_matcher(tmp_path):
+    # The PEPC pilot FASTA and #40's groups.json disagreed by a `.t1` suffix
+    # (#34); region_disorder's own '.'->'_' rule cannot recover that, the
+    # shared matcher can.
+    pdb_dir, aln = _setup(tmp_path)
+    (pdb_dir / "Focal_g0.pdb").rename(pdb_dir / "Focal_g0.t1.pdb")
+
+    r = measure(pdb_dir, aln, 3, 7, {"Focal_g0", "Focal_g1", "Focal_g2"})
+
+    assert r["n_focal"] == 3
+    assert r["n_skipped"] == 0
+
+
+def test_measure_refuses_when_told_a_ceiling_and_too_much_is_unmatched(tmp_path):
+    import pytest as _pytest
+
+    pdb_dir, aln = _setup(tmp_path)
+    for name in ("ghost1", "ghost2", "ghost3", "ghost4"):
+        _pdb(pdb_dir / f"{name}.pdb", [0.9] * 10)
+
+    with _pytest.raises(ValueError, match="unmatched"):
+        measure(pdb_dir, aln, 3, 7, {"Focal_g0"}, max_unmatched=0.1)
+
+
+def test_measure_records_which_id_level_the_match_needed(tmp_path):
+    pdb_dir, aln = _setup(tmp_path)
+
+    r = measure(pdb_dir, aln, 3, 7, {"Focal_g0", "Focal_g1", "Focal_g2"})
+
+    assert r["id_match_level"] == "exact"

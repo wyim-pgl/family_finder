@@ -131,3 +131,47 @@ def test_neighbouring_gene_numbers_do_not_collide_when_matching():
                        ["Cgig_1338_000001", "Cgig_1338_000002"])
 
     assert result.mapping == {"Cgig_1338_000001.pdb": "Cgig_1338_000001"}
+
+
+# ------------------------------------------------- tool-mangled filenames ----
+
+def test_falls_back_to_the_deeploc_squashed_form_last():
+    # DeepLoc writes alpha_<id>.csv after lowercasing and deleting everything
+    # outside [a-z0-9_], so Aco_Aco010025.1 arrives as aco_aco0100251. Nothing
+    # milder recovers it, and extract_signal_windows.py used to carry its own
+    # copy of that rule.
+    result = match_ids(["Aco_Aco010025.1"], ["aco_aco0100251"])
+
+    assert result.mapping == {"Aco_Aco010025.1": "aco_aco0100251"}
+    assert result.level == "squashed"
+
+
+def test_the_squashed_level_is_only_reached_when_the_milder_ones_fail():
+    result = match_ids(["Aco_Aco010025.1"], ["Aco_Aco010025.1", "acoaco0100251"])
+
+    assert result.level == "exact"
+
+
+def test_a_squashing_collision_is_an_error_not_a_silent_overwrite():
+    with pytest.raises(ValueError, match="collide"):
+        match_ids(["ghost"], ["Aco_X.1", "aco_x1"])
+
+
+def test_matching_keeps_the_level_that_matched_the_most_not_the_last_tried():
+    # `squashed` DELETES dots while the structure-filename convention turns
+    # them into underscores, so it is not a superset of `canonical`. Returning
+    # whichever level ran last then loses matches an earlier level had already
+    # made — measured on the real PEPC structure set, 102 matches collapsed
+    # to 29.
+    result = match_ids(["Ahyp_AH000245.v2.1", "ghost"],
+                       ["Ahyp_AH000245_v2_1"])
+
+    assert result.mapping == {"Ahyp_AH000245.v2.1": "Ahyp_AH000245_v2_1"}
+    assert result.level == "canonical"
+    assert result.unmatched == ["ghost"]
+
+
+def test_a_tie_between_levels_keeps_the_milder_one():
+    result = match_ids(["X.1"], ["X_1"])
+
+    assert result.level == "canonical"

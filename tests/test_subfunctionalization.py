@@ -9,6 +9,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from steps.subfunctionalization import (
@@ -94,6 +96,10 @@ def _sf3_evidence():
         "expression_share": 0.74,    # focal subfamily's share of family expression
         "signal_partition": "SF3-specific N-terminal region (col 165-209), 7/10 NLS",
         "retargeting_events": 0,
+        # The PEPC work ran every axis on one 102-taxon / 1,371-column matrix,
+        # so the site and region numbers really are comparable. The pipeline
+        # path does not get that for free (#42) — see the tests below.
+        "coordinates_verified": True,
     }
 
 
@@ -210,3 +216,158 @@ def test_narrative_reports_the_disorder_control():
     assert "76" in text and "9" in text
     assert "1.95e-05" in text or "1.9e-05" in text
     assert "disorder" in text.lower()
+
+
+# --- coordinate verification (issue #42) ---------------------------------
+#
+# "0 sites inside the signal region" is counter-evidence for
+# neofunctionalization. It is also exactly what a coordinate mismatch
+# produces: BEB/MEME sites are columns of the family codon alignment,
+# signal windows are columns of the clan protein alignment, and an interval
+# overlap between the two always returns a number. Without a verified
+# coordinate system the zero must not be spendable as evidence.
+
+def test_a_clean_region_is_not_evidence_when_coordinates_are_unverified():
+    ev = _sf3_evidence()
+    ev["coordinates_verified"] = False
+    ev["branchsite"] = {"lrt": 15.363, "p": 8.87e-05,
+                        "beb_sites_total": 14, "beb_sites_in_region": 0}
+
+    v = classify(ev)
+
+    joined = " ".join(v["evidence_for"])
+    assert "MEME: 0 sites" not in joined
+    assert "branch-site: 0 sites" not in joined
+
+
+def test_unverified_coordinates_produce_an_explicit_cannot_judge_entry():
+    ev = _sf3_evidence()
+    ev["coordinates_verified"] = False
+    ev["branchsite"] = {"lrt": 15.363, "p": 8.87e-05,
+                        "beb_sites_total": 14, "beb_sites_in_region": 0}
+
+    v = classify(ev)
+
+    assert v["coordinates_verified"] is False
+    assert len(v["cannot_judge"]) == 2
+    assert all("coordinate" in item for item in v["cannot_judge"])
+
+
+def test_a_missing_flag_is_treated_as_unverified_not_as_verified():
+    ev = _sf3_evidence()
+    del ev["coordinates_verified"]
+
+    v = classify(ev)
+
+    assert v["coordinates_verified"] is False
+    assert v["cannot_judge"]
+
+
+def test_verified_coordinates_still_spend_the_clean_region_as_evidence():
+    ev = _sf3_evidence()
+    ev["branchsite"] = {"lrt": 15.363, "p": 8.87e-05,
+                        "beb_sites_total": 14, "beb_sites_in_region": 0}
+
+    v = classify(ev)
+
+    joined = " ".join(v["evidence_for"])
+    assert "MEME: 0 sites" in joined and "branch-site: 0 sites" in joined
+    assert v["cannot_judge"] == []
+
+
+def test_narrative_says_it_cannot_judge_instead_of_reporting_a_clean_region():
+    ev = _sf3_evidence()
+    ev["coordinates_verified"] = False
+    ev["branchsite"] = {"lrt": 15.363, "p": 8.87e-05,
+                        "beb_sites_total": 14, "beb_sites_in_region": 0}
+
+    text = narrative("PEPC clan", "SF3", classify(ev), ev)
+
+    assert "cannot judge" in text.lower()
+    assert "independently agree" not in text
+
+
+def test_insufficient_evidence_still_carries_the_coordinate_keys():
+    v = classify({})
+
+    assert v["coordinates_verified"] is False
+    assert v["cannot_judge"] == []
+
+
+# --- count_sites_in_region: the explicit translation path ----------------
+
+SITE_ALN = {"g1": "MK-WQ", "g2": "MKYWQ"}
+REGION_ALN = {"g1": "--MKWQ", "g2": "XXMKWQ"}
+
+
+def test_counting_in_the_same_alignment_needs_no_translation():
+    from steps.subfunctionalization import count_sites_in_region
+
+    r = count_sites_in_region([2, 4], 1, 3,
+                              site_alignment=SITE_ALN,
+                              region_alignment=SITE_ALN)
+
+    assert r.n_in_region == 1          # column 2 only
+    assert r.coordinates_verified is True
+    assert r.n_untranslatable == 0
+
+
+def test_different_alignments_are_translated_through_a_bridge():
+    from steps.subfunctionalization import count_sites_in_region
+
+    # site column 4 is residue 3 of g1 -> column 5 of the region alignment
+    r = count_sites_in_region([4], 5, 6,
+                              site_alignment=SITE_ALN,
+                              region_alignment=REGION_ALN,
+                              bridge="g1")
+
+    assert r.n_in_region == 1
+    assert r.coordinates_verified is True
+
+
+def test_the_untranslated_number_would_have_been_the_wrong_answer():
+    from steps.subfunctionalization import count_sites_in_region
+
+    # without translation, column 4 is outside [5, 6] and the region reads
+    # clean — the silent zero this issue is about
+    r = count_sites_in_region([4], 5, 6,
+                              site_alignment=SITE_ALN,
+                              region_alignment=REGION_ALN,
+                              bridge="g1")
+    naive = count_sites_in_region([4], 5, 6)
+
+    assert r.n_in_region == 1
+    assert naive.n_in_region == 0
+    assert naive.coordinates_verified is False
+
+
+def test_a_site_the_bridge_cannot_carry_is_counted_separately():
+    from steps.subfunctionalization import count_sites_in_region
+
+    # column 3 is a gap in g1, so it has no region-alignment position
+    r = count_sites_in_region([3], 1, 99,
+                              site_alignment=SITE_ALN,
+                              region_alignment=REGION_ALN,
+                              bridge="g1")
+
+    assert r.n_untranslatable == 1
+    assert r.n_in_region == 0
+
+
+def test_translating_without_a_bridge_refuses():
+    from steps.subfunctionalization import count_sites_in_region
+
+    with pytest.raises(ValueError, match="bridge"):
+        count_sites_in_region([4], 5, 6,
+                              site_alignment=SITE_ALN,
+                              region_alignment=REGION_ALN)
+
+
+def test_counting_without_alignments_is_possible_but_never_verified():
+    from steps.subfunctionalization import count_sites_in_region
+
+    r = count_sites_in_region([2], 1, 3)
+
+    assert r.n_in_region == 1
+    assert r.coordinates_verified is False
+    assert "alignment" in r.reason

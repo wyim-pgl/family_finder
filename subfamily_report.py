@@ -45,14 +45,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from steps.subfamily import (  # noqa: E402
     load_taxonomy,
+    parse_pair_identities,
     parse_pairwise_scores,
+    resolve_groups,
     sdp_scan,
+    sequence_confounding,
     structure_coherence,
+    DEFAULT_PAIR_COLUMNS,
+    UNCONTROLLED_WARNING,
     taxonomic_composition,
 )
 from steps.subfunctionalization import (  # noqa: E402
     apply_branch_names,
     classify,
+    count_sites_in_region,
     narrative,
     parse_absrel,
     parse_meme,
@@ -102,6 +108,23 @@ def read_branch_name_map(path: Path) -> dict:
     return name_map
 
 
+def _coordinate_frame(args) -> dict:
+    """The alignments the site numbers and the region bounds each belong to.
+
+    MEME/BEB sites are columns of whatever alignment the selection test ran
+    on; `--meme-region` bounds are columns of the alignment the region was
+    read off, which for the PEPC work was the clan protein alignment and for
+    the pipeline path is not the same matrix at all (#42). Both must be named
+    before an overlap between them means anything.
+    """
+    site_aln = read_fasta(args.sites_alignment) if args.sites_alignment else None
+    region_path = (getattr(args, "region_alignment", None)
+                   or getattr(args, "alignment", None))
+    region_aln = read_fasta(region_path) if (site_aln and region_path) else None
+    return {"site_alignment": site_aln, "region_alignment": region_aln,
+            "bridge": getattr(args, "coord_bridge", None)}
+
+
 def collect_selection_evidence(args) -> dict:
     """Gather whatever selection/partition evidence the CLI was given.
 
@@ -112,6 +135,11 @@ def collect_selection_evidence(args) -> dict:
         "signal_partition": args.signal_partition or "",
         "retargeting_events": args.retargeting_events,
     }
+    frame = _coordinate_frame(args)
+    # Verified until an axis says otherwise; with no region at all there is
+    # nothing to verify and nothing that depends on it.
+    verified = True
+
     if args.relax_json:
         evidence["relax"] = parse_relax(Path(args.relax_json))
 
@@ -120,9 +148,10 @@ def collect_selection_evidence(args) -> dict:
         evidence["meme_sites_total"] = len(sites)
         if args.meme_region:
             lo, hi = _region_bounds(args.meme_region)
-            evidence["meme_sites_in_region"] = sum(
-                1 for site, _p in sites if lo <= site <= hi
-            )
+            count = count_sites_in_region([s for s, _p in sites], lo, hi, **frame)
+            evidence["meme_sites_in_region"] = count.n_in_region
+            evidence["meme_sites_untranslatable"] = count.n_untranslatable
+            verified = verified and count.coordinates_verified
 
     if args.absrel_json:
         branches = parse_absrel(Path(args.absrel_json))
@@ -146,8 +175,10 @@ def collect_selection_evidence(args) -> dict:
         bs: dict = {"beb_sites_total": len(sig)}
         if args.meme_region:
             lo, hi = _region_bounds(args.meme_region)
-            bs["beb_sites_in_region"] = sum(1 for site, _p in sig
-                                            if lo <= site <= hi)
+            count = count_sites_in_region([s for s, _p in sig], lo, hi, **frame)
+            bs["beb_sites_in_region"] = count.n_in_region
+            bs["beb_sites_untranslatable"] = count.n_untranslatable
+            verified = verified and count.coordinates_verified
         if args.branchsite_lnl:
             alt, null = (float(x) for x in args.branchsite_lnl.split(","))
             bs["lrt"] = 2 * (alt - null)
@@ -160,7 +191,40 @@ def collect_selection_evidence(args) -> dict:
             k: d[k] for k in ("delta", "n_focal", "n_other", "p", "all_below")
             if k in d
         }
+
+    # classify() refuses to spend "0 sites in the region" as counter-evidence
+    # for neofunctionalization unless this is True — an unverified zero is
+    # indistinguishable from a coordinate mismatch.
+    evidence["coordinates_verified"] = bool(verified and args.meme_region)
     return evidence
+
+
+def build_structure_coherence(args, groups: dict):
+    """Coherence rows plus the sequence-identity confounding report.
+
+    Foldseek scores track sequence identity, and subfamilies are groups of
+    close relatives by construction, so the raw within/between ratio can be
+    true and uninformative at the same time (#39). When the pair table carries
+    `fident` the comparison is redone on identity-adjusted residuals; when it
+    does not, every row carries an explicit UNCONTROLLED warning rather than a
+    bare ratio somebody might quote.
+
+    Returns `(rows, confounding)`, where `confounding` is None if the table
+    had no identities to measure the coupling with.
+    """
+    pairs = Path(args.pairs)
+    columns = getattr(args, "pair_columns", None)
+    metric = getattr(args, "pair_metric", None) or "bits"
+    scores = parse_pairwise_scores(pairs, metric=metric, columns=columns)
+    try:
+        identities = parse_pair_identities(pairs, columns=columns)
+    except ValueError:
+        identities, confounding = None, None
+    else:
+        confounding = sequence_confounding(scores, identities)
+    rows = structure_coherence(groups, scores, identities=identities,
+                               metric=metric)
+    return rows, confounding
 
 
 def write_subfunctionalization(args, verdict: dict, evidence: dict,
@@ -169,14 +233,18 @@ def write_subfunctionalization(args, verdict: dict, evidence: dict,
     text = narrative(args.family_name, args.focal_subfamily, verdict, evidence)
     (outdir / "subfunctionalization.md").write_text(text + "\n")
     with open(outdir / "subfunctionalization.tsv", "w") as f:
-        f.write("subfamily\tverdict\tn_evidence_for\tn_evidence_against\t"
-                "evidence_for\tevidence_against\n")
+        f.write("subfamily\tverdict\tcoordinates_verified\tn_evidence_for\t"
+                "n_evidence_against\tn_cannot_judge\tevidence_for\t"
+                "evidence_against\tcannot_judge\n")
         f.write("\t".join([
             args.focal_subfamily, verdict["verdict"],
+            str(verdict.get("coordinates_verified", False)),
             str(len(verdict["evidence_for"])),
             str(len(verdict["evidence_against"])),
+            str(len(verdict.get("cannot_judge", []))),
             "; ".join(verdict["evidence_for"]),
             "; ".join(verdict["evidence_against"]),
+            "; ".join(verdict.get("cannot_judge", [])),
         ]) + "\n")
 
 
@@ -198,11 +266,25 @@ def main():
                          "label layer with --species-tree, sole verdict "
                          "evidence without it (legacy)")
     ap.add_argument("--pairs", default=None,
-                    help="foldseek easy-search all-vs-all TSV "
-                         "(query,target,evalue,bits,alntmscore)")
+                    help="foldseek easy-search all-vs-all TSV. Include "
+                         "fident in --format-output to get the "
+                         "sequence-identity control; without it the coherence "
+                         "table is emitted with an UNCONTROLLED warning")
+    ap.add_argument("--pair-columns", default=None,
+                    help="The foldseek --format-output string --pairs was "
+                         f"written with (default: {DEFAULT_PAIR_COLUMNS})")
+    ap.add_argument("--pair-metric", default="bits",
+                    help="Pair-table column to score structural similarity on. "
+                         "bits grows with alignment length AND identity; "
+                         "alntmscore is length-normalised and less confounded "
+                         "(default: bits)")
     ap.add_argument("--ref-seq", default=None,
                     help="Alignment sequence id for reference numbering")
     ap.add_argument("--min-group", type=int, default=5)
+    ap.add_argument("--max-unmatched", type=float, default=None,
+                    help="Refuse when more than this fraction of --groups "
+                         "members fail to match an alignment id. Without it "
+                         "the loss is reported and the run continues.")
     ap.add_argument("--delimiter", default="_")
     ap.add_argument("--outdir", required=True)
     # --- subfunctionalization narrative (optional evidence axes) ---
@@ -218,6 +300,17 @@ def main():
     ap.add_argument("--meme-region", default=None,
                     help="Alignment-column range 'LO-HI' of the subfamily-"
                          "specific signal region (MEME sites counted inside)")
+    ap.add_argument("--sites-alignment", default=None,
+                    help="Alignment whose columns the MEME/BEB site numbers "
+                         "are (the matrix the selection test ran on, as "
+                         "protein columns). Required before a count inside "
+                         "--meme-region can be treated as evidence.")
+    ap.add_argument("--region-alignment", default=None,
+                    help="Alignment whose columns --meme-region refers to "
+                         "(default: --alignment)")
+    ap.add_argument("--coord-bridge", default=None,
+                    help="Sequence id present in BOTH alignments, used to "
+                         "translate site numbers when the two differ")
     ap.add_argument("--expression-share", type=float, default=None,
                     help="Focal subfamily's share of family expression (0-1)")
     ap.add_argument("--signal-partition", default=None,
@@ -241,6 +334,20 @@ def main():
     groups = read_groups(Path(args.groups))
     print(f"{len(alignment)} sequences, {len(groups)} subfamilies")
 
+    # Resolve the group ids against the alignment ONCE, loudly. A '.t1' the
+    # alignment does not carry used to drop those members from every layer
+    # below without a word (#34), and a subfamily nobody looked at reads
+    # exactly like a subfamily with no signal.
+    groups, id_report = resolve_groups(alignment, groups,
+                                       max_unmatched=args.max_unmatched)
+    print(f"gene-id matching: {id_report['level']} level, "
+          f"{id_report['n_unmatched']}/{id_report['n_requested']} members "
+          f"unmatched ({id_report['unmatched_fraction']:.1%})")
+    for name, info in sorted(id_report["groups"].items()):
+        if info["unmatched"]:
+            print(f"  {name}: {len(info['unmatched'])} unmatched, e.g. "
+                  f"{info['unmatched'][:3]}")
+
     sdp = sdp_scan(alignment, groups, min_group=args.min_group,
                    ref_seq_id=args.ref_seq)
     write_tsv(sdp, outdir / "sdp_residues.tsv")
@@ -259,11 +366,26 @@ def main():
         print(f"  {r['subfamily']}: {r['verdict']}{label}")
 
     if args.pairs:
-        scores = parse_pairwise_scores(Path(args.pairs))
-        coh = structure_coherence(groups, scores)
+        coh, confounding = build_structure_coherence(args, groups)
         write_tsv(coh, outdir / "structure_coherence.tsv")
-        print(f"structure_coherence.tsv: {len(coh)} subfamilies "
-              f"({len(scores)} observed pairs)")
+        n_coherent = sum(1 for r in coh if r["coherent"])
+        print(f"structure_coherence.tsv: {len(coh)} subfamilies on "
+              f"{args.pair_metric}, {n_coherent} coherent before any control")
+        if confounding and confounding["r"] is not None:
+            print(f"  sequence identity explains the score with r = "
+                  f"{confounding['r']:.3f} over {confounding['n_pairs']} pairs")
+            # An unsupported control must not read as a negative result, so
+            # the three outcomes are counted separately (#39).
+            for verdict in ("coherent", "not_coherent",
+                            "no_interpretation_available"):
+                n = sum(1 for r in coh if r["verdict"] == verdict)
+                if n:
+                    print(f"  identity-adjusted {verdict}: {n}")
+            for r in coh:
+                if r["verdict"] == "no_interpretation_available":
+                    print(f"    {r['subfamily']}: {r['reason']}")
+        else:
+            print("  " + UNCONTROLLED_WARNING)
 
     if args.focal_subfamily:
         evidence = collect_selection_evidence(args)
@@ -271,6 +393,8 @@ def main():
         write_subfunctionalization(args, verdict, evidence, outdir)
         print(f"subfunctionalization.md: {args.focal_subfamily} -> "
               f"{verdict['verdict']}")
+        for item in verdict.get("cannot_judge", []):
+            print(f"  [cannot judge] {item}")
 
 
 if __name__ == "__main__":

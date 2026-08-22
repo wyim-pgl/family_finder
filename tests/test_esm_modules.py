@@ -296,3 +296,30 @@ def test_config_defaults_for_structural_tier():
     assert config.tier3_margin_tm == 0.05
     assert config.embed_tiebreak_min_delta == 0.02
     assert config.glm_score_cmd == "" and config.ecforest_cmd == ""
+
+
+# ---------------------------------------------------------------------------
+# foldseek target -> family id (issue #42: one normaliser, not one per module)
+# ---------------------------------------------------------------------------
+
+def test_target_to_family_strips_every_structure_extension():
+    from steps.esm import _target_to_family
+
+    for target in ("R1_OG0000134.pdb", "R1_OG0000134.cif",
+                   "R1_OG0000134.pdb.gz", "R1_OG0000134.cif.gz"):
+        assert _target_to_family(target) == "R1_OG0000134"
+
+
+def test_target_to_family_leaves_a_bare_family_id_alone():
+    from steps.esm import _target_to_family
+
+    assert _target_to_family("R1_OG0000134") == "R1_OG0000134"
+
+
+def test_target_to_family_uses_the_shared_canonical_form():
+    # A representative named from a dotted gene id reaches foldseek with the
+    # dot intact; the family index is keyed on the canonical form.
+    from steps.esm import _target_to_family
+
+    assert _target_to_family("Obas__JBFLFP010000003.1_000519.pdb") == \
+        "Obas__JBFLFP010000003_1_000519"

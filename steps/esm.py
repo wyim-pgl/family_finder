@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from config import Config
+from utils.gene_ids import canon_gene_id
 
 logger = logging.getLogger("family_finder")
 
@@ -39,10 +40,6 @@ FOLDSEEK_FORMAT_OUTPUT = "query,target,evalue,bits,alntmscore"
 
 # Maximum candidates reported per ambiguous gene (as in profile_assign).
 MAX_AMBIGUOUS_CANDIDATES = 5
-
-# Structure filename extensions stripped when mapping a foldseek target
-# back to a family id (target DB entries are <family_id>.pdb representatives).
-_STRUCT_SUFFIXES = (".pdb.gz", ".cif.gz", ".pdb", ".cif")
 
 
 @dataclass(frozen=True)
@@ -285,11 +282,12 @@ def _target_to_family(target: str) -> str:
     <family_id>.pdb; foldseek may report the name with or without the
     extension and with a trailing chain suffix (e.g. "_A" is NOT stripped —
     single-chain predicted monomers carry no chain suffix in easy-search).
+
+    The extension stripping and the '.'-to-'_' normalisation both live in
+    `utils.gene_ids.canon_gene_id` (issue #42) — a module-local copy is how the
+    two sides of a lookup drift apart without anything failing.
     """
-    for suffix in _STRUCT_SUFFIXES:
-        if target.endswith(suffix):
-            return target[: -len(suffix)]
-    return target
+    return canon_gene_id(target)
 
 
 def parse_foldseek(tsv: Path) -> Dict[str, List[StructHit]]:

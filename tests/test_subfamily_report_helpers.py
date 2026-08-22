@@ -8,6 +8,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from subfamily_report import (
@@ -23,7 +25,8 @@ def _args(**kw):
                 retargeting_events=0, relax_json=None, meme_json=None,
                 meme_region=None, absrel_json=None, branch_name_map=None,
                 branchsite_mlc=None, branchsite_lnl=None, disorder_json=None,
-                family_name="fam", focal_subfamily="SF")
+                sites_alignment=None, region_alignment=None, coord_bridge=None,
+                alignment=None, family_name="fam", focal_subfamily="SF")
     base.update(kw)
     return types.SimpleNamespace(**base)
 
@@ -94,5 +97,154 @@ def test_write_subfunctionalization_emits_both_files(tmp_path):
     md = (tmp_path / "subfunctionalization.md").read_text()
     tsv = (tmp_path / "subfunctionalization.tsv").read_text().splitlines()
     assert "subfunctionalization" in md
-    assert tsv[0].startswith("subfamily\tverdict")
-    assert tsv[1].split("\t")[2] == "2"          # n_evidence_for
+    header = tsv[0].split("\t")
+    row = tsv[1].split("\t")
+    assert header[:2] == ["subfamily", "verdict"]
+    assert row[header.index("n_evidence_for")] == "2"
+    # a verdict that never showed its coordinate system says so in the table
+    assert row[header.index("coordinates_verified")] == "False"
+
+
+# --- coordinate verification (issue #42) ---------------------------------
+
+_MEME = {"MLE": {"headers": [["p-value", ""]],
+                 "content": {"0": [[0.01], [1.0], [0.02], [0.01], [0.01]]}}}
+
+
+def _meme_json(tmp_path):
+    j = tmp_path / "meme.json"
+    j.write_text(json.dumps(_MEME))
+    return str(j)
+
+
+def _fasta(tmp_path, name, seqs):
+    p = tmp_path / name
+    p.write_text("".join(f">{k}\n{v}\n" for k, v in seqs.items()))
+    return str(p)
+
+
+def test_region_counts_are_unverified_unless_both_alignments_are_given(tmp_path):
+    ev = collect_selection_evidence(
+        _args(meme_json=_meme_json(tmp_path), meme_region="3-5"))
+
+    assert ev["coordinates_verified"] is False
+
+
+def test_the_same_alignment_on_both_sides_verifies_the_count(tmp_path):
+    aln = _fasta(tmp_path, "a.fa", {"g1": "MK-WQ", "g2": "MKYWQ"})
+
+    ev = collect_selection_evidence(
+        _args(meme_json=_meme_json(tmp_path), meme_region="3-5",
+              sites_alignment=aln, region_alignment=aln))
+
+    assert ev["coordinates_verified"] is True
+    assert ev["meme_sites_in_region"] == 3      # sites 3, 4 and 5
+
+
+def test_different_alignments_are_translated_through_the_bridge(tmp_path):
+    sites_aln = _fasta(tmp_path, "s.fa", {"g1": "MK-WQ", "g2": "MKYWQ"})
+    region_aln = _fasta(tmp_path, "r.fa", {"g1": "--MKWQ", "g2": "XXMKWQ"})
+
+    ev = collect_selection_evidence(
+        _args(meme_json=_meme_json(tmp_path), meme_region="5-6",
+              sites_alignment=sites_aln, region_alignment=region_aln,
+              coord_bridge="g1"))
+
+    # sites 4 and 5 (residues 3 and 4 of g1) become columns 5 and 6; site 3 is
+    # a gap in the bridge and site 1 lands on column 3, outside the region
+    assert ev["coordinates_verified"] is True
+    assert ev["meme_sites_in_region"] == 2
+    assert ev["meme_sites_untranslatable"] == 1
+
+
+def test_the_region_alignment_defaults_to_the_report_alignment(tmp_path):
+    aln = _fasta(tmp_path, "a.fa", {"g1": "MK-WQ", "g2": "MKYWQ"})
+
+    ev = collect_selection_evidence(
+        _args(meme_json=_meme_json(tmp_path), meme_region="3-5",
+              sites_alignment=aln, alignment=aln))
+
+    assert ev["coordinates_verified"] is True
+
+
+# --- structural coherence, sequence-identity control (issue #39 item 3) ------
+
+def _pairs_args(**kw):
+    base = dict(pairs=None, pair_columns=None, pair_metric="bits",
+                min_group=5, delimiter="_")
+    base.update(kw)
+    return types.SimpleNamespace(**base)
+
+
+_WIDE_COLUMNS = "query,target,fident,alnlen,evalue,bits,qtmscore,alntmscore"
+
+_GROUPS = {"SF_A": ["g1", "g2", "g3"], "SF_B": ["g4", "g5"]}
+
+
+def _wide_pairs(tmp_path):
+    """Six pairs whose score is exactly 1000 * fident — no signal beyond identity."""
+    p = tmp_path / "pairs.tsv"
+    rows = [("g1", "g2", 0.90), ("g1", "g3", 0.88), ("g2", "g3", 0.91),
+            ("g1", "g4", 0.40), ("g2", "g5", 0.42), ("g4", "g5", 0.95)]
+    p.write_text("".join(
+        f"{a}\t{b}\t{f:.3f}\t900\t0.0\t{1000 * f:.3f}\t0.9\t0.9\n"
+        for a, b, f in rows))
+    return p
+
+
+def test_the_confounding_is_measured_when_fident_is_present(tmp_path):
+    from subfamily_report import build_structure_coherence
+
+    rows, confounding = build_structure_coherence(
+        _pairs_args(pairs=str(_wide_pairs(tmp_path)),
+                    pair_columns=_WIDE_COLUMNS), _GROUPS)
+
+    assert confounding["r"] == pytest.approx(1.0)
+    assert rows
+
+
+def test_fident_being_present_is_not_the_same_as_the_control_holding(tmp_path):
+    # these six pairs put every within-pair at high identity and every
+    # between-pair low, so there is no shared identity range to compare over —
+    # the real PEPC layout in miniature (#39)
+    from subfamily_report import build_structure_coherence
+
+    rows, _ = build_structure_coherence(
+        _pairs_args(pairs=str(_wide_pairs(tmp_path)),
+                    pair_columns=_WIDE_COLUMNS), _GROUPS)
+
+    for row in rows:
+        assert row["verdict"] == "no_interpretation_available"
+        assert row["sequence_controlled"] is False
+        assert row["coherent_controlled"] is None
+
+
+def test_coherence_rows_carry_a_warning_when_fident_is_absent(tmp_path):
+    from subfamily_report import build_structure_coherence
+
+    p = tmp_path / "pairs.tsv"
+    p.write_text("g1\tg2\t0.0\t900\t0.9\n"
+                 "g1\tg4\t0.0\t400\t0.4\n")
+
+    rows, confounding = build_structure_coherence(
+        _pairs_args(pairs=str(p)), _GROUPS)
+
+    assert confounding is None
+    assert all(r["sequence_controlled"] is False for r in rows)
+    assert all("UNCONTROLLED" in r["warning"] for r in rows)
+
+
+def test_the_written_table_keeps_the_warning_column(tmp_path):
+    from subfamily_report import build_structure_coherence, write_tsv
+
+    p = tmp_path / "pairs.tsv"
+    p.write_text("g1\tg2\t0.0\t900\t0.9\ng1\tg4\t0.0\t400\t0.4\n")
+    rows, _ = build_structure_coherence(_pairs_args(pairs=str(p)), _GROUPS)
+    out = tmp_path / "structure_coherence.tsv"
+
+    write_tsv(rows, out)
+
+    header = out.read_text().splitlines()[0].split("\t")
+    for column in ("metric", "sequence_controlled", "coherent_controlled",
+                   "warning"):
+        assert column in header

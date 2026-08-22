@@ -31,15 +31,10 @@ import math
 import statistics
 import sys
 sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
-from utils.gene_ids import match_ids
-import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional, Set
 
-
-def canon(gene: str) -> str:
-    """Structure files are named from gene ids with '.' replaced by '_'."""
-    return gene.replace(".", "_")
+from utils.gene_ids import canon_gene_id, match_ids
 
 
 def read_fasta(path: Path) -> Dict[str, str]:
@@ -108,22 +103,26 @@ def mann_whitney_p(a: List[float], b: List[float]) -> float:
 
 
 def measure(pdb_dir: Path, alignment: Path, lo: int, hi: int,
-            members: set, min_residues: int = 5) -> dict:
+            members: Set[str], min_residues: int = 5,
+            max_unmatched: Optional[float] = None) -> dict:
     raw_aln = read_fasta(alignment)
-    aln = {canon(k): v for k, v in raw_aln.items()}
-    focal_members = {canon(m) for m in members}
 
-    # One shared matcher, so a '.'-vs-'_' or transcript-suffix difference is
-    # reported instead of quietly reducing coverage (#42, utils/gene_ids.py).
-    pdb_names = [p.stem for p in sorted(Path(pdb_dir).glob("*.pdb"))]
-    matched = match_ids(pdb_names, list(raw_aln)).mapping
+    # One shared matcher for BOTH id axes -- structure filenames onto alignment
+    # names, and focal member ids onto the same -- so a '.'-vs-'_' difference,
+    # a transcript suffix or a tool-mangled filename is reported instead of
+    # quietly reducing coverage (#42, utils/gene_ids.py). `max_unmatched` turns
+    # that loss into a refusal.
+    pdb_files = sorted(Path(pdb_dir).glob("*.pdb"))
+    pdb_names = [p.stem for p in pdb_files]
+    struct_match = match_ids(pdb_names, list(raw_aln), max_unmatched=max_unmatched)
+    focal_members = set(match_ids(sorted(members), list(raw_aln)).mapping.values())
 
     focal, other, rows = [], [], []
     skipped = {"not_in_alignment": [], "region_too_short": [], "no_plddt": []}
-    for pdb in sorted(Path(pdb_dir).glob("*.pdb")):
-        gene = canon(pdb.stem)
-        ref = matched.get(pdb.stem)
-        seq = raw_aln[ref] if ref is not None else aln.get(gene)
+    for pdb in pdb_files:
+        gene = canon_gene_id(pdb.stem)
+        ref = struct_match.mapping.get(pdb.stem)
+        seq = raw_aln[ref] if ref is not None else None
         if seq is None:
             # An id-form mismatch between structure filenames and alignment
             # names drops genes here without a word; on the PEPC clan that once
@@ -142,9 +141,10 @@ def measure(pdb_dir: Path, alignment: Path, lo: int, hi: int,
             continue
         whole = statistics.mean(plddt.values())
         delta = statistics.mean(inside) - whole
-        (focal if gene in focal_members else other).append(delta)
+        is_focal = ref in focal_members
+        (focal if is_focal else other).append(delta)
         rows.append({"gene": gene,
-                     "group": "focal" if gene in focal_members else "other",
+                     "group": "focal" if is_focal else "other",
                      "region_plddt": round(statistics.mean(inside), 4),
                      "whole_plddt": round(whole, 4),
                      "delta": round(delta, 4)})
@@ -161,6 +161,8 @@ def measure(pdb_dir: Path, alignment: Path, lo: int, hi: int,
         "per_gene": rows,
         "n_skipped": sum(len(v) for v in skipped.values()),
         "skipped": skipped,
+        "id_match_level": struct_match.level,
+        "n_unmatched_structures": len(struct_match.unmatched),
     }
     return result
 
@@ -176,11 +178,16 @@ def main():
     ap.add_argument("--members", required=True,
                     help="File of focal-subfamily gene ids, one per line")
     ap.add_argument("-o", "--out", required=True, help="JSON output")
+    ap.add_argument("--max-unmatched", type=float, default=None,
+                    help="Refuse when more than this fraction of structure "
+                         "names fail to match an alignment id (default: "
+                         "report the loss but continue)")
     args = ap.parse_args()
 
     lo, hi = (int(x) for x in args.region.split("-"))
     members = {l.strip() for l in open(args.members) if l.strip()}
-    res = measure(Path(args.pdb_dir), Path(args.alignment), lo, hi, members)
+    res = measure(Path(args.pdb_dir), Path(args.alignment), lo, hi, members,
+                  max_unmatched=args.max_unmatched)
 
     if not res["n_focal"] or not res["n_other"]:
         print("Not enough structures on one side to make the comparison — "
@@ -191,6 +198,9 @@ def main():
     print(f"other  n={res['n_other']} mean delta {res['delta_other']} "
           f"(median {res['median_other']})")
     print(f"Mann-Whitney p = {res['p']}")
+    print(f"id matching: {res['id_match_level']} level, "
+          f"{res['n_unmatched_structures']} structure(s) unmatched, "
+          f"{res['n_skipped']} gene(s) skipped {res['skipped']}")
     print(f"-> {args.out}")
     return 0
 

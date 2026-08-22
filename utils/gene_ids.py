@@ -19,12 +19,18 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional
 
-_EXTENSIONS = (".pdb", ".fa", ".fasta", ".afa", ".aln")
+_EXTENSIONS = (".pdb.gz", ".cif.gz", ".pdb", ".cif", ".fa", ".fasta", ".afa",
+               ".aln")
 # `.t1` / `_t1` / `.1` are isoform or version suffixes. A bare `_000001` is
 # NOT: gene ids like Cgig_..._SGP5p_1338_000001 carry the gene number after an
 # underscore, and stripping it merges distinct loci. The collision guard in
 # _index caught exactly that on the real PEPC structure set.
 _ISOFORM = re.compile(r"(?:[._]t\d+|\.\d+)$")
+# DeepLoc names its per-residue output `alpha_<id>.csv` after lowercasing the
+# identifier and deleting everything outside [a-z0-9_], so `Aco_Aco010025.1`
+# comes back as `aco_aco0100251`. The transform loses information and cannot be
+# inverted, so it is the last level tried, never the first.
+_SQUASH = re.compile(r"[^a-z0-9_]")
 
 
 def canon_gene_id(gene_id: str) -> str:
@@ -44,6 +50,18 @@ def strip_isoform(gene_id: str) -> str:
     (`OcoChr10G09070`), and stripping those would merge distinct genes.
     """
     return _ISOFORM.sub("", gene_id.strip(), count=1)
+
+
+def squash_gene_id(gene_id: str) -> str:
+    """Lowercase and drop every character a tool-mangled filename would drop.
+
+    This is DeepLoc's filename rule, kept here rather than in each caller so
+    that fixing it once fixes it everywhere. Distinct ids can squash together
+    (`Aco_X.1` and `aco_x1` both give `aco_x1`), which is why `match_ids` only
+    reaches this level after the milder ones fail and why the collision guard
+    applies to it as well.
+    """
+    return _SQUASH.sub("", gene_id.strip().lower())
 
 
 @dataclass(frozen=True)
@@ -83,8 +101,14 @@ def match_ids(queries: Iterable[str], reference: Iterable[str],
         ("exact", lambda s: s),
         ("canonical", canon_gene_id),
         ("isoform", lambda s: strip_isoform(canon_gene_id(s))),
+        ("squashed", squash_gene_id),
     )
 
+    # Keep the level that matched the MOST, not the one that ran last. The
+    # levels are not nested: `squashed` deletes dots while the structure
+    # filename convention turns them into underscores, so falling through to
+    # it can match fewer ids than `canonical` already did. On the real PEPC
+    # structure set that difference was 102 matches versus 29.
     best: Optional[IdMatch] = None
     for level, transform in levels:
         index = _index(reference, transform)
@@ -96,7 +120,8 @@ def match_ids(queries: Iterable[str], reference: Iterable[str],
             else:
                 mapping[q] = hit
         frac = len(unmatched) / len(queries) if queries else 0.0
-        best = IdMatch(mapping, level, unmatched, frac)
+        if best is None or len(mapping) > len(best.mapping):
+            best = IdMatch(mapping, level, unmatched, frac)
         if not unmatched:
             break
 

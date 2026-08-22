@@ -29,14 +29,84 @@ import random
 import statistics
 from collections import Counter
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence, Tuple
 
+from utils.gene_ids import match_ids
 from utils.newick import Node
 
 logger = logging.getLogger("family_finder")
 
 # Ranks checked lowest-to-highest for the lineage-specific verdict.
 TAXONOMY_RANKS = ["species", "genus", "family", "order"]
+
+
+# ---------------------------------------------------------------------------
+# Group id resolution
+# ---------------------------------------------------------------------------
+
+def resolve_groups(
+    alignment: Dict[str, str],
+    groups: Dict[str, List[str]],
+    *,
+    max_unmatched: Optional[float] = None,
+) -> Tuple[Dict[str, List[str]], dict]:
+    """Re-express each group's members in the alignment's own identifiers.
+
+    Every layer here used to keep members with `m in alignment` — an exact
+    string test that drops anything spelled differently and says nothing. That
+    is how `Ococ_OcoChr10G09070.t1` failed to meet `groups.json` (#34): the
+    subfamily was scanned with fewer members than it has, or with none, and the
+    result read as "no diagnostic residues" rather than "never examined".
+
+    Matching goes through `utils.gene_ids.match_ids`, the single normaliser, so
+    a fix there fixes every consumer at once — including its collision guard,
+    which refuses to loosen far enough to merge `_1338_000001` with
+    `_1338_000002`. `max_unmatched` (a fraction of all group members) makes a
+    coverage loss raise instead of shrinking the analysis quietly.
+
+    Returns the resolved groups and a report: the level `match_ids` settled on,
+    the overall unmatched count and fraction, and the unmatched ids per group.
+    """
+    return resolve_group_ids(list(alignment), groups,
+                             max_unmatched=max_unmatched)
+
+
+def resolve_group_ids(
+    reference_ids: Sequence[str],
+    groups: Dict[str, List[str]],
+    *,
+    max_unmatched: Optional[float] = None,
+) -> Tuple[Dict[str, List[str]], dict]:
+    """`resolve_groups` against any id universe, not only an alignment.
+
+    The other universe that matters is the foldseek pair table, which is keyed
+    on structure filenames rather than alignment names.
+    """
+    members = [m for group in sorted(groups) for m in groups[group]]
+    matched = match_ids(members, list(reference_ids), max_unmatched=max_unmatched)
+
+    resolved: Dict[str, List[str]] = {}
+    per_group: Dict[str, dict] = {}
+    for name, group_members in groups.items():
+        hits = [matched.mapping[m] for m in group_members if m in matched.mapping]
+        # A group may legitimately list the same gene twice; the alignment
+        # cannot, so de-duplicate while keeping the caller's order.
+        seen = set()
+        resolved[name] = [g for g in hits if not (g in seen or seen.add(g))]
+        per_group[name] = {
+            "n_members": len(resolved[name]),
+            "n_requested": len(group_members),
+            "unmatched": [m for m in group_members if m not in matched.mapping],
+        }
+
+    report = {
+        "level": matched.level,
+        "n_requested": len(members),
+        "n_unmatched": len(matched.unmatched),
+        "unmatched_fraction": matched.unmatched_fraction,
+        "groups": per_group,
+    }
+    return resolved, report
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +122,7 @@ def sdp_scan(
     out_max: float = 0.2,
     min_cover: float = 0.7,
     ref_seq_id: Optional[str] = None,
+    max_unmatched: Optional[float] = None,
 ) -> List[dict]:
     """Subfamily-diagnostic alignment columns.
 
@@ -62,11 +133,25 @@ def sdp_scan(
     (their "conservation" is not meaningful). ref_seq_id adds a ref_pos
     column with that sequence's ungapped numbering (e.g. ATH_PPC1
     coordinates) so residues can be cited against published positions.
+
+    Member ids are resolved against the alignment through `resolve_groups`,
+    not by exact string equality — pass `max_unmatched` to refuse rather than
+    scan a group the id forms have quietly shrunk.
     """
     lengths = {len(s) for s in alignment.values()}
     if len(lengths) > 1:
         raise ValueError(f"ragged alignment: lengths {sorted(lengths)}")
     alen = lengths.pop() if lengths else 0
+
+    groups, id_report = resolve_groups(alignment, groups,
+                                       max_unmatched=max_unmatched)
+    if id_report["n_unmatched"]:
+        logger.warning(
+            "sdp_scan: %d of %d group members did not match an alignment id "
+            "even at the %r level — those genes were not scanned",
+            id_report["n_unmatched"], id_report["n_requested"],
+            id_report["level"],
+        )
 
     ref_pos: Dict[int, int] = {}
     if ref_seq_id is not None:
@@ -79,7 +164,6 @@ def sdp_scan(
 
     rows: List[dict] = []
     for group_id, members in sorted(groups.items()):
-        members = [m for m in members if m in alignment]
         if len(members) < min_group:
             continue
         member_set = set(members)
@@ -117,7 +201,8 @@ def sdp_scan(
 def coverage_suppressed(alignment: Dict[str, str],
                         groups: Dict[str, List[str]],
                         min_cover: float = 0.7,
-                        min_group: int = 5) -> Dict[str, dict]:
+                        min_group: int = 5,
+                        max_unmatched: Optional[float] = None) -> Dict[str, dict]:
     """Which columns `sdp_scan` never judged for each group, and why.
 
     `sdp_scan` skips a column for a group whose non-gap coverage falls below
@@ -129,16 +214,19 @@ def coverage_suppressed(alignment: Dict[str, str],
     members, so every N-terminal column was filtered out and the region read as
     signal-free.
 
-    Call this next to `sdp_scan` and report it alongside the hits.
+    Call this next to `sdp_scan` and report it alongside the hits. It resolves
+    member ids the same way `sdp_scan` does, so the two agree on which genes a
+    group actually has in the alignment.
     """
     lengths = {len(s) for s in alignment.values()}
     if len(lengths) > 1:
         raise ValueError(f"ragged alignment: lengths {sorted(lengths)}")
     alen = lengths.pop() if lengths else 0
 
+    groups, _id_report = resolve_groups(alignment, groups,
+                                        max_unmatched=max_unmatched)
     report: Dict[str, dict] = {}
-    for group_id, members in sorted(groups.items()):
-        present = [m for m in members if m in alignment]
+    for group_id, present in sorted(groups.items()):
         coverage = []
         for col in range(alen):
             if not present:
@@ -169,6 +257,7 @@ def sdp_core_relationship(
     invariant_threshold: float = 0.95,
     n_null: int = 1000,
     seed: int = 0,
+    max_unmatched: Optional[float] = None,
 ) -> dict:
     """Where diagnostic residues sit relative to the reference-free core.
 
@@ -200,8 +289,13 @@ def sdp_core_relationship(
         raise ValueError(f"ragged alignment: lengths {sorted(lengths)}")
     alen = lengths.pop() if lengths else 0
 
+    # Resolve ids once, so the scan, the invariant core and the candidate pool
+    # all agree on which genes each group has. They used to disagree whenever
+    # an id form differed (#34).
+    groups, _id_report = resolve_groups(alignment, groups,
+                                        max_unmatched=max_unmatched)
     skipped = sorted(name for name, members in groups.items()
-                     if len([m for m in members if m in alignment]) < min_group)
+                     if len(members) < min_group)
     hits = sdp_scan(alignment, groups, min_group=min_group, in_cons=in_cons,
                     out_max=out_max, min_cover=min_cover)
     sdp_cols = sorted({h["aln_col"] for h in hits})
@@ -374,6 +468,63 @@ def _rank_purities(species: List[str],
     return cols
 
 
+def _family_span_depth(per_group: Dict[str, List[str]],
+                       species_tree: Node) -> Optional[int]:
+    """Depth of the MRCA of every subfamily's species, or None with no groups.
+
+    This is the reference the root-span rule compares against: a subfamily
+    whose own MRCA is that same node did not arise inside one lineage.
+    """
+    if not per_group:
+        return None
+    union = set().union(*per_group.values())
+    return species_monophyly(union, species_tree)["mrca_depth"]
+
+
+def _tree_attribution(species: List[str], species_tree: Node,
+                      family_depth: Optional[int],
+                      taxonomy: Dict[str, Dict[str, str]]) -> Tuple[dict, str, List[str]]:
+    """Species-tree columns, verdict and notes for one subfamily."""
+    mono = species_monophyly(set(species), species_tree)
+    columns = {
+        "n_in_tree": mono["n_in_tree"],
+        "monophyletic": mono["monophyletic"],
+        "mrca_name": mono["mrca_name"],
+        "mrca_depth": mono["mrca_depth"],
+        "clade_label": clade_rank_label(set(species), taxonomy),
+    }
+    if mono["monophyletic"] is None:
+        verdict = "unknown (no species in species tree)"
+    elif not mono["monophyletic"]:
+        verdict = "paralog-split (non-monophyletic)"
+    elif mono["mrca_depth"] == family_depth:
+        # Ancient paralogs kept in every sampled species are trivially
+        # monophyletic; the root-span rule is what stops them being read as
+        # lineage-specific.
+        verdict = "paralog-split (spans family root)"
+    else:
+        verdict = "lineage-specific (clade)"
+
+    notes = []
+    if mono["missing"]:
+        notes.append("not in species tree: " + ",".join(mono["missing"]))
+    if mono["intruders"]:
+        notes.append("interleaved species: " + ",".join(mono["intruders"]))
+    if taxonomy:
+        columns.update(_rank_purities(species, taxonomy))
+    return columns, verdict, notes
+
+
+def _legacy_attribution(species: List[str],
+                        taxonomy: Dict[str, Dict[str, str]]) -> Tuple[dict, str]:
+    """Rank-purity columns and verdict when there is no species tree."""
+    columns = _rank_purities(species, taxonomy)
+    for rank in TAXONOMY_RANKS:  # lowest pure rank wins
+        if columns[f"{rank}_purity"] == 1.0:
+            return columns, f"lineage-specific ({rank})"
+    return columns, "paralog-split (crosses order)"
+
+
 def taxonomic_composition(
     groups: Dict[str, List[str]],
     taxonomy: Optional[Dict[str, Dict[str, str]]] = None,
@@ -405,55 +556,24 @@ def taxonomic_composition(
         group_id: [m.split(delimiter, 1)[0] for m in members]
         for group_id, members in groups.items()
     }
-
-    family_depth = None
-    if species_tree is not None:
-        union = set().union(*per_group.values()) if per_group else set()
-        span = species_monophyly(union, species_tree)
-        family_depth = span["mrca_depth"]
+    family_depth = (_family_span_depth(per_group, species_tree)
+                    if species_tree is not None else None)
 
     rows: List[dict] = []
     for group_id, members in sorted(groups.items()):
         species = per_group[group_id]
-        unknown = sorted({s for s in species if s not in taxonomy})
-        row: dict = {
-            "subfamily": group_id,
-            "n_members": len(members),
-            "n_species": len(set(species)),
-        }
-        notes: List[str] = []
+        row = {"subfamily": group_id, "n_members": len(members),
+               "n_species": len(set(species))}
 
         if species_tree is not None:
-            mono = species_monophyly(set(species), species_tree)
-            row["n_in_tree"] = mono["n_in_tree"]
-            row["monophyletic"] = mono["monophyletic"]
-            row["mrca_name"] = mono["mrca_name"]
-            row["mrca_depth"] = mono["mrca_depth"]
-            row["clade_label"] = clade_rank_label(set(species), taxonomy)
-            if mono["monophyletic"] is None:
-                verdict = "unknown (no species in species tree)"
-            elif not mono["monophyletic"]:
-                verdict = "paralog-split (non-monophyletic)"
-            elif mono["mrca_depth"] == family_depth:
-                verdict = "paralog-split (spans family root)"
-            else:
-                verdict = "lineage-specific (clade)"
-            if mono["missing"]:
-                notes.append(
-                    "not in species tree: " + ",".join(mono["missing"]))
-            if mono["intruders"]:
-                notes.append(
-                    "interleaved species: " + ",".join(mono["intruders"]))
-            if taxonomy:
-                row.update(_rank_purities(species, taxonomy))
+            columns, verdict, notes = _tree_attribution(
+                species, species_tree, family_depth, taxonomy)
         else:
-            row.update(_rank_purities(species, taxonomy))
-            verdict = "paralog-split (crosses order)"
-            for rank in TAXONOMY_RANKS:  # lowest pure rank wins
-                if row[f"{rank}_purity"] == 1.0:
-                    verdict = f"lineage-specific ({rank})"
-                    break
+            columns, verdict = _legacy_attribution(species, taxonomy)
+            notes = []
+        row.update(columns)
 
+        unknown = sorted({s for s in species if s not in taxonomy})
         if unknown and (species_tree is None or taxonomy):
             notes.append("unknown taxonomy for: " + ",".join(unknown))
         row["verdict"] = verdict
@@ -466,39 +586,254 @@ def taxonomic_composition(
 # Structural coherence (foldseek all-vs-all)
 # ---------------------------------------------------------------------------
 
-def parse_pairwise_scores(tsv: Path) -> Dict[frozenset, float]:
-    """Foldseek easy-search all-vs-all TSV -> symmetric best bits per pair.
+# The layout steps.esm.run_foldseek asks for. A run that also wants the
+# sequence-identity control must add `fident` (issue #39 item 3).
+DEFAULT_PAIR_COLUMNS = "query,target,evalue,bits,alntmscore"
 
-    Columns as in steps.esm.FOLDSEEK_FORMAT_OUTPUT: query, target, evalue,
-    bits, alntmscore (no header). Self-hits are dropped; the two search
-    directions keep the better bits.
+
+def parse_pairwise_table(tsv: Path,
+                         columns: Optional[str] = None) -> Dict[frozenset, dict]:
+    """Foldseek all-vs-all TSV -> one record per pair, keyed by the id pair.
+
+    `columns` is the foldseek `--format-output` string the file was written
+    with (default `DEFAULT_PAIR_COLUMNS`). It is checked against the actual
+    field count rather than guessed at: a table read under the wrong layout
+    silently returns numbers from the wrong column, which is the same class of
+    failure as an unverified coordinate system.
+
+    Self-hits are dropped. When both search directions report a pair, the
+    higher-scoring alignment wins AND ITS OWN other fields are kept — mixing
+    the bits of one alignment with the fident of another would break the very
+    comparison the identity control needs.
     """
-    scores: Dict[frozenset, float] = {}
+    names = [c.strip() for c in (columns or DEFAULT_PAIR_COLUMNS).split(",")]
+    for required in ("query", "target"):
+        if required not in names:
+            raise ValueError(f"Pair-table columns must include {required!r}: {names}")
+    rank_on = "bits" if "bits" in names else names[-1]
+
+    table: Dict[frozenset, dict] = {}
     with open(tsv) as f:
         for line in f:
             if not line.strip() or line.startswith("#"):
                 continue
             fields = line.rstrip("\n").split("\t")
-            if len(fields) < 4:
-                logger.debug(f"Skipping malformed pair line: {line[:80]!r}")
-                continue
-            query, target = fields[0], fields[1]
-            if query == target:
+            if len(fields) != len(names):
+                raise ValueError(
+                    f"{tsv}: expected {len(names)} columns ({','.join(names)}) "
+                    f"but the table has {len(fields)} — pass the "
+                    "--format-output string this file was written with rather "
+                    "than reading numbers out of the wrong column"
+                )
+            record = dict(zip(names, fields))
+            if record["query"] == record["target"]:
                 continue
             try:
-                bits = float(fields[3])
+                for name in names[2:]:
+                    record[name] = float(record[name])
             except ValueError:
                 logger.debug(f"Skipping malformed pair line: {line[:80]!r}")
                 continue
-            key = frozenset((query, target))
-            if bits > scores.get(key, float("-inf")):
-                scores[key] = bits
-    return scores
+            key = frozenset((record["query"], record["target"]))
+            prev = table.get(key)
+            if prev is None or record[rank_on] > prev[rank_on]:
+                table[key] = record
+    return table
+
+
+def _pair_column(tsv: Path, column: str,
+                 columns: Optional[str] = None) -> Dict[frozenset, float]:
+    names = [c.strip() for c in (columns or DEFAULT_PAIR_COLUMNS).split(",")]
+    if column not in names:
+        raise ValueError(
+            f"{column!r} is not in the pair table's columns ({','.join(names)}). "
+            f"Re-run foldseek with {column} in --format-output, or the number "
+            "it would produce does not exist in this file."
+        )
+    return {key: rec[column]
+            for key, rec in parse_pairwise_table(tsv, columns).items()}
+
+
+def parse_pairwise_scores(tsv: Path, metric: str = "bits",
+                          columns: Optional[str] = None) -> Dict[frozenset, float]:
+    """Foldseek all-vs-all TSV -> symmetric best score per pair.
+
+    `metric` names the column to score on. `bits` grows with both alignment
+    length and identity; `alntmscore` is length-normalised and therefore the
+    less confounded of the two, but neither is free of sequence similarity —
+    see `structure_coherence`.
+    """
+    return _pair_column(tsv, metric, columns)
+
+
+def parse_pair_identities(tsv: Path,
+                          columns: Optional[str] = None) -> Dict[frozenset, float]:
+    """Per-pair sequence identity (`fident`), for the identity control."""
+    return _pair_column(tsv, "fident", columns)
+
+
+def _fit_line(xs: List[float], ys: List[float]) -> Optional[Tuple[float, float]]:
+    """Ordinary least squares `y = slope * x + intercept`, or None.
+
+    None when there are too few points or x has no spread — with a constant
+    x there is nothing to regress out, and pretending otherwise would report
+    the raw difference as if it had been controlled.
+    """
+    n = len(xs)
+    if n < 3:
+        return None
+    mean_x, mean_y = sum(xs) / n, sum(ys) / n
+    sxx = sum((x - mean_x) ** 2 for x in xs)
+    if sxx == 0.0:
+        return None
+    sxy = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    slope = sxy / sxx
+    return slope, mean_y - slope * mean_x
+
+
+def sequence_confounding(pair_scores: Dict[frozenset, float],
+                         identities: Dict[frozenset, float]) -> dict:
+    """How tightly the structural score tracks sequence identity.
+
+    This is the number that decides whether the coherence result says anything
+    beyond "close relatives look alike". Report it next to the coherence table,
+    not instead of it: a high `r` does not make the structural signal absent,
+    it makes the UNCONTROLLED comparison uninformative.
+    """
+    shared = sorted(set(pair_scores) & set(identities), key=lambda k: sorted(k))
+    xs = [identities[k] for k in shared]
+    ys = [pair_scores[k] for k in shared]
+    fit = _fit_line(xs, ys)
+    out = {"n_pairs": len(shared), "r": None, "slope": None, "intercept": None}
+    if fit is None:
+        return out
+    slope, intercept = fit
+    n = len(xs)
+    mean_x, mean_y = sum(xs) / n, sum(ys) / n
+    sxx = sum((x - mean_x) ** 2 for x in xs)
+    syy = sum((y - mean_y) ** 2 for y in ys)
+    sxy = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    out.update(slope=slope, intercept=intercept,
+               r=(sxy / (sxx * syy) ** 0.5) if sxx and syy else None)
+    return out
+
+
+IDENTITY_BIN_WIDTH = 0.05
+MIN_SHARED_BINS = 3
+MIN_WITHIN_IN_SHARED_BINS = 5
+# A binned residual mean this many standard errors from zero is a systematic
+# departure, not sampling noise. Three sigma is the conventional bar and was
+# not chosen to make any particular dataset fail — on the real PEPC table the
+# departure is an order of magnitude past it.
+MAX_RESIDUAL_Z = 3.0
+
+
+def _identity_bin(fident: float) -> int:
+    return int(fident / IDENTITY_BIN_WIDTH)
+
+
+def residual_diagnostics(pair_scores: Dict[frozenset, float],
+                         identities: Dict[frozenset, float],
+                         n_bins: int = 10) -> dict:
+    """Is a straight line an adequate model of score-versus-identity?
+
+    The identity control regresses the structural score on `fident` and
+    compares residuals. That is only a control if the line actually fits: a
+    misspecified model leaves residuals that depend on identity, and since
+    within-subfamily pairs are concentrated at high identity, the
+    within-versus-between residual difference then measures the
+    misspecification rather than the structures.
+
+    Measured on the real PEPC pair table (5,343 pairs) the line does NOT fit:
+    r2 = 0.430 for bits and 0.497 for alntmscore, with binned residual means
+    running +0.006 / -0.061 / -0.068 / +0.074 / +0.053 / +0.046 / +0.035 /
+    +0.017 / -0.014 / -0.088 instead of hovering at zero. alntmscore saturates
+    at 1.0 while fident keeps climbing, so every high-identity pair sits below
+    the line whatever its structure.
+
+    Residuals are binned on identity into `n_bins` equal-count bins; each
+    bin's mean is scored against its own standard error. Any bin past
+    `MAX_RESIDUAL_Z` marks the fit inadequate, and the caller must then refuse
+    to draw a conclusion from the residuals rather than report the artifact.
+    """
+    shared = sorted(set(pair_scores) & set(identities), key=lambda k: sorted(k))
+    xs = [identities[k] for k in shared]
+    ys = [pair_scores[k] for k in shared]
+    out = {"n_pairs": len(shared), "r2": None, "max_abs_z": None,
+           "bin_residual_means": [], "bin_sizes": [],
+           "linear_fit_adequate": False,
+           "reason": "too few pairs, or no spread in identity, to fit a line"}
+    fit = _fit_line(xs, ys)
+    if fit is None:
+        return out
+
+    slope, intercept = fit
+    residuals = [y - (slope * x + intercept) for x, y in zip(xs, ys)]
+    mean_y = sum(ys) / len(ys)
+    ss_tot = sum((y - mean_y) ** 2 for y in ys)
+    ss_res = sum(r * r for r in residuals)
+    out["r2"] = 1.0 - ss_res / ss_tot if ss_tot else None
+
+    order = sorted(range(len(xs)), key=lambda i: xs[i])
+    per_bin = max(1, len(order) // n_bins)
+    bins = [order[i:i + per_bin] for i in range(0, len(order), per_bin)]
+    # Chunking leaves a remainder; a three-point bin has a huge standard error
+    # and would be judged on noise, so fold it into its neighbour.
+    if len(bins) > n_bins:
+        bins[-2].extend(bins.pop())
+    sd = (ss_res / len(residuals)) ** 0.5
+    # An exact fit leaves residuals at floating-point noise, and dividing that
+    # noise by its own standard error produces meaningless z-scores. When the
+    # residual spread is negligible against the spread of the response there
+    # is no structure left to test for.
+    y_sd = (ss_tot / len(ys)) ** 0.5 if ss_tot else 0.0
+    if sd <= 1e-9 * y_sd:
+        out.update(linear_fit_adequate=True, max_abs_z=0.0,
+                   reason="the line fits exactly; no residual structure remains")
+        return out
+    means, sizes, zs = [], [], []
+    for members in bins:
+        if not members:
+            continue
+        m = sum(residuals[i] for i in members) / len(members)
+        means.append(m)
+        sizes.append(len(members))
+        zs.append(abs(m) / (sd / len(members) ** 0.5) if sd else 0.0)
+    out.update(bin_residual_means=means, bin_sizes=sizes,
+               max_abs_z=max(zs) if zs else None)
+
+    if not zs or max(zs) <= MAX_RESIDUAL_Z:
+        out.update(linear_fit_adequate=True,
+                   reason="binned residuals are consistent with zero, so the "
+                          "linear identity control is usable")
+        return out
+    out["reason"] = (
+        f"the line does not fit: r2 = {out['r2']:.3f} and the binned residual "
+        f"means are systematic (non-monotonic, worst bin {max(zs):.1f} standard "
+        "errors from zero). Residuals from a misspecified fit measure the "
+        "misspecification, not the structures"
+    )
+    return out
+
+
+UNCONTROLLED_WARNING = (
+    "UNCONTROLLED: this ratio is not adjusted for sequence identity. Foldseek "
+    "scores rise with sequence similarity, so within > between can mean no "
+    "more than 'closer relatives look more alike'. Re-run foldseek with "
+    "fident in --format-output and pass identities= to compare "
+    "identity-adjusted residuals instead."
+)
+
+
+def _mean(values: List[float]) -> Optional[float]:
+    return sum(values) / len(values) if values else None
 
 
 def structure_coherence(
     groups: Dict[str, List[str]],
     pair_scores: Dict[frozenset, float],
+    identities: Optional[Dict[frozenset, float]] = None,
+    metric: str = "bits",
 ) -> List[dict]:
     """Mean within-subfamily vs between-subfamily structural score.
 
@@ -506,37 +841,206 @@ def structure_coherence(
     threshold, and inventing zeros for them would fake incoherence.
     mean_between is None (and coherent is None) when no cross-subfamily
     pair was observed for the group.
+
+    **The raw comparison is confounded** (issue #39). Foldseek scores track
+    sequence similarity closely, so "within > between" is also what you get
+    when subfamilies are simply groups of close relatives — which they are by
+    construction. Measured on the PEPC clan the raw rule called 5 of 6
+    subfamilies coherent (ratio median 1.24, only OG4 below at 0.915), and
+    that number cannot be cited as structural evidence on its own.
+
+    Pass per-pair `fident` as `identities` to control for it: the score is
+    regressed on identity across every observed pair and the within/between
+    comparison is repeated on the RESIDUALS.
+
+    **The residual comparison is not automatically citable either, and on the
+    PEPC data it is not citable at all.** Two things have to be checked first,
+    and both fail there:
+
+    * *Does the line fit?* r2 = 0.430 for bits and 0.497 for alntmscore over
+      5,343 pairs, with binned residual means running +0.006 / -0.061 /
+      -0.068 / +0.074 / ... rather than sitting at zero. alntmscore saturates
+      at 1.0 while fident keeps climbing, so high-identity pairs fall below
+      the line whatever their structure — and within-pairs are almost all
+      high-identity. A naive reading of the residuals then calls every
+      subfamily incoherent, which is the misspecification talking.
+      (`residual_diagnostics`)
+    * *Do within- and between-pairs overlap in identity at all?* Binned at
+      0.05: OG15 2 shared bins (3 within-pairs), OG2 2 (3), OG3 3 (3),
+      OG4 11 (55), OG5 1 (1), **OG8 0**. Outside OG4 there is essentially
+      nothing to compare, so the honest answer is not "no coherence" but
+      "cannot tell".
+
+    So each row carries a `verdict` of `coherent`, `not_coherent` or
+    `no_interpretation_available` with a `reason`, following the same
+    discipline as `sdp_core_relationship`. `coherent_controlled` is None
+    whenever the verdict is `no_interpretation_available`; the diagnostics
+    (`fit_r2`, `linear_fit_adequate`, `n_shared_identity_bins`) travel with
+    every row so the table can be judged without rerunning anything. Without
+    identities at all, every row is `no_interpretation_available` with an
+    explicit UNCONTROLLED warning — emitting the bare ratio silently is what
+    this issue exists to stop.
     """
+    # Group ids arrive in alignment spelling and the pair table is keyed on
+    # structure filenames ('.' -> '_'). Comparing them literally observes no
+    # pairs at all and reports it as "none observed" (#42), so resolve through
+    # the shared matcher and count what still has no structure.
+    structure_ids = sorted({g for pair in pair_scores for g in pair})
+    groups, id_report = resolve_group_ids(structure_ids, groups)
     member_of = {}
     for group_id, members in groups.items():
         for m in members:
             member_of[m] = group_id
 
+    fit, diagnostics = None, None
+    if identities:
+        shared = sorted(set(pair_scores) & set(identities), key=lambda k: sorted(k))
+        fit = _fit_line([identities[k] for k in shared],
+                        [pair_scores[k] for k in shared])
+        diagnostics = residual_diagnostics(pair_scores, identities)
+    residual = {}
+    if fit is not None:
+        slope, intercept = fit
+        for pair, score in pair_scores.items():
+            if pair in identities:
+                residual[pair] = score - (slope * identities[pair] + intercept)
+
     rows: List[dict] = []
     for group_id, members in sorted(groups.items()):
         within, between = [], []
+        within_res, between_res = [], []
+        within_bins: Dict[int, int] = {}
+        between_bins: Dict[int, int] = {}
         for pair, score in pair_scores.items():
             a, b = tuple(pair)
             ga, gb = member_of.get(a), member_of.get(b)
             if group_id not in (ga, gb):
                 continue
             if ga == gb == group_id:
-                within.append(score)
+                bucket, res_bucket, bins = within, within_res, within_bins
             elif ga is not None and gb is not None:
-                between.append(score)
-        mean_w = sum(within) / len(within) if within else None
-        mean_b = sum(between) / len(between) if between else None
-        coherent = (mean_w > mean_b) if (mean_w is not None
-                                         and mean_b is not None) else None
+                bucket, res_bucket, bins = between, between_res, between_bins
+            else:
+                continue
+            bucket.append(score)
+            if identities and pair in identities:
+                b_idx = _identity_bin(identities[pair])
+                bins[b_idx] = bins.get(b_idx, 0) + 1
+            if pair in residual:
+                res_bucket.append(residual[pair])
+
+        mean_w, mean_b = _mean(within), _mean(between)
+        res_w, res_b = _mean(within_res), _mean(between_res)
+        # Residuals existing on both sides means the control RAN, not that it
+        # HELD. `sequence_controlled` below reports the latter.
+        has_residuals = res_w is not None and res_b is not None
+        shared_bins = sorted(set(within_bins) & set(between_bins))
+        support = {
+            "n_shared_identity_bins": len(shared_bins),
+            "n_within_pairs_in_shared_bins": sum(within_bins[b] for b in shared_bins),
+            "n_between_pairs_in_shared_bins": sum(between_bins[b] for b in shared_bins),
+        }
+        verdict, reason = _controlled_verdict(
+            has_residuals, res_w, res_b, diagnostics, support, identities, fit)
+        # One meaning, one column: the control held iff a verdict came out of
+        # it. Reporting True next to an UNCONTROLLED reason let anyone
+        # filtering on this column tally these rows as controlled results.
+        decided = verdict in ("coherent", "not_coherent")
         rows.append({
             "subfamily": group_id,
+            "metric": metric,
             "n_within_pairs": len(within),
             "n_between_pairs": len(between),
             "mean_within": mean_w,
             "mean_between": mean_b,
-            "coherent": coherent,
+            "coherent": (mean_w > mean_b) if (mean_w is not None
+                                              and mean_b is not None) else None,
+            "sequence_controlled": decided,
+            "mean_within_residual": res_w,
+            "mean_between_residual": res_b,
+            "coherent_controlled": (res_w > res_b) if decided else None,
+            "verdict": verdict,
+            "reason": reason,
+            "fit_r2": (diagnostics or {}).get("r2"),
+            "linear_fit_adequate": (diagnostics or {}).get("linear_fit_adequate"),
+            **support,
+            "n_members_without_structure": len(
+                id_report["groups"][group_id]["unmatched"]),
+            "warning": "" if decided else reason,
         })
     return rows
+
+
+def _controlled_verdict(has_residuals: bool, res_w: Optional[float],
+                        res_b: Optional[float], diagnostics: Optional[dict],
+                        support: dict, identities, fit) -> Tuple[str, str]:
+    """`coherent` / `not_coherent` / `no_interpretation_available` + why.
+
+    Three things have to hold before the residual comparison may conclude
+    anything, and each of them failed somewhere on the real PEPC data:
+
+    1. the control ran at all (identities present, a line fittable, residuals
+       on both sides of this subfamily's comparison);
+    2. the line FITS — otherwise the residual difference is the
+       misspecification (r2 = 0.43/0.50 measured, binned residuals systematic);
+    3. within- and between-pairs actually OVERLAP in identity — otherwise the
+       comparison extrapolates. Measured per subfamily with 0.05-wide bins:
+       OG15 2 shared bins (3 within pairs), OG2 2 (3), OG3 3 (3), OG4 11 (55),
+       OG5 1 (1), OG8 **0**. Only OG4 has anything worth calling support.
+
+    The verdict follows the same discipline as `sdp_core_relationship`: an
+    unsupported comparison is `no_interpretation_available` with a reason, not
+    a quiet negative.
+    """
+    if not has_residuals:
+        return "no_interpretation_available", _uncontrolled_reason(identities, fit)
+    if diagnostics and not diagnostics["linear_fit_adequate"]:
+        return "no_interpretation_available", (
+            "UNCONTROLLED: the identity control cannot be trusted — "
+            + diagnostics["reason"]
+            + ". Within-pairs cluster at high identity, so the residual "
+              "difference reproduces the curvature rather than the structures"
+        )
+    if (support["n_shared_identity_bins"] < MIN_SHARED_BINS
+            or support["n_within_pairs_in_shared_bins"] < MIN_WITHIN_IN_SHARED_BINS):
+        return "no_interpretation_available", (
+            "within and between pairs do not share an identity range: "
+            f"{support['n_shared_identity_bins']} shared "
+            f"{IDENTITY_BIN_WIDTH:g}-wide identity bin(s) holding "
+            f"{support['n_within_pairs_in_shared_bins']} within-pair(s) "
+            f"(need {MIN_SHARED_BINS} bins and {MIN_WITHIN_IN_SHARED_BINS} "
+            "pairs). Comparing residuals across disjoint identity ranges "
+            "extrapolates the fit instead of controlling with it"
+        )
+    if res_w > res_b:
+        return "coherent", (
+            "identity-adjusted: within-pair residuals exceed between-pair "
+            "residuals over a shared identity range, with an adequate fit"
+        )
+    return "not_coherent", (
+        "identity-adjusted: within-pair residuals do NOT exceed between-pair "
+        "residuals over a shared identity range, with an adequate fit"
+    )
+
+
+def _uncontrolled_reason(identities: Optional[Dict[frozenset, float]],
+                         fit) -> str:
+    """Why the identity control could not be applied — never just silence."""
+    if not identities:
+        return UNCONTROLLED_WARNING
+    if fit is None:
+        return (
+            "UNCONTROLLED: sequence identities were supplied but could not be "
+            "regressed out — fewer than three shared pairs, or every pair has "
+            "the same identity, so there is no spread to adjust for. "
+            + UNCONTROLLED_WARNING.split(". ", 1)[1]
+        )
+    return (
+        "UNCONTROLLED for this subfamily: the regression was fitted, but this "
+        "group has no residual on one side of the comparison (no observed "
+        "within- or between-pair carrying an identity). "
+        + UNCONTROLLED_WARNING.split(". ", 1)[1]
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -421,3 +421,594 @@ def test_the_null_is_seeded_so_the_verdict_is_reproducible():
 
     assert first["null_median_distance"] == second["null_median_distance"]
     assert first["p_value"] == second["p_value"]
+
+
+# ---------------------------------------------------------------------------
+# group id resolution (issue #42)
+#
+# sdp_scan used to keep only the members already spelled exactly as the
+# alignment spells them (`[m for m in members if m in alignment]`). Everything
+# else vanished without a word, which is how `Ococ_OcoChr10G09070.t1` failed to
+# match groups.json (#34) and how a subfamily can be reported as having no
+# diagnostic residues when in fact none of its members were ever looked at.
+# ---------------------------------------------------------------------------
+
+def test_group_members_with_a_transcript_suffix_still_reach_the_alignment():
+    from steps.subfamily import resolve_groups
+
+    aln = {"Ococ_OcoChr10G09070": "KAAWTR", "Ococ_OcoChr10G09071": "SAAWTR"}
+    groups = {"SF": ["Ococ_OcoChr10G09070.t1", "Ococ_OcoChr10G09071.t1"]}
+
+    resolved, report = resolve_groups(aln, groups)
+
+    assert resolved["SF"] == ["Ococ_OcoChr10G09070", "Ococ_OcoChr10G09071"]
+    assert report["groups"]["SF"]["unmatched"] == []
+    assert report["level"] == "isoform"
+
+
+def test_members_missing_from_the_alignment_are_named_not_dropped():
+    from steps.subfamily import resolve_groups
+
+    resolved, report = resolve_groups(ALN, {"SF_A": GROUPS["SF_A"] + ["ghost_g1"]})
+
+    assert "ghost_g1" not in resolved["SF_A"]
+    assert report["groups"]["SF_A"]["unmatched"] == ["ghost_g1"]
+    assert report["n_unmatched"] == 1
+    assert report["unmatched_fraction"] > 0
+
+
+def test_a_cap_turns_a_silent_coverage_loss_into_a_failure():
+    from steps.subfamily import resolve_groups
+
+    with pytest.raises(ValueError, match="unmatched"):
+        resolve_groups(ALN, {"SF_A": ["ghost1", "ghost2"]}, max_unmatched=0.1)
+
+
+def test_an_underscore_gene_number_is_never_read_as_an_isoform_here_either():
+    # Cgig_..._1338_000001 / _000002 are distinct loci. Loosening far enough to
+    # merge them would be worse than leaving one unmatched, so the collision
+    # guard in match_ids must still fire through this path.
+    from steps.subfamily import resolve_groups
+
+    aln = {"Cgig_1338_000001": "KAAWTR", "Cgig_1338_000002": "SAAWTR"}
+    resolved, report = resolve_groups(aln, {"SF": ["Cgig_1338_000001.pdb",
+                                                   "Cgig_1338_000002.pdb"]})
+
+    assert resolved["SF"] == ["Cgig_1338_000001", "Cgig_1338_000002"]
+
+
+def test_sdp_scan_matches_group_ids_through_the_shared_normaliser():
+    aln = {k.replace("_", "_") : v for k, v in ALN.items()}
+    # the groups arrive with transcript suffixes the alignment does not carry
+    groups = {name: [m + ".t1" for m in members]
+              for name, members in GROUPS.items()}
+
+    rows = sdp_scan(aln, groups, min_group=4)
+
+    assert {r["subfamily"] for r in rows} == {"SF_A", "SF_B"}
+
+
+def test_sdp_scan_can_be_told_to_refuse_rather_than_scan_a_shrunken_group():
+    groups = {"SF_A": ["ghost1", "ghost2", "ghost3", "ghost4"]}
+
+    with pytest.raises(ValueError, match="unmatched"):
+        sdp_scan(ALN, groups, min_group=4, max_unmatched=0.1)
+
+
+def test_coverage_suppressed_uses_the_same_matcher_as_the_scan():
+    from steps.subfamily import coverage_suppressed
+
+    groups = {name: [m + ".t1" for m in members]
+              for name, members in GROUPS.items()}
+
+    report = coverage_suppressed(ALN, groups, min_cover=0.7, min_group=4)
+
+    assert report["SF_A"]["n_members"] == 4
+    assert report["SF_A"]["skipped_too_small"] is False
+
+
+# ---------------------------------------------------------------------------
+# sequence-identity control for structural coherence (issue #39 item 3)
+#
+# foldseek bits scales with sequence similarity, so "within > between" may be
+# nothing but "closer relatives look more alike". The measured PEPC result (5
+# of 6 subfamilies coherent, ratio median 1.24) is not citable until identity
+# is either regressed out or the number carries a warning saying it was not.
+# ---------------------------------------------------------------------------
+
+def _ident(*entries):
+    return {frozenset((a, b)): f for a, b, f in entries}
+
+
+def test_an_uncontrolled_coherence_row_says_so():
+    scores = _pairs(("Sp1_a1", "Sp2_a2", 900.0), ("Sp1_a1", "Sp1_b1", 400.0))
+    groups = {"SF_A": ["Sp1_a1", "Sp2_a2"], "SF_B": ["Sp1_b1"]}
+
+    row = structure_coherence(groups, scores)[0]
+
+    assert row["sequence_controlled"] is False
+    assert "sequence" in row["warning"].lower()
+    assert row["coherent_controlled"] is None
+
+
+def test_the_metric_the_number_came_from_is_recorded():
+    scores = _pairs(("Sp1_a1", "Sp2_a2", 900.0), ("Sp1_a1", "Sp1_b1", 400.0))
+    groups = {"SF_A": ["Sp1_a1", "Sp2_a2"], "SF_B": ["Sp1_b1"]}
+
+    row = structure_coherence(groups, scores, metric="alntmscore")[0]
+
+    assert row["metric"] == "alntmscore"
+
+
+def _overlapping(within_lift=0.0, n=30, slope=1000.0):
+    """within- and between-pairs spanning the SAME identity range.
+
+    The comparison only means anything where both kinds of pair exist, so
+    every fixture that expects a verdict has to build that overlap
+    deliberately — the real PEPC data does not have it (see below).
+    """
+    ident, scores = {}, {}
+    groups = {"SF_A": [], "SF_B": []}
+    for i in range(n):
+        f = 0.30 + 0.02 * i
+        wp = frozenset((f"a{i}", f"a{i + 100}"))
+        bp = frozenset((f"a{i}", f"b{i}"))
+        ident[wp] = ident[bp] = f
+        scores[wp] = slope * f + within_lift
+        scores[bp] = slope * f
+        groups["SF_A"] += [f"a{i}", f"a{i + 100}"]
+        groups["SF_B"].append(f"b{i}")
+    return groups, scores, ident
+
+
+def test_identity_driven_coherence_disappears_once_identity_is_regressed_out():
+    # every pair sits exactly on score = 1000 * fident, so the structural
+    # signal is PURELY sequence identity and no residual separates the groups
+    groups, scores, ident = _overlapping(within_lift=0.0)
+
+    row = next(r for r in structure_coherence(groups, scores, identities=ident)
+               if r["subfamily"] == "SF_A")
+
+    assert row["sequence_controlled"] is True
+    assert row["linear_fit_adequate"] is True
+    assert row["mean_within_residual"] == pytest.approx(0.0, abs=1e-6)
+    assert row["mean_between_residual"] == pytest.approx(0.0, abs=1e-6)
+    assert row["verdict"] == "not_coherent"
+    assert row["coherent_controlled"] is False  # nothing beyond sequence
+
+
+def test_coherence_beyond_sequence_identity_survives_the_control():
+    # same identities, but the within-A pairs score ABOVE the identity line
+    groups, scores, ident = _overlapping(within_lift=300.0)
+
+    row = next(r for r in structure_coherence(groups, scores, identities=ident)
+               if r["subfamily"] == "SF_A")
+
+    assert row["sequence_controlled"] is True
+    assert row["mean_within_residual"] > row["mean_between_residual"]
+    assert row["verdict"] == "coherent"
+    assert row["coherent_controlled"] is True
+
+
+def test_identities_too_few_to_regress_fall_back_to_a_warning():
+    ident = _ident(("Sp1_a1", "Sp2_a2", 0.9), ("Sp1_a1", "Sp1_b1", 0.4))
+    scores = {pair: 1000.0 * f for pair, f in ident.items()}
+    groups = {"SF_A": ["Sp1_a1", "Sp2_a2"], "SF_B": ["Sp1_b1"]}
+
+    row = structure_coherence(groups, scores, identities=ident)[0]
+
+    assert row["sequence_controlled"] is False
+    assert "regress" in row["warning"].lower() or "identit" in row["warning"].lower()
+
+
+def test_constant_identity_cannot_be_regressed_out_and_says_so():
+    ident = _ident(("Sp1_a1", "Sp2_a2", 0.5), ("Sp1_a1", "Sp3_a3", 0.5),
+                   ("Sp2_a2", "Sp3_a3", 0.5), ("Sp1_a1", "Sp1_b1", 0.5))
+    scores = _pairs(("Sp1_a1", "Sp2_a2", 900.0), ("Sp1_a1", "Sp3_a3", 880.0),
+                    ("Sp2_a2", "Sp3_a3", 910.0), ("Sp1_a1", "Sp1_b1", 400.0))
+    groups = {"SF_A": ["Sp1_a1", "Sp2_a2", "Sp3_a3"], "SF_B": ["Sp1_b1"]}
+
+    row = structure_coherence(groups, scores, identities=ident)[0]
+
+    assert row["sequence_controlled"] is False
+
+
+def test_sequence_confounding_reports_how_strong_the_coupling_is():
+    from steps.subfamily import sequence_confounding
+
+    ident = _ident(("a", "b", 0.9), ("a", "c", 0.5), ("b", "c", 0.3),
+                   ("a", "d", 0.7))
+    scores = {pair: 1000.0 * f for pair, f in ident.items()}
+
+    report = sequence_confounding(scores, ident)
+
+    assert report["n_pairs"] == 4
+    assert report["r"] == pytest.approx(1.0)
+    assert report["slope"] == pytest.approx(1000.0)
+
+
+def test_sequence_confounding_on_unrelated_numbers_is_near_zero():
+    from steps.subfamily import sequence_confounding
+
+    ident = _ident(("a", "b", 0.1), ("a", "c", 0.9), ("b", "c", 0.1),
+                   ("a", "d", 0.9))
+    scores = _pairs(("a", "b", 500.0), ("a", "c", 500.0),
+                    ("b", "c", 700.0), ("a", "d", 700.0))
+
+    report = sequence_confounding(scores, ident)
+
+    assert report["r"] == pytest.approx(0.0, abs=1e-9)
+
+
+# --- reading fident out of the foldseek table --------------------------------
+
+_WIDE = (
+    "query,target,fident,alnlen,evalue,bits,qtmscore,alntmscore"
+)
+
+
+def test_pairwise_scores_can_be_read_on_a_named_metric(tmp_path):
+    p = tmp_path / "pairs.tsv"
+    p.write_text("g1\tg2\t0.90\t900\t0.0\t800\t0.95\t0.93\n")
+
+    by_bits = parse_pairwise_scores(p, metric="bits", columns=_WIDE)
+    by_tm = parse_pairwise_scores(p, metric="alntmscore", columns=_WIDE)
+
+    assert by_bits[frozenset(("g1", "g2"))] == 800.0
+    assert by_tm[frozenset(("g1", "g2"))] == pytest.approx(0.93)
+
+
+def test_identities_come_from_the_same_alignment_as_the_score(tmp_path):
+    from steps.subfamily import parse_pair_identities
+
+    p = tmp_path / "pairs.tsv"
+    p.write_text("g1\tg2\t0.90\t900\t0.0\t800\t0.95\t0.93\n"
+                 "g2\tg1\t0.40\t100\t0.0\t100\t0.50\t0.40\n")
+
+    ident = parse_pair_identities(p, columns=_WIDE)
+
+    # the better-scoring direction wins, and its OWN fident is the one kept
+    assert ident[frozenset(("g1", "g2"))] == pytest.approx(0.90)
+
+
+def test_a_table_that_does_not_match_the_declared_columns_is_refused(tmp_path):
+    p = tmp_path / "pairs.tsv"
+    p.write_text("g1\tg2\t0.0\t800\t0.93\n")   # the 5-column layout
+
+    with pytest.raises(ValueError, match="column"):
+        parse_pairwise_scores(p, columns=_WIDE)
+
+
+def test_asking_for_a_column_the_table_does_not_have_is_refused(tmp_path):
+    from steps.subfamily import parse_pair_identities
+
+    p = tmp_path / "pairs.tsv"
+    p.write_text("g1\tg2\t0.0\t800\t0.93\n")
+
+    with pytest.raises(ValueError, match="fident"):
+        parse_pair_identities(p)
+
+
+def test_coherence_matches_group_ids_against_the_pair_table_ids():
+    # groups arrive in alignment spelling, the pair table in PDB-filename
+    # spelling. Comparing them literally finds no pairs at all and reports
+    # every subfamily as having none observed — silently.
+    scores = _pairs(("Obas_X_1_9", "Obas_Y_1_9", 900.0),
+                    ("Obas_X_1_9", "Obas_Z_1_9", 400.0))
+    groups = {"SF_A": ["Obas_X.1_9", "Obas_Y.1_9"], "SF_B": ["Obas_Z.1_9"]}
+
+    row = structure_coherence(groups, scores)[0]
+
+    assert row["n_within_pairs"] == 1
+    assert row["n_between_pairs"] == 1
+
+
+def test_group_members_with_no_structure_are_counted_per_subfamily():
+    scores = _pairs(("Sp1_a1", "Sp2_a2", 900.0), ("Sp1_a1", "Sp1_b1", 400.0))
+    groups = {"SF_A": ["Sp1_a1", "Sp2_a2", "ghost1"], "SF_B": ["Sp1_b1"]}
+
+    row = structure_coherence(groups, scores)[0]
+
+    assert row["n_members_without_structure"] == 1
+
+
+# ---------------------------------------------------------------------------
+# taxonomic_composition, branch by branch (issue #39 item 1)
+#
+# The function was refactored from 85 lines / nesting 5 into three helpers.
+# The refactor was proved output-identical first (sha256 576796d8... over 14
+# synthetic cases covering all nine verdicts); these tests keep each branch
+# pinned from here on, so a later change to one path cannot quietly move
+# another.
+# ---------------------------------------------------------------------------
+
+# ((A,B),(C,D)),(E,F) — lets a species set be a clade, span the root, or
+# interleave with another subfamily's species.
+TC_TREE = "(((A,B)ab,(C,D)cd)abcd,(E,F)ef)root;"
+
+TC_TAX = {
+    "A": {"genus": "Ga", "family": "Fa", "order": "Oa"},
+    "B": {"genus": "Ga", "family": "Fa", "order": "Oa"},
+    "C": {"genus": "Gc", "family": "Fa", "order": "Oa"},
+    "D": {"genus": "Gd", "family": "Fd", "order": "Oa"},
+    "E": {"genus": "Ge", "family": "Fe", "order": "Oe"},
+    "F": {"genus": "Ge", "family": "Fe", "order": "Oe"},
+}
+
+
+def _tc(groups, **kw):
+    if "species_tree" in kw:
+        kw["species_tree"] = parse_newick(kw["species_tree"])
+    return {r["subfamily"]: r for r in taxonomic_composition(groups, **kw)}
+
+
+def test_a_clade_strictly_inside_the_family_span_is_lineage_specific():
+    rows = _tc({"sf_ab": ["A_g1", "B_g1"], "sf_ef": ["E_g1", "F_g1"],
+                "sf_cd": ["C_g1", "D_g1"]}, species_tree=TC_TREE)
+
+    assert rows["sf_ab"]["verdict"] == "lineage-specific (clade)"
+    assert rows["sf_ab"]["monophyletic"] is True
+
+
+def test_a_set_whose_mrca_is_the_family_span_is_a_paralog_split():
+    # ancient paralogs kept in every sampled species are trivially
+    # monophyletic — the root-span rule is what stops that reading as
+    # lineage-specific. Here the family spans only A+B, and sf_all covers
+    # exactly that span while sf_a sits strictly inside it.
+    rows = _tc({"sf_all": ["A_g1", "B_g1"], "sf_a": ["A_g2"]},
+               species_tree=TC_TREE)
+
+    assert rows["sf_all"]["monophyletic"] is True
+    assert rows["sf_all"]["verdict"] == "paralog-split (spans family root)"
+    assert rows["sf_a"]["verdict"] == "lineage-specific (clade)"
+
+
+def test_an_interleaved_species_set_is_a_paralog_split_and_names_the_intruders():
+    rows = _tc({"sf_ac": ["A_g1", "C_g1"], "sf_ef": ["E_g1", "F_g1"]},
+               species_tree=TC_TREE)
+
+    assert rows["sf_ac"]["verdict"] == "paralog-split (non-monophyletic)"
+    assert "interleaved species: B,D" in rows["sf_ac"]["notes"]
+
+
+def test_species_absent_from_the_tree_are_named_not_ignored():
+    rows = _tc({"sf_mixed": ["A_g1", "Z_g1"], "sf_offtree": ["Y_g1", "Z_g2"]},
+               species_tree=TC_TREE)
+
+    assert "not in species tree: Z" in rows["sf_mixed"]["notes"]
+    assert rows["sf_offtree"]["verdict"] == "unknown (no species in species tree)"
+
+
+def test_taxonomy_only_labels_the_tree_verdict_it_does_not_decide_it():
+    # sf_ef widens the family span, so sf_ab sits strictly inside it and the
+    # root-span rule does not fire — the verdict under test is the clade one
+    rows = _tc({"sf_ab": ["A_g1", "B_g1"], "sf_odd": ["A_g2", "Z_g1"],
+                "sf_ef": ["E_g1"]},
+               taxonomy=TC_TAX, species_tree=TC_TREE)
+
+    assert rows["sf_ab"]["clade_label"] == "Ga (genus)"
+    assert rows["sf_ab"]["genus_purity"] == 1.0        # label layer present
+    assert rows["sf_ab"]["verdict"] == "lineage-specific (clade)"
+    assert "unknown taxonomy for: Z" in rows["sf_odd"]["notes"]
+
+
+def test_without_a_tree_the_lowest_pure_rank_decides():
+    assert _tc({"s": ["A_g1", "A_g2"]}, taxonomy=TC_TAX)["s"]["verdict"] == \
+        "lineage-specific (species)"
+    assert _tc({"s": ["A_g1", "B_g1"]}, taxonomy=TC_TAX)["s"]["verdict"] == \
+        "lineage-specific (genus)"
+    assert _tc({"s": ["A_g1", "B_g1", "C_g1"]}, taxonomy=TC_TAX)["s"]["verdict"] == \
+        "lineage-specific (family)"
+    assert _tc({"s": ["A_g1", "B_g1", "C_g1", "D_g1"]},
+               taxonomy=TC_TAX)["s"]["verdict"] == "lineage-specific (order)"
+
+
+def test_without_a_tree_a_set_crossing_order_is_a_paralog_split():
+    rows = _tc({"sf_ae": ["A_g1", "E_g1"]}, taxonomy=TC_TAX)
+
+    assert rows["sf_ae"]["verdict"] == "paralog-split (crosses order)"
+
+
+def test_a_species_missing_from_the_taxonomy_still_counts_as_itself():
+    # identity comes from the gene-id prefix, so the row must not vanish
+    rows = _tc({"sf_z": ["Z_g1", "A_g1"]}, taxonomy=TC_TAX)
+
+    assert rows["sf_z"]["n_species"] == 2
+    assert "unknown taxonomy for: Z" in rows["sf_z"]["notes"]
+
+
+def test_the_species_prefix_delimiter_is_configurable():
+    rows = _tc({"sf_a": ["A|g1", "A|g2"]}, taxonomy=TC_TAX, delimiter="|")
+
+    assert rows["sf_a"]["species_dominant"] == "A"
+
+
+def test_no_groups_is_an_empty_table_not_a_crash():
+    assert taxonomic_composition({}, species_tree=parse_newick(TC_TREE)) == []
+
+
+def test_the_tree_path_and_the_legacy_path_emit_different_columns():
+    tree_row = _tc({"s": ["A_g1", "B_g1"]}, species_tree=TC_TREE)["s"]
+    legacy_row = _tc({"s": ["A_g1", "B_g1"]}, taxonomy=TC_TAX)["s"]
+
+    assert list(tree_row) == ["subfamily", "n_members", "n_species",
+                             "n_in_tree", "monophyletic", "mrca_name",
+                             "mrca_depth", "clade_label", "verdict", "notes"]
+    assert "monophyletic" not in legacy_row
+    assert legacy_row["order_dominant"] == "Oa"
+
+
+# ---------------------------------------------------------------------------
+# the identity control has to prove it is SUPPORTED before it may conclude
+#
+# Measured on the real PEPC pair table (5,343 pairs): the linear fit reaches
+# only r2 = 0.430 (bits) / 0.497 (alntmscore), and the binned residual means
+# run +0.006 / -0.061 / -0.068 / +0.074 / ... — systematically non-zero.
+# alntmscore saturates at 1.0 while fident keeps climbing, so high-identity
+# pairs sit BELOW the line whatever their structure. Within-pairs are almost
+# all high-identity, so mean_within_residual < mean_between_residual comes out
+# of the misspecification, not out of the structures. Reporting that as
+# "not coherent" is the artifact-as-conclusion failure this issue is about.
+# ---------------------------------------------------------------------------
+
+def _saturating(n=60):
+    """score = min(1.0, 1.6 * fident) — the real alntmscore/fident shape."""
+    scores, ident = {}, {}
+    for i in range(n):
+        f = 0.30 + 0.011 * i
+        pair = frozenset((f"q{i}", f"t{i}"))
+        ident[pair] = f
+        scores[pair] = min(1.0, 1.6 * f)
+    return scores, ident
+
+
+def test_a_saturating_relationship_is_reported_as_uninterpretable_not_negative():
+    from steps.subfamily import residual_diagnostics
+
+    scores, ident = _saturating()
+    diag = residual_diagnostics(scores, ident)
+
+    assert diag["linear_fit_adequate"] is False
+    assert diag["max_abs_z"] > 3.0
+    assert "non-monotonic" in diag["reason"] or "systematic" in diag["reason"]
+
+
+def test_a_genuinely_linear_relationship_passes_the_diagnostic():
+    from steps.subfamily import residual_diagnostics
+
+    ident = {frozenset((f"q{i}", f"t{i}")): 0.3 + 0.011 * i for i in range(60)}
+    # exactly linear plus an alternating wobble that carries no trend
+    scores = {p: 2.0 * f + (0.001 if i % 2 else -0.001)
+              for i, (p, f) in enumerate(sorted(ident.items(),
+                                                key=lambda kv: kv[1]))}
+    diag = residual_diagnostics(scores, ident)
+
+    assert diag["linear_fit_adequate"] is True
+    assert diag["r2"] > 0.99
+
+
+def _saturating_groups():
+    """The real PEPC layout: within-pairs bunched at high identity, a
+    saturating score, and between-pairs spread lower down."""
+    ident, scores = {}, {}
+    groups = {"SF_A": [f"a{i}" for i in range(12)],
+              "SF_B": [f"b{i}" for i in range(12)]}
+    for i in range(11):                                  # within SF_A, high id
+        f = 0.80 + 0.018 * i
+        ident[frozenset((f"a{i}", f"a{i + 1}"))] = f
+    for i in range(11):                                  # within SF_B, high id
+        f = 0.82 + 0.016 * i
+        ident[frozenset((f"b{i}", f"b{i + 1}"))] = f
+    for i in range(12):                                  # between, low id
+        for j in (0, 1, 2):
+            ident[frozenset((f"a{i}", f"b{(i + j) % 12}"))] = 0.30 + 0.011 * (3 * i + j)
+    for pair, f in ident.items():
+        scores[pair] = min(1.0, 1.6 * f)                 # saturates at 1.0
+    return groups, scores, ident
+
+
+def test_a_misspecified_fit_cannot_be_used_to_call_a_subfamily_incoherent():
+    groups, scores, ident = _saturating_groups()
+
+    row = next(r for r in structure_coherence(groups, scores, identities=ident)
+               if r["subfamily"] == "SF_A")
+
+    assert row["linear_fit_adequate"] is False
+    assert row["verdict"] == "no_interpretation_available"
+    assert row["coherent_controlled"] is None
+    assert "r2" in row["reason"]
+
+
+def test_within_and_between_that_never_share_an_identity_range_cannot_be_compared():
+    # OG8 on the real data: zero fident bins hold both a within- and a
+    # between-pair, so there is nothing the residual comparison is comparing
+    ident, scores = {}, {}
+    for i in range(20):                      # A-vs-B pairs: identity 0.30-0.49
+        p = frozenset((f"a{i % 7}", f"b{i}"))
+        ident[p] = 0.30 + 0.01 * i
+    for i in range(6):                       # within A: identity 0.90-0.95
+        p = frozenset((f"a{i}", f"a{i + 1}"))
+        ident[p] = 0.90 + 0.01 * i
+    for p, f in ident.items():               # strictly linear: the fit is fine
+        scores[p] = 2.0 * f
+    groups = {"SF_A": [f"a{i}" for i in range(7)],
+              "SF_B": [f"b{i}" for i in range(20)]}
+
+    row = next(r for r in structure_coherence(groups, scores, identities=ident)
+               if r["subfamily"] == "SF_A")
+
+    assert row["linear_fit_adequate"] is True   # the fit is not the problem
+
+    assert row["n_shared_identity_bins"] == 0
+    assert row["verdict"] == "no_interpretation_available"
+    assert row["coherent_controlled"] is None
+    assert "identity range" in row["reason"]
+
+
+def test_a_supported_control_still_reaches_a_verdict():
+    # within and between overlap across the identity range and the fit is
+    # linear, so the residual comparison means something
+    ident, scores = {}, {}
+    members = {"SF_A": [], "SF_B": []}
+    for i in range(30):
+        f = 0.30 + 0.02 * i
+        wp = frozenset((f"a{i}", f"a{i + 100}"))
+        bp = frozenset((f"a{i}", f"b{i}"))
+        ident[wp], ident[bp] = f, f
+        scores[wp], scores[bp] = 2.0 * f + 0.5, 2.0 * f      # within sits above
+        members["SF_A"] += [f"a{i}", f"a{i + 100}"]
+        members["SF_B"].append(f"b{i}")
+
+    row = next(r for r in structure_coherence(members, scores, identities=ident)
+               if r["subfamily"] == "SF_A")
+
+    assert row["linear_fit_adequate"] is True
+    assert row["n_shared_identity_bins"] >= 3
+    assert row["verdict"] == "coherent"
+    assert row["coherent_controlled"] is True
+
+
+def test_an_uncontrolled_row_reports_no_interpretation_rather_than_a_verdict():
+    scores = _pairs(("Sp1_a1", "Sp2_a2", 900.0), ("Sp1_a1", "Sp1_b1", 400.0))
+    groups = {"SF_A": ["Sp1_a1", "Sp2_a2"], "SF_B": ["Sp1_b1"]}
+
+    row = structure_coherence(groups, scores)[0]
+
+    assert row["verdict"] == "no_interpretation_available"
+    assert row["coherent_controlled"] is None
+    assert "UNCONTROLLED" in row["reason"]
+
+
+def test_the_fit_quality_travels_with_every_row():
+    groups, scores, ident = _saturating_groups()
+
+    row = structure_coherence(groups, scores, identities=ident)[0]
+
+    assert row["fit_r2"] is not None
+    assert 0.0 <= row["fit_r2"] <= 1.0
+
+
+def test_sequence_controlled_means_the_control_held_not_that_it_was_attempted():
+    # Passing identities= is not the same as the control working. A row whose
+    # reason says UNCONTROLLED must not be counted as a controlled result by
+    # anyone filtering on this column.
+    groups, scores, ident = _saturating_groups()
+
+    rows = structure_coherence(groups, scores, identities=ident)
+
+    for row in rows:
+        assert row["verdict"] == "no_interpretation_available"
+        assert row["sequence_controlled"] is False
+        assert "UNCONTROLLED" in row["reason"]
+
+
+def test_the_flag_and_the_verdict_never_disagree():
+    cases = [_saturating_groups()]
+    for lift in (300.0, 0.0):
+        g, s, i = _overlapping(within_lift=lift)
+        cases.append((g, s, i))
+    for groups, scores, ident in cases:
+        for row in structure_coherence(groups, scores, identities=ident):
+            decided = row["verdict"] in ("coherent", "not_coherent")
+            assert row["sequence_controlled"] is decided
+            assert (row["coherent_controlled"] is not None) is decided

@@ -170,3 +170,135 @@ def test_a_site_the_bridge_cannot_carry_is_reported_not_dropped(tmp_path):
     assert rows[0]["translated_site"] is None
     assert rows[0]["n_windows"] == 0
     assert rows[0]["untranslatable"] is True
+
+
+# --------------------------------------------------------------------------
+# CLI wiring (issue #42)
+#
+# cross_windows() gained the stamp check and the translation path, but main()
+# passed neither, so the command line could only ever raise. The translation
+# has to be reachable from the CLI or the pipeline path has no way to use it.
+# --------------------------------------------------------------------------
+
+def _mlc(tmp_path):
+    p = tmp_path / "mlc"
+    p.write_text(
+        "Bayes Empirical Bayes (BEB) analysis\n"
+        "Positive sites for foreground lineages Prob(w>1):\n"
+        "     4 W 0.994**\n"
+        "\n"
+    )
+    return p
+
+
+def _windows(tmp_path):
+    p = tmp_path / "w.tsv"
+    p.write_text(
+        "seq_id\tstart\tend\tpeak_pos\tpeak_attention\tmean_attention\t"
+        "aln_col_start\taln_col_end\tdeeploc_signals\n"
+        "g1\t1\t3\t2\t0.9\t0.5\t3\t5\tNucleus\n"
+    )
+    return p
+
+
+def _fasta(tmp_path, name, seqs):
+    p = tmp_path / name
+    p.write_text("".join(f">{k}\n{v}\n" for k, v in seqs.items()))
+    return p
+
+
+def test_cli_refuses_an_unverifiable_cross(tmp_path, monkeypatch):
+    from beb_cross import main
+
+    monkeypatch.setattr("sys.argv", [
+        "beb_cross.py", "--mlc", str(_mlc(tmp_path)),
+        "--windows", str(_windows(tmp_path)), "-o", str(tmp_path / "o.tsv"),
+    ])
+    with pytest.raises(ValueError, match="coordinate"):
+        main()
+
+
+def test_cli_translates_when_given_both_alignments_and_a_bridge(tmp_path, monkeypatch):
+    from beb_cross import main
+
+    site_aln = _fasta(tmp_path, "s.fa", {"g1": "MK-W", "g2": "MKYW"})
+    window_aln = _fasta(tmp_path, "w.fa", {"g1": "--MKW", "g2": "XXMKW"})
+    out = tmp_path / "o.tsv"
+    monkeypatch.setattr("sys.argv", [
+        "beb_cross.py", "--mlc", str(_mlc(tmp_path)),
+        "--windows", str(_windows(tmp_path)), "-o", str(out),
+        "--site-alignment", str(site_aln),
+        "--window-alignment", str(window_aln), "--bridge", "g1",
+    ])
+
+    assert main() == 0
+    header, row = out.read_text().splitlines()[:2]
+    fields = dict(zip(header.split("\t"), row.split("\t")))
+    # site 4 is residue 3 of g1 -> window-alignment column 5, inside 3-5
+    assert fields["translated_site"] == "5"
+    assert fields["n_windows"] == "1"
+    assert fields["coordinates_verified"] == "True"
+
+
+def test_cli_can_be_told_to_proceed_unverified_and_marks_every_row(tmp_path, monkeypatch):
+    from beb_cross import main
+
+    out = tmp_path / "o.tsv"
+    monkeypatch.setattr("sys.argv", [
+        "beb_cross.py", "--mlc", str(_mlc(tmp_path)),
+        "--windows", str(_windows(tmp_path)), "-o", str(out),
+        "--allow-unverified",
+    ])
+
+    assert main() == 0
+    header, row = out.read_text().splitlines()[:2]
+    fields = dict(zip(header.split("\t"), row.split("\t")))
+    assert fields["coordinates_verified"] == "False"
+
+
+def test_a_codon_alignment_is_collapsed_to_the_columns_beb_numbers_use():
+    # steps/codeml.py runs on confirmed_codon.afa -- nucleotides -- but BEB
+    # site numbers are amino-acid positions. Without this step the family
+    # codeml result cannot be translated against a protein alignment at all.
+    from beb_cross import codon_alignment_as_protein
+
+    protein = codon_alignment_as_protein({"g1": "ATGAAA---TGG",
+                                          "g2": "ATGAAATATTGG"})
+
+    assert protein == {"g1": "MK-W", "g2": "MKYW"}
+
+
+def test_a_codon_alignment_whose_width_is_not_a_multiple_of_three_is_refused():
+    from beb_cross import codon_alignment_as_protein
+
+    with pytest.raises(ValueError, match="codon"):
+        codon_alignment_as_protein({"g1": "ATGAA"})
+
+
+def test_a_partial_codon_is_a_gap_not_a_guessed_residue():
+    from beb_cross import codon_alignment_as_protein
+
+    protein = codon_alignment_as_protein({"g1": "ATGA--", "g2": "ATGAAA"})
+
+    assert protein["g1"] == "MX"
+
+
+def test_cli_accepts_the_family_codon_alignment_directly(tmp_path, monkeypatch):
+    from beb_cross import main
+
+    site_aln = _fasta(tmp_path, "confirmed_codon.afa",
+                      {"g1": "ATGAAA---TGG", "g2": "ATGAAATATTGG"})
+    window_aln = _fasta(tmp_path, "clan.aln", {"g1": "--MKW", "g2": "XXMKW"})
+    out = tmp_path / "o.tsv"
+    monkeypatch.setattr("sys.argv", [
+        "beb_cross.py", "--mlc", str(_mlc(tmp_path)),
+        "--windows", str(_windows(tmp_path)), "-o", str(out),
+        "--site-alignment", str(site_aln), "--site-alignment-is-codon",
+        "--window-alignment", str(window_aln), "--bridge", "g1",
+    ])
+
+    assert main() == 0
+    header, row = out.read_text().splitlines()[:2]
+    fields = dict(zip(header.split("\t"), row.split("\t")))
+    assert fields["translated_site"] == "5"
+    assert fields["coordinates_verified"] == "True"
