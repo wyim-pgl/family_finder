@@ -30,6 +30,9 @@ import json
 import math
 import statistics
 import sys
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
+from utils.gene_ids import match_ids
+import sys
 from pathlib import Path
 from typing import Dict, List
 
@@ -106,14 +109,21 @@ def mann_whitney_p(a: List[float], b: List[float]) -> float:
 
 def measure(pdb_dir: Path, alignment: Path, lo: int, hi: int,
             members: set, min_residues: int = 5) -> dict:
-    aln = {canon(k): v for k, v in read_fasta(alignment).items()}
+    raw_aln = read_fasta(alignment)
+    aln = {canon(k): v for k, v in raw_aln.items()}
     focal_members = {canon(m) for m in members}
+
+    # One shared matcher, so a '.'-vs-'_' or transcript-suffix difference is
+    # reported instead of quietly reducing coverage (#42, utils/gene_ids.py).
+    pdb_names = [p.stem for p in sorted(Path(pdb_dir).glob("*.pdb"))]
+    matched = match_ids(pdb_names, list(raw_aln)).mapping
 
     focal, other, rows = [], [], []
     skipped = {"not_in_alignment": [], "region_too_short": [], "no_plddt": []}
     for pdb in sorted(Path(pdb_dir).glob("*.pdb")):
-        gene = pdb.stem
-        seq = aln.get(gene)
+        gene = canon(pdb.stem)
+        ref = matched.get(pdb.stem)
+        seq = raw_aln[ref] if ref is not None else aln.get(gene)
         if seq is None:
             # An id-form mismatch between structure filenames and alignment
             # names drops genes here without a word; on the PEPC clan that once
