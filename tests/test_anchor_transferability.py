@@ -87,3 +87,55 @@ def test_verdict_strings_are_actionable():
     by = {r["label"]: r
           for r in anchor_transferability(tree, {"A1": "PPC1", "A3": "PPC3"})}
     assert "duplication" in by["PPC1"]["verdict"].lower()
+
+
+# --- the subfamily is the MAXIMAL exclusive clade, not the nearest neighbour --
+
+def test_returns_the_subfamily_not_the_nearest_neighbour():
+    """first_informative_clade() stops at whatever joins first, which is the
+    anchor's nearest relatives — not its subfamily. Measured consequence on the
+    rebuilt PEPC tree: it reported Ppc2 as a 10-leaf all-Amaranthaceae clade and
+    therefore said 'no query gene' the moment queries were restricted to cacti,
+    even though the real 17-leaf subfamily does contain cactus genes."""
+    #        (((P1,q1),q2), ((P2,r1),r2))
+    tree = "((((P1,q1),q2),((P2,r1),r2)),out);"
+    labels = {"P1": "Ppc1", "P2": "Ppc2"}
+    by = {r["label"]: r for r in anchor_transferability(tree, labels)}
+    # Ppc1's subfamily is everything on its side that excludes Ppc2: P1,q1,q2
+    assert by["Ppc1"]["clade_size"] == 3
+    assert by["Ppc2"]["clade_size"] == 3
+    assert by["Ppc1"]["n_query_in_clade"] == 2
+
+
+def test_subfamilies_are_disjoint():
+    tree = "((((P1,q1),q2),((P2,r1),r2)),out);"
+    rows = anchor_transferability(tree, {"P1": "Ppc1", "P2": "Ppc2"})
+    m = {r["label"]: set(r["members"]) for r in rows if r["label"]}
+    assert not (m["Ppc1"] & m["Ppc2"])
+
+
+def test_support_threshold_rejects_a_weak_clade():
+    """A clade below the support bar must not be reported as transferable."""
+    tree = "((((P1,q1)30,q2)25,((P2,r1)99,r2)98)90,out);"
+    by = {r["label"]: r
+          for r in anchor_transferability(tree, {"P1": "Ppc1", "P2": "Ppc2"},
+                                          min_support=80)}
+    assert by["Ppc1"]["transferable"] is False
+    assert "support" in by["Ppc1"]["verdict"].lower()
+    assert by["Ppc2"]["transferable"] is True
+
+
+def test_support_is_reported_even_without_a_threshold():
+    tree = "((((P1,q1)30,q2)25,((P2,r1)99,r2)98)90,out);"
+    by = {r["label"]: r
+          for r in anchor_transferability(tree, {"P1": "Ppc1", "P2": "Ppc2"})}
+    assert by["Ppc1"]["support"] == "25"
+
+
+def test_slash_separated_support_uses_the_weaker_half():
+    """IQ-TREE writes 'SH-aLRT/UFBoot'. Both must clear the bar."""
+    tree = "((((P1,q1)96.2/94,q2)86.2/73,((P2,r1)99/99,r2)98/98)90/90,out);"
+    by = {r["label"]: r
+          for r in anchor_transferability(tree, {"P1": "Ppc1", "P2": "Ppc2"},
+                                          min_support=80)}
+    assert by["Ppc1"]["transferable"] is False    # 73 < 80

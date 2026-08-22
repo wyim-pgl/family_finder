@@ -371,10 +371,28 @@ def structure_coherence(
 # Can a reference species' subfamily NAMES be transferred at all?
 # ---------------------------------------------------------------------------
 
+def _min_support(raw: Optional[str]) -> Optional[float]:
+    """Node label -> the WEAKEST support value in it.
+
+    IQ-TREE writes "SH-aLRT/UFBoot" (e.g. "96.2/94"); both halves have to
+    clear the bar, so the weaker one decides.
+    """
+    if not raw:
+        return None
+    vals = []
+    for part in str(raw).split("/"):
+        try:
+            vals.append(float(part))
+        except ValueError:
+            continue
+    return min(vals) if vals else None
+
+
 def anchor_transferability(
     newick: str,
     anchor_labels: Dict[str, str],
     query_prefixes: Optional[List[str]] = None,
+    min_support: Optional[float] = None,
 ) -> List[dict]:
     """Test whether reference subfamily labels designate anything in the query.
 
@@ -408,6 +426,13 @@ def anchor_transferability(
     all_leaves = leaves_of(root)
     anchors = set(anchor_labels)
 
+    parent_of: Dict[int, object] = {}
+    def _index_parents(node):
+        for c in node.children:
+            parent_of[id(c)] = node
+            _index_parents(c)
+    _index_parents(root)
+
     def is_query(leaf: str) -> bool:
         if leaf in anchors:
             return False
@@ -427,35 +452,65 @@ def anchor_transferability(
         rec(root)
         return best or set(all_leaves)
 
-    def first_informative_clade(own: set) -> set:
-        """Smallest clade containing `own` PLUS at least one other leaf.
+    def subfamily_clade(own: set, foreign: set):
+        """LARGEST clade containing `own` and NO other label's anchors.
 
-        A single anchor's own "clade" is itself, which says nothing. Grow
-        until something joins — whatever joins FIRST is what the label is
-        actually adjacent to, and that is the thing that decides
-        transferability.
+        The subfamily is the biggest group the label can claim without
+        swallowing a rival label — not the anchor's nearest neighbours.
+        Measured why this matters: on the rebuilt PEPC tree the
+        nearest-neighbour rule returned a 10-leaf all-Amaranthaceae clade
+        for Ppc2 and so reported "no query gene" once queries were
+        restricted to cacti, while the real 17-leaf subfamily does contain
+        cactus genes.
+
+        Returns (leaf set, node) — the node carries the support label.
         """
         best = None
         def rec(node):
             nonlocal best
             L = set(leaves_of(node))
-            if own <= L and len(L) > len(own):
-                if best is None or len(L) < len(best):
-                    best = L
+            if own <= L and not (L & foreign):
+                if best is None or len(L) > len(best[0]):
+                    best = (L, node)
             for c in node.children:
                 rec(c)
         rec(root)
-        return best or set(all_leaves)
+        return best or (set(own), None)
 
     rows: List[dict] = []
     labels = sorted(set(anchor_labels.values()))
     for label in labels:
         own = {a for a, l in anchor_labels.items() if l == label}
-        clade = first_informative_clade(own)
+        foreign = anchors - own
+        clade, node = subfamily_clade(own, foreign)
         others = sorted({anchor_labels[a] for a in clade & anchors} - {label})
         n_query = sum(1 for x in clade if is_query(x))
-        transferable = (not others) and n_query > 0
-        if others and n_query == 0:
+
+        # What sits immediately OUTSIDE the subfamily? If the very next node
+        # up adds a rival label's anchors and no query gene, the two labels
+        # are a reference-lineage-specific duplication: nothing of the query
+        # separates them, so neither name designates a query group.
+        parent = parent_of.get(id(node)) if node is not None else None
+        added = (set(leaves_of(parent)) - clade) if parent is not None else set()
+        added_labels = sorted({anchor_labels[a] for a in added & anchors})
+        added_query = sum(1 for x in added if is_query(x))
+        dup_with = added_labels if (added_labels and added_query == 0) else []
+        raw_support = getattr(node, "name", None) if node is not None else None
+        support_val = _min_support(raw_support)
+        weak = (min_support is not None
+                and (support_val is None or support_val < min_support))
+        transferable = ((not others) and (not dup_with)
+                        and n_query > 0 and not weak)
+        if dup_with:
+            verdict = ("reference-lineage-specific duplication with "
+                       + ", ".join(dup_with)
+                       + " — no query gene separates them, so these names do "
+                         "not designate distinct query subfamilies")
+        elif weak and not others and n_query > 0:
+            verdict = (f"clade support {raw_support} is below the "
+                       f"min_support={min_support:g} bar — the grouping is not "
+                       "established, do not transfer the name")
+        elif others and n_query == 0:
             verdict = ("reference-lineage-specific duplication with "
                        + ", ".join(others)
                        + " — no query gene separates them, so these names do "
@@ -472,9 +527,11 @@ def anchor_transferability(
             "n_anchors": len(own),
             "clade_size": len(clade),
             "n_query_in_clade": n_query,
-            "blocked_by": others,
+            "support": raw_support,
+            "blocked_by": sorted(set(others) | set(dup_with)),
             "transferable": transferable,
             "verdict": verdict,
+            "members": sorted(clade),
         })
 
     # anchor-free clades: the lineage-specific-expansion case
@@ -496,9 +553,11 @@ def anchor_transferability(
             "n_anchors": 0,
             "clade_size": len(clade),
             "n_query_in_clade": n_query,
+            "support": None,
             "blocked_by": [],
             "transferable": False,
             "verdict": ("query-only clade — lineage-specific expansion, no "
                         "reference name applies"),
+            "members": sorted(clade),
         })
     return rows
