@@ -74,6 +74,71 @@ v2 산출물에서 미배치 유전자를 전수 분류한 결과 **그 결론�
 
 관련 이슈: #36(측정 전체), #43(주석 세대 불일치), #34(tier-3 — 표적이 짧아 기대 수익 낮음)
 
+## 1.6 ✅ #40 종결 (2026-08-22) — Ppc1/Ppc2는 분리된다, 단 선인장 ppc-1E2는 1개뿐
+
+**요구사항이었던 "선인장 유전자를 Ppc1/Ppc2에 배정 가능"이 충족됐다.** 결정적 요인은 앵커도
+모델도 아니고 **clan 서열 집합 자체가 틀렸던 것**이었다.
+
+### 교정 — `_M` 6개는 출처 불명의 대체 모델이었다
+
+배포 유전자 모델(250–834 aa)을 전장 단백질(801–1,042 aa)로 갈아끼운 서열 6개가 recruitment
+단계에 들어 있었고 **생성 절차가 기록돼 있지 않았다.** 자기 종 유전체에 대조한 결과 4개는
+0.982–0.997로 진짜, **2개(Ococ 0.855 / Pami 0.790)는 그 종의 유전자가 아니었다.**
+
+`reconstruct_models.py`(8373fc8)로 재구성: 비-`_M` ≥800 aa 앵커 94개 → 5개 선인장 유전체
+miniprot 재예측 → **"자기 유전체 identity ≥0.95" 게이트**. 49좌위 중 44 채택 / 5 탈락(0.83–0.90).
+`_M` 5개 교체 + 1개 제거 = **교정 세트 108**.
+
+| 단계 | 서열 수 | 탈락 사유 |
+|---|---|---|
+| base | 109 | — |
+| 교정 | 108 | `_M` 5 교체, 1 제거(게이트 0.9035) |
+| 점유율 <50% | 99 | 9개 전부 575–683 aa 절단 모델 (8/9가 Ococ·Sund) |
+| 코돈 정렬 | 95 | miniprot `--trans`가 frameshift를 건너뛰어 GFF CDS와 1:1 불일치 (교체본 4개) |
+
+### 재추정 결과 — 분할 유지, 지지도 상승
+
+```
+ppc-1E1  n=62  (선인장 35)  SH-aLRT/UFboot 95/91   transferable=True
+ppc-1E2  n=15  (선인장  1)  100/76                 transferable=True   overlap 없음
+```
+
+**교정 전 86.2/73 → 교정 후 100/76.** 틀린 서열을 빼니 노드가 더 견고해졌다.
+
+### 잔기 축도 교정 세트에서 재계산 — 질적 결론 전부 유지
+
+untrimmed 1,428컬럼 / plant-type 77서열 기준. **trim 행렬은 트리 전용**(#42 규칙).
+
+| 지표 | 교정 전 | 교정 후 |
+|---|---|---|
+| SDP 컬럼 (1E1 / 1E2) | 31 / 58 | **31 / 56**, 상호 26 |
+| 외군 복원 시 | 25 / 45 | **24 / 51** |
+| S11 인산화 세린 | 17/17, 30/33 | **15/15, 29/32** |
+| 잔기 9 (1E2 Met 고정) | 17/17 | **15/15** (1E1은 Leu 26/32) |
+| 잔기 10 (1E2 Ala 고정) | 17/17 | **15/15** (1E1은 Ala 13 / Ser 9) |
+| 촉매 모티프 내 SDP | 0, 최근접 611 | **동일** (1E1 Q 94% / 1E2 A 100%) |
+| 크기·폭 매칭 null 500회 | 중앙값 0, 최대 1 | **동일** (p < 0.002) |
+| 단계통 subclade null | 19개, 9–65 | **23개, 7–79** — 폭 논거 유지 (≥9종 최대 37 < 56) |
+
+재현: `steps.subfamily.anchor_transferability` + `sdp_scan`을 `clan_corrected.aln` +
+`clan_corrected_tree.treefile`에 적용하면 위 수치가 그대로 나온다 (순수 파이썬, 도구 불필요).
+
+### 선인장 ppc-1E2 — 절단 정도와 프로파일 마진이 단조
+
+| 종 | 상태 | 길이 | 마진 | 근거 |
+|---|---|---|---|---|
+| **Obas** | ✅ 전장, 트리 멤버 | 967 aa | **+251** | 배포 주석과 동일, occ 0.677 |
+| Ococ | ⚠️ 절단 | 683 aa | **+156** | Chr10:36.21–36.23 Mb 재구성(0.985), occ 0.478 → 탈락 |
+| Cjam | ⚠️ 절단 | 411 aa | **+61** | synteny(JBOBQE010000004.1 16.03 Mb), 점유율 탈락 |
+| Sund | ❌ 부재 | — | — | 이웃이 chr04 anchor, 그 염색체에 PEPC 0개 |
+| Cgig | ❓ 판정 불가 | — | — | 2,589 scaffold, anchor율 52% |
+
+**967→+251, 683→+156, 411→+61.** 하나의 좌위가 계통마다 다른 잔존 정도로 남은 것으로 읽힌다.
+트리 기반 멤버는 Obas 1개, 나머지는 **트리 밖 증거**(synteny·마진·좌위 재구성)로 서술한다.
+
+산출물: `pronghorn:~/scratch/mM_repair/`. methods.md §2.X.6에 전부 반영(교정 절차 문단 신설).
+
+
 ## 2. 증상 지표
 
 | 종 | 유전자 | R10 후 미배치 | 미배치율 | HMMER 구제 | 구제율 | 최종 배치율 |
@@ -245,14 +310,14 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 
 | 이슈 | 우선순위 | 내용 | 막힘 |
 |---|---|---|---|
-| [#41](https://github.com/wyim-pgl/family_finder/issues/41) | **P0** | 15sp 발사 선결 3건 — 종트리 가지 길이 전부 1.0, config v1, 청크 미설정 | **결정 대기** (종트리 (a)/(b)) |
-| [#40](https://github.com/wyim-pgl/family_finder/issues/40) | **P0** | Ppc1/Ppc2 분리 — **주요부 해결**, 잔여는 Ppc2 선인장 증거(synteny) + methods 반영 | — |
-| [#35](https://github.com/wyim-pgl/family_finder/issues/35) | P0 | 15sp v2 프로덕션 런 | **#41** |
-| [#32](https://github.com/wyim-pgl/family_finder/issues/32) | P1 | Ppc1/Ppc2 진단 기록 — #40이 해결했으므로 **닫을 수 있음** | — |
+| ~~[#40](https://github.com/wyim-pgl/family_finder/issues/40)~~ | **P0** | Ppc1/Ppc2 분리 — **완료 2026-08-22**, 교정 세트 재추정 + methods.md 반영 (§1.6) | 닫음 |
+| [#35](https://github.com/wyim-pgl/family_finder/issues/35) | P0 | 15sp v2 프로덕션 런 | **RUNNING** SLURM 6097190 (2026-08-21 23:15 시작, 3일 한도) |
 | [#33](https://github.com/wyim-pgl/family_finder/issues/33) | P1 | ATH MYB 앵커로 5종 MYB 서브클레이드 분리 | — |
 | [#34](https://github.com/wyim-pgl/family_finder/issues/34) | P1 | ProstT5 tier-3 스크린 — 함정 2건 파악됨, 분할 필요 | — |
 | [#36](https://github.com/wyim-pgl/family_finder/issues/36) | P1 | Mcry 미배치 v2로도 미해결 (13.4%) | #34 결과가 기여 |
 | [#38](https://github.com/wyim-pgl/family_finder/issues/38) | P2 | 주석 축 결손 — 유전자 구조·cis-element·발현 | — |
+| [#42](https://github.com/wyim-pgl/family_finder/issues/42) | P1 | SDP/잔기 해석을 레퍼런스 없는 패밀리로 일반화 — trim 커플링 결함 포함 | — |
+| [#43](https://github.com/wyim-pgl/family_finder/issues/43) | P1 | family_finder ↔ Opuntia 원고 불일치 3건 | — |
 | [#39](https://github.com/wyim-pgl/family_finder/issues/39) | P3 | 코드 건강 — 리팩터 3건, 미확인 버전, 구조 응집도 교란 | — |
 | [#25](https://github.com/wyim-pgl/family_finder/issues/25) [#26](https://github.com/wyim-pgl/family_finder/issues/26) | — | SPEC / 트래커 (살아있는 문서, 닫지 않음) | — |
 
@@ -510,8 +575,9 @@ git status --short && python3 -m pytest tests/ -q | tail -1
    잔기 공간 거리로 교체, 특성규명 멤버가 있으면 `candidates`로 우선하도록 배선.
    ⚠️ **운용 임계값(0.95 vs 1.00)은 #35 완주 후 다수 패밀리로 보정할 것** — PEPC 하나로는
    0.90에서 실패한다.
-2. **#40 잔여** — methods.md에 재구축 레시피(AU 검정, EPA-ng 배치) 서술. synteny·SDP·
-   인산화·Ccac는 전부 완료.
+2. ~~**#40 잔여**~~ — **완료·닫음 2026-08-22.** methods.md §2.X.6에 교정 절차 문단 신설,
+   SDP·null 전부 교정 세트로 재계산(§1.6). AU 검정/EPA-ng 배치는 **하지 않았다** — 재추정
+   위상이 100/76으로 판정 가능해져 대안 위상 검정이 필요 없었다. 필요해지면 그때 돌릴 것.
 3. **#39** — 리팩터 3건(`rescue_unplaced` 141줄/중첩5, `taxonomic_composition` 85/5,
    `narrative()` 93줄), 도구 버전 5개 확인, 구조 응집도 서열 통제.
    ⚠️ 리팩터는 **산출물 체크섬을 먼저 잡고 바이트 동일을 증명한 뒤** 테스트를 추가할 것.
