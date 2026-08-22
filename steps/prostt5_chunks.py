@@ -1,0 +1,201 @@
+"""Chunked ProstT5 3Di database construction for the tier-3 screen (issue #34).
+
+ProstT5 turns a protein sequence into a 3Di structural alphabet without folding
+it, which is how tier-3 reaches the unplaced pool at genome scale. Three
+measured properties of this foldseek build shape the module:
+
+- **CPU only.** `--gpu 1` is accepted by `--help` and ignored by createdb; the
+  log prints `Use GPU 0` and nvidia-smi stays idle wherever the flag is placed.
+- **~4.3 s/sequence at 16 threads** (PEPC, ~950 aa, so near the upper bound).
+  Ten thousand sequences is roughly twelve hours.
+- **No internal checkpoint.** A createdb killed at hour eleven leaves nothing.
+
+Hence chunking, in the shape of steps/hmm_chunks.py: split the FASTA, build one
+database per chunk, search each, merge the *search results* — never the
+databases.
+
+The rule this module exists to enforce:
+
+    Passing a `.gguf` FILE to `--prostt5-model` silently produces no 3Di.
+
+createdb exits in 0.00 s with no error and no warning, prints the path back as
+though it were accepted, and writes a database containing amino acids. A screen
+run that way is a sequence search believing it is a structure search, and it
+finds nothing. `ls <db>_ss` catches it once; it does not survive dozens of
+chunks. So the check lives here and fails hard, and the model path is rejected
+before createdb is ever reached if it is not a directory.
+
+One further consequence, recorded for callers: a ProstT5 database has no CA
+coordinates, so `alntmscore` cannot be computed from it. Requesting it fails
+with `No datafile could be found for <db>_ca`. Decisions over ProstT5 hits must
+use bit scores, not TM-scores.
+"""
+
+import logging
+import subprocess
+from pathlib import Path
+from typing import List, Optional, Union
+
+logger = logging.getLogger("family_finder")
+
+SS_SUFFIX = "_ss"
+CHUNK_GLOB = "chunk_*.m8"
+DONE_SUFFIX = ".done"
+CHUNK_FASTA_FMT = "chunk_{:04d}.fa"
+
+
+# ------------------------------------------------------------------ split --
+
+def split_fasta(fasta_path: Union[str, Path], out_dir: Union[str, Path],
+                chunk_size: int) -> List[Path]:
+    """Split a FASTA into chunks of `chunk_size` records.
+
+    A chunk boundary is only ever placed before a `>` line, so a record whose
+    sequence is wrapped across lines is never cut in half.
+    """
+    if chunk_size < 1:
+        raise ValueError(f"chunk_size must be >= 1, got {chunk_size}")
+    fasta_path = Path(fasta_path)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    records: List[List[str]] = []
+    with open(fasta_path) as f:
+        for line in f:
+            if line.startswith(">"):
+                records.append([line])
+            elif records:
+                records[-1].append(line)
+    if not records:
+        raise ValueError(f"{fasta_path} contains no sequences")
+
+    chunks: List[Path] = []
+    for i in range(0, len(records), chunk_size):
+        path = out_dir / CHUNK_FASTA_FMT.format(len(chunks) + 1)
+        with open(path, "w") as out:
+            for rec in records[i:i + chunk_size]:
+                out.writelines(rec)
+        chunks.append(path)
+    logger.info(f"Split {len(records)} sequences into {len(chunks)} chunks "
+                f"of <= {chunk_size} in {out_dir}")
+    return chunks
+
+
+# ------------------------------------------------------------------ guard --
+
+def _entry_count(index_path: Path) -> int:
+    return sum(1 for line in index_path.read_text().splitlines() if line.strip())
+
+
+def verify_3di_db(db_path: Union[str, Path]) -> int:
+    """Assert that `db_path` really carries 3Di, and return its entry count.
+
+    Raises RuntimeError describing what is wrong. This is the trap-1 guard;
+    every chunk must pass it before its results are trusted.
+    """
+    db_path = Path(db_path)
+    ss = db_path.with_name(db_path.name + SS_SUFFIX)
+    ss_index = db_path.with_name(db_path.name + SS_SUFFIX + ".index")
+    index = db_path.with_name(db_path.name + ".index")
+
+    if not ss.exists():
+        raise RuntimeError(
+            f"{ss} is missing — createdb produced no 3Di database for "
+            f"{db_path.name}. This is what passing a .gguf FILE to "
+            "--prostt5-model does: it exits in 0.00 s without an error and "
+            "writes amino acids. Pass the weights DIRECTORY instead"
+        )
+    if ss.stat().st_size == 0:
+        raise RuntimeError(f"{ss} is empty — no 3Di was written for {db_path.name}")
+    if not ss_index.exists():
+        raise RuntimeError(f"{ss_index} is missing — the 3Di database is incomplete")
+
+    if db_path.exists() and ss.read_bytes() == db_path.read_bytes():
+        raise RuntimeError(
+            f"{ss} is byte-identical to {db_path} — it holds amino acid "
+            "residues, not 3Di states, so this is not a structure search"
+        )
+
+    n_ss = _entry_count(ss_index)
+    if index.exists():
+        n_seq = _entry_count(index)
+        if n_ss != n_seq:
+            raise RuntimeError(
+                f"{ss_index} has {n_ss} entries but {index} has {n_seq} — "
+                "the 3Di database does not cover every sequence"
+            )
+    return n_ss
+
+
+# ------------------------------------------------------------------ build --
+
+def run_createdb(fasta: Union[str, Path], db: Union[str, Path],
+                 model_dir: Union[str, Path], foldseek_bin: str,
+                 threads: int) -> None:
+    """foldseek createdb with ProstT5. Module-level so tests can replace it."""
+    cmd = [str(foldseek_bin), "createdb", str(fasta), str(db),
+           "--prostt5-model", str(model_dir), "--threads", str(threads)]
+    logger.info(f"Running foldseek createdb: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"foldseek createdb failed for {fasta} (exit {result.returncode}):\n"
+            f"{result.stderr[-2000:]}"
+        )
+
+
+def build_chunk_db(fasta: Union[str, Path], db: Union[str, Path],
+                   model_dir: Union[str, Path], foldseek_bin: str = "foldseek",
+                   threads: int = 16) -> Path:
+    """Build one chunk's ProstT5 database and refuse to return without 3Di."""
+    model_dir = Path(model_dir)
+    if model_dir.exists() and not model_dir.is_dir():
+        raise ValueError(
+            f"--prostt5-model must be the weights directory, not a file: "
+            f"{model_dir}. Passing the .gguf file makes createdb write amino "
+            "acids and no 3Di, without reporting an error"
+        )
+    db = Path(db)
+    run_createdb(fasta, db, model_dir, foldseek_bin, threads)
+    n = verify_3di_db(db)
+    logger.info(f"Chunk database {db.name}: 3Di verified, {n} entries")
+    return db
+
+
+# ------------------------------------------------------------------ merge --
+
+def merge_search_results(results_dir: Union[str, Path],
+                         out_path: Union[str, Path],
+                         expected: Optional[int] = None) -> int:
+    """Concatenate chunk search results, refusing an incomplete set.
+
+    foldseek writes no terminator of its own, unlike HMMER's `# [ok]`, so a
+    task killed by a time limit leaves a file that is syntactically fine and
+    silently short. Each chunk therefore gets a `<chunk>.done` sentinel written
+    only after its search exits zero, and merging requires it. An empty result
+    file with a sentinel is a legitimate "found nothing" and merges normally.
+    """
+    results_dir = Path(results_dir)
+    parts = sorted(results_dir.glob(CHUNK_GLOB))
+
+    if expected is not None and len(parts) != expected:
+        raise RuntimeError(
+            f"expected {expected} chunk results, found {len(parts)} in "
+            f"{results_dir} — refusing to merge a partial screen"
+        )
+    if not parts:
+        raise RuntimeError(f"no chunk results ({CHUNK_GLOB}) in {results_dir}")
+
+    incomplete = [p.name for p in parts
+                  if not p.with_name(p.name + DONE_SUFFIX).exists()]
+    if incomplete:
+        raise RuntimeError(
+            f"incomplete chunk searches (no '{DONE_SUFFIX}' sentinel): "
+            f"{', '.join(incomplete)} — rerun them before merging"
+        )
+
+    with open(out_path, "w") as out:
+        for p in parts:
+            out.write(p.read_text())
+    logger.info(f"Merged {len(parts)} chunk results -> {out_path}")
+    return len(parts)
