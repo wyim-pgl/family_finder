@@ -24,7 +24,8 @@ def _plan(**kw):
 
 def test_plan_covers_every_axis_by_default():
     names = {a.name for a in _plan()}
-    assert names == {"signalp", "deeploc", "emapper", "clean", "foldseek"}
+    assert names == {"signalp", "deeploc", "emapper", "clean", "foldseek",
+                     "structure", "expression"}
 
 
 def test_axes_can_be_selected():
@@ -158,3 +159,51 @@ def test_fetch_plan_keeps_basenames_unique_across_axes():
     fetched = fetch_plan(_plan(), local_dir="out")
     outs = [a.output for a in fetched]
     assert len(set(outs)) == len(outs)
+
+
+# --- gene-structure and expression axes (issue #38) ----------------------
+
+def test_the_new_axes_are_blocked_and_named_without_their_inputs():
+    plan = build_plan("clan.fa", "~/wd")
+    blocked = missing_inputs(plan)
+    assert "structure" in blocked and "expression" in blocked
+    assert "--alignment" in blocked["structure"]
+    assert "--matrix" in blocked["expression"]
+
+
+def test_the_gene_structure_axis_declares_one_gff_per_species():
+    plan = {a.name: a for a in build_plan(
+        "clan.fa", "~/wd", alignment="~/clan.aln",
+        gffs={"Ococ": "~/Oco.gff3", "Mcry": "~/Mcry.gff3"},
+        groups="~/sf.tsv")}
+    command = plan["structure"].command
+    assert "--gff Mcry=~/Mcry.gff3" in command
+    assert "--gff Ococ=~/Oco.gff3" in command
+    assert "--groups ~/sf.tsv" in command
+    assert "structure" not in missing_inputs(build_plan(
+        "clan.fa", "~/wd", alignment="~/clan.aln",
+        gffs={"Ococ": "~/Oco.gff3"}))
+
+
+def test_the_expression_axis_declares_one_matrix_per_species():
+    plan = {a.name: a for a in build_plan(
+        "clan.fa", "~/wd", members="~/members.txt",
+        matrices={"Ococ": "~/RSEM_TPM.average.tsv"})}
+    command = plan["expression"].command
+    assert "--members ~/members.txt" in command
+    assert "--matrix Ococ=~/RSEM_TPM.average.tsv" in command
+
+
+def test_the_merge_command_picks_up_both_new_axes():
+    plan = build_plan("clan.fa", "~/wd", alignment="~/clan.aln",
+                      gffs={"Ococ": "~/Oco.gff3"}, members="~/m.txt",
+                      matrices={"Ococ": "~/tpm.tsv"})
+    merge = local_merge_command(plan, "annot", "4.1.1.31")
+    assert "--gene-structure ~/wd/gene_structure.tsv" in merge
+    assert "--expression ~/wd/expression.tsv" in merge
+
+
+def test_drop_unavailable_drops_every_blocked_axis_not_only_foldseek():
+    names = {a.name for a in build_plan("clan.fa", "~/wd",
+                                        drop_unavailable=True)}
+    assert names == {"signalp", "deeploc", "emapper", "clean"}

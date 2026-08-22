@@ -10,6 +10,12 @@ never by one tool. This CLI merges the gate-validated axes —
                    foldseek vs AFDB-SwissProt + UniProt join)
   --deeploc-csv    DeepLoc 2.x results CSV              (localization, signals)
   --signalp        SignalP 6 prediction_results.txt     (secretory SP)
+  --gene-structure steps/gene_structure.py TSV          (GENE-MODEL QUALITY:
+                   introns off the family's conserved set, always beside the
+                   annotation programme that produced the model — issue #38)
+  --expression     steps/expression.py TSV              (mean TPM and the
+                   within-species share; a species with no matrix arrives as
+                   `expression unavailable`, never as an absent row)
 
 — into annotation_matrix.tsv (one row per gene, one column block per axis)
 and, when --expected-ec is given, a membership verdict per gene:
@@ -40,6 +46,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from steps.ec_sources import parse_clean, parse_emapper
+from steps.expression import UNAVAILABLE as EXPRESSION_UNAVAILABLE
 
 logger = logging.getLogger("family_finder")
 
@@ -52,7 +59,20 @@ _EMPTY_ROW = {
     "fs_uniprot": "", "fs_name": "", "fs_ec": "", "fs_qtm": 0.0, "fs_fident": 0.0,
     "deeploc_loc": "", "deeploc_signals": "",
     "signalp": "", "signalp_sp_prob": 0.0,
+    # Gene-model quality. `gs_source` is NOT decoration: an intron count read
+    # without the annotation programme beside it reads a Helixer habit as
+    # biology (issue #38), so the two columns travel together or not at all.
+    "gs_source": "", "gs_n_introns": "", "gs_extra": "", "gs_missing": "",
+    "gs_status": "",
+    # Expression. Absent from the axis file is NOT zero: `expression
+    # unavailable` is what a species with no matrix must say.
+    "expr_mean_tpm": "", "expr_share": "", "expr_n_samples": "",
+    "expr_status": "",
 }
+
+# Axes whose absence from their own file is meaningful rather than empty.
+_MISSING_STATUS = {"gene_structure": ("gs_status", "no gene model joined"),
+                   "expression": ("expr_status", EXPRESSION_UNAVAILABLE)}
 
 
 def _parse_emapper_full(path: Path) -> Dict[str, dict]:
@@ -80,6 +100,8 @@ def load_axes(
     foldseek_tsv: Optional[Path] = None,
     deeploc_csv: Optional[Path] = None,
     signalp_txt: Optional[Path] = None,
+    gene_structure_tsv: Optional[Path] = None,
+    expression_tsv: Optional[Path] = None,
 ) -> dict:
     """Parse whichever axis files are given into per-axis gene dicts."""
     axes: dict = {}
@@ -112,7 +134,22 @@ def load_axes(
                     "sp_prob": float(p[3]) if len(p) > 3 else 0.0,
                 }
         axes["signalp"] = sp
+    if gene_structure_tsv:
+        axes["gene_structure"] = _read_keyed_tsv(Path(gene_structure_tsv))
+    if expression_tsv:
+        axes["expression"] = _read_keyed_tsv(Path(expression_tsv))
     return axes
+
+
+def _read_keyed_tsv(path: Path) -> Dict[str, dict]:
+    """A TSV whose first column is the gene id, as gene -> row."""
+    rows: Dict[str, dict] = {}
+    with open(path, newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        key = reader.fieldnames[0] if reader.fieldnames else "gene"
+        for row in reader:
+            rows[row[key]] = row
+    return rows
 
 
 def _canon(gene: str) -> str:
@@ -130,7 +167,8 @@ def build_matrix(axes: dict) -> Dict[str, dict]:
     by_canon: Dict[str, dict] = {}   # canon -> {axis: data}
     display: Dict[str, str] = {}
     emapper_full = {_canon(g): v for g, v in axes.get("emapper_full", {}).items()}
-    for key in ("emapper", "clean", "foldseek", "deeploc", "signalp"):
+    for key in ("emapper", "clean", "foldseek", "deeploc", "signalp",
+                "gene_structure", "expression"):
         for g, data in axes.get(key, {}).items():
             c = _canon(g)
             by_canon.setdefault(c, {})[key] = data
@@ -165,6 +203,25 @@ def build_matrix(axes: dict) -> Dict[str, dict]:
         if "signalp" in per_axis:
             row["signalp"] = per_axis["signalp"]["prediction"]
             row["signalp_sp_prob"] = per_axis["signalp"]["sp_prob"]
+        if "gene_structure" in per_axis:
+            gs = per_axis["gene_structure"]
+            row["gs_source"] = gs.get("annotation_source", "")
+            row["gs_n_introns"] = gs.get("n_introns", "")
+            row["gs_extra"] = gs.get("n_extra", "")
+            row["gs_missing"] = gs.get("n_missing", "")
+            row["gs_status"] = gs.get("status", "")
+        if "expression" in per_axis:
+            ex = per_axis["expression"]
+            row["expr_mean_tpm"] = ex.get("mean_tpm", "")
+            row["expr_share"] = ex.get("share", "")
+            row["expr_n_samples"] = ex.get("n_samples", "")
+            row["expr_status"] = ex.get("status", "")
+        # An axis that ran but has nothing for this gene is not the same as an
+        # axis that never ran. Say which, so a gene with no expression matrix
+        # cannot be read as a gene that is silent.
+        for axis, (column, status) in _MISSING_STATUS.items():
+            if axis in axes and axis not in per_axis:
+                row[column] = status
         matrix[display[c]] = row
     return matrix
 
@@ -208,6 +265,10 @@ def main():
     ap.add_argument("--foldseek-tsv", default=None)
     ap.add_argument("--deeploc-csv", default=None)
     ap.add_argument("--signalp", default=None)
+    ap.add_argument("--gene-structure", default=None,
+                    help="steps/gene_structure.py TSV (gene-model quality)")
+    ap.add_argument("--expression", default=None,
+                    help="steps/expression.py TSV (mean TPM and share)")
     ap.add_argument("--expected-ec", default=None,
                     help="Family EC — adds membership verdict columns")
     args = ap.parse_args()
@@ -218,6 +279,8 @@ def main():
         emapper=args.emapper, clean_csv=args.clean_csv,
         foldseek_tsv=args.foldseek_tsv, deeploc_csv=args.deeploc_csv,
         signalp_txt=args.signalp,
+        gene_structure_tsv=args.gene_structure,
+        expression_tsv=args.expression,
     )
     if not axes:
         ap.error("No axis inputs given")

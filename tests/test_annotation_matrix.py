@@ -152,3 +152,81 @@ def test_verdict_evidence_strings_reusable(tmp_path):
     assert "emapper" in v["support_axes"]
     assert "clean" in v["support_axes"]
     assert "foldseek" in v["support_axes"]
+
+
+# --- gene-structure and expression axes (issue #38) ----------------------
+
+GENE_STRUCTURE = """\
+gene\tspecies\tsubfamily\tannotation_source\tgff_gene_id\tn_cds\tcds_len_nt\tn_introns\tintron_columns\tn_extra\tn_missing\textra_columns\tmissing_columns\tstatus
+CORE_gene\tOcoc\tSF1\tHelixer\tg1\t10\t2900\t9\t118,298\t1\t0\t900\t\tdeviates from the family's conserved intron set
+INTRUDER_gene\tOcoc\t\tunknown\tg2\t3\t900\tNA\t\tNA\tNA\t\t\tuncontrolled: the annotation programme is unknown
+"""
+
+EXPRESSION = """\
+gene\tspecies\tsubfamily\tmean_tpm\tshare\tn_samples\tmatrix\tstatus
+CORE_gene\tOcoc\tSF1\t4776.8\t0.741\t7\tRSEM_TPM.average.tsv\tmeasured
+INTRUDER_gene\tCgig\t\tNA\tNA\tNA\t\texpression unavailable
+"""
+
+
+def _extra_axes(tmp_path):
+    gs = tmp_path / "gene_structure.tsv"
+    gs.write_text(GENE_STRUCTURE)
+    ex = tmp_path / "expression.tsv"
+    ex.write_text(EXPRESSION)
+    return gs, ex
+
+
+def test_gene_structure_columns_arrive_with_their_programme(tmp_path):
+    gs, _ex = _extra_axes(tmp_path)
+    row = build_matrix(load_axes(gene_structure_tsv=gs))["CORE_gene"]
+    assert row["gs_source"] == "Helixer"
+    assert row["gs_n_introns"] == "9"
+    assert row["gs_extra"] == "1"
+
+
+def test_an_uncontrolled_gene_carries_no_intron_count_into_the_matrix(tmp_path):
+    gs, _ex = _extra_axes(tmp_path)
+    row = build_matrix(load_axes(gene_structure_tsv=gs))["INTRUDER_gene"]
+    assert row["gs_source"] == "unknown"
+    assert row["gs_n_introns"] == "NA"
+    assert "uncontrolled" in row["gs_status"]
+
+
+def test_expression_columns_join(tmp_path):
+    _gs, ex = _extra_axes(tmp_path)
+    row = build_matrix(load_axes(expression_tsv=ex))["CORE_gene"]
+    assert row["expr_mean_tpm"] == "4776.8"
+    assert row["expr_share"] == "0.741"
+    assert row["expr_status"] == "measured"
+
+
+def test_a_species_with_no_matrix_says_so_in_the_matrix(tmp_path):
+    _gs, ex = _extra_axes(tmp_path)
+    row = build_matrix(load_axes(expression_tsv=ex))["INTRUDER_gene"]
+    assert row["expr_status"] == "expression unavailable"
+    assert row["expr_mean_tpm"] == "NA"
+
+
+def test_a_gene_absent_from_the_expression_axis_is_not_read_as_silent(tmp_path):
+    """The axis ran but never saw this gene. Blank would read as zero TPM."""
+    _gs, ex = _extra_axes(tmp_path)
+    matrix = build_matrix(load_axes(expression_tsv=ex, clean_csv=_clean(tmp_path)))
+    assert matrix["REMOTE_gene"]["expr_status"] == "expression unavailable"
+    assert matrix["REMOTE_gene"]["expr_mean_tpm"] == ""
+
+
+def _clean(tmp_path):
+    p = tmp_path / "clean2.csv"
+    p.write_text(CLEAN)
+    return p
+
+
+def test_both_new_axes_merge_alongside_the_existing_ones(tmp_path):
+    gs, ex = _extra_axes(tmp_path)
+    axes = _axes(tmp_path)
+    axes.update(load_axes(gene_structure_tsv=gs, expression_tsv=ex))
+    row = build_matrix(axes)["CORE_gene"]
+    assert row["emapper_ec"] == "4.1.1.31"
+    assert row["gs_source"] == "Helixer"
+    assert row["expr_mean_tpm"] == "4776.8"

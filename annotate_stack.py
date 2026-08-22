@@ -11,6 +11,12 @@ once so any family can be put through it:
   clean     CLEAN             EC prediction with calibrated confidence
   foldseek  Foldseek          structure function transfer vs AFDB-SwissProt
                               (needs predicted structures — ESMFold or ProstT5)
+  structure steps/gene_structure  intron positions vs the family's conserved
+                              set, with the annotation programme as covariate
+                              (needs the family alignment and per-species GFFs)
+  expression steps/expression  mean TPM and within-species share
+                              (needs a per-species expression matrix; only
+                              two of the PEPC clan's species have one)
 
 The heavy axes run on the GPU box; the merge (`annotation_matrix.py`) is
 pure Python and runs anywhere. `--dry-run` prints the plan without touching
@@ -49,7 +55,8 @@ MICROMAMBA = "/home/wyim/scratch/bin/micromamba"
 FOLDSEEK_BIN = "~/bin/foldseek/bin/foldseek"
 AFDB_DB = "~/foldseek_dbs/afdb_swissprot"
 
-ALL_AXES = ("signalp", "deeploc", "emapper", "clean", "foldseek")
+ALL_AXES = ("signalp", "deeploc", "emapper", "clean", "foldseek",
+            "structure", "expression")
 
 
 def qpath(path: str) -> str:
@@ -84,12 +91,23 @@ def build_plan(
     axes: Optional[List[str]] = None,
     structures: Optional[str] = None,
     drop_unavailable: bool = False,
+    alignment: Optional[str] = None,
+    gffs: Optional[Dict[str, str]] = None,
+    matrices: Optional[Dict[str, str]] = None,
+    members: Optional[str] = None,
+    groups: Optional[str] = None,
 ) -> List[Axis]:
     """Declare the per-axis commands for one family.
 
     `structures` is a directory of predicted structures (PDB) — without it
     the foldseek axis cannot run and is either reported as blocked
     (default) or dropped (`drop_unavailable`).
+
+    `alignment` + `gffs` (species -> GFF3) enable the gene-structure axis,
+    and `matrices` (species -> expression matrix) the expression axis. Both
+    are declared the same way as foldseek's structures: absent means BLOCKED
+    and named, never silently skipped, because "no rows" from either axis
+    reads exactly like a measured negative.
     """
     wanted = list(ALL_AXES) if axes is None else list(axes)
     unknown = [a for a in wanted if a not in ALL_AXES]
@@ -144,18 +162,50 @@ def build_plan(
             f"{workdir}/foldseek/structure_function_transfer.tsv",
             needs="predicted structures (--structures)",
         ),
+        "structure": Axis(
+            "structure",
+            (f"mkdir -p {wd} && python3 -m steps.gene_structure "
+             f"--alignment {q(alignment) if alignment else '<ALIGNMENT>'} "
+             + ("".join(f"--gff {sp}={q(path)} "
+                        for sp, path in sorted((gffs or {}).items()))
+                or "--gff <SPECIES=GFF3> ")
+             + (f"--groups {q(groups)} " if groups else "")
+             + f"-o {wd}/gene_structure.tsv "
+             f"--json {wd}/gene_structure.json"),
+            f"{workdir}/gene_structure.tsv",
+            needs="the family alignment and per-species GFF3s "
+                  "(--alignment / --gff SPECIES=PATH)",
+        ),
+        "expression": Axis(
+            "expression",
+            (f"mkdir -p {wd} && python3 -m steps.expression "
+             f"--members {q(members) if members else '<MEMBERS>'} "
+             + ("".join(f"--matrix {sp}={q(path)} "
+                        for sp, path in sorted((matrices or {}).items()))
+                or "--matrix <SPECIES=MATRIX> ")
+             + (f"--groups {q(groups)} " if groups else "")
+             + f"-o {wd}/expression.tsv --json {wd}/expression.json"),
+            f"{workdir}/expression.tsv",
+            needs="a member list and at least one per-species expression "
+                  "matrix (--members / --matrix SPECIES=PATH)",
+        ),
     }
 
     plan = [catalog[a] for a in wanted]
-    if drop_unavailable and not structures:
-        plan = [a for a in plan if a.name != "foldseek"]
+    if drop_unavailable:
+        blocked = set(missing_inputs(plan))
+        plan = [a for a in plan if a.name not in blocked]
     return plan
+
+
+_PLACEHOLDERS = ("<STRUCTURES>", "<ALIGNMENT>", "<SPECIES=GFF3>",
+                 "<MEMBERS>", "<SPECIES=MATRIX>")
 
 
 def missing_inputs(plan: List[Axis]) -> Dict[str, str]:
     """Axes that cannot run yet -> why."""
     return {a.name: a.needs for a in plan
-            if a.needs and "<STRUCTURES>" in a.command}
+            if a.needs and any(p in a.command for p in _PLACEHOLDERS)}
 
 
 _MERGE_FLAG = {
@@ -164,6 +214,8 @@ _MERGE_FLAG = {
     "foldseek": "--foldseek-tsv",
     "deeploc": "--deeploc-csv",
     "signalp": "--signalp",
+    "structure": "--gene-structure",
+    "expression": "--expression",
 }
 
 
@@ -207,6 +259,17 @@ def fetch_outputs(plan: List[Axis], host: str, local_dir: str) -> List[Axis]:
     return fetched
 
 
+def _pairs(parser, flag: str, values: List[str]) -> Dict[str, str]:
+    """`SPECIES=PATH` arguments -> {species: path}."""
+    out: Dict[str, str] = {}
+    for value in values:
+        species, _, path = value.partition("=")
+        if not path:
+            parser.error(f"{flag} expects SPECIES=PATH, got {value!r}")
+        out[species] = path
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -216,6 +279,18 @@ def main():
     ap.add_argument("--workdir", required=True, help="Remote working directory")
     ap.add_argument("--structures", default=None,
                     help="Directory of predicted structures (enables foldseek axis)")
+    ap.add_argument("--alignment", default=None,
+                    help="Family alignment (enables the gene-structure axis)")
+    ap.add_argument("--gff", action="append", default=[],
+                    metavar="SPECIES=PATH",
+                    help="GFF3 for one species; repeatable")
+    ap.add_argument("--members", default=None,
+                    help="Family member list (enables the expression axis)")
+    ap.add_argument("--matrix", action="append", default=[],
+                    metavar="SPECIES=PATH",
+                    help="Expression matrix for one species; repeatable")
+    ap.add_argument("--groups", default=None,
+                    help="TSV of gene<TAB>subfamily, used by both new axes")
     ap.add_argument("--expected-ec", default=None,
                     help="Family EC for the membership verdict in the merge")
     ap.add_argument("--axes", default=None,
@@ -233,6 +308,9 @@ def main():
         family_fasta=args.family_fasta, workdir=args.workdir,
         expected_ec=args.expected_ec, axes=axes, structures=args.structures,
         drop_unavailable=False,
+        alignment=args.alignment, gffs=_pairs(ap, "--gff", args.gff),
+        matrices=_pairs(ap, "--matrix", args.matrix), members=args.members,
+        groups=args.groups,
     )
 
     blocked = missing_inputs(plan)
