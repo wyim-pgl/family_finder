@@ -20,6 +20,10 @@ episodic sites in the SF3 attention region col 165-209).
 
 import argparse
 import csv
+import sys
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent))
+from utils.alignment import translate_columns
 import re
 from pathlib import Path
 from typing import List, Tuple
@@ -53,7 +57,9 @@ def parse_beb(text: str) -> List[Tuple[int, str, float]]:
 
 
 def cross_windows(sites, windows_tsv: Path, min_prob: float = 0.0,
-                  site_stamp: str = None, allow_unverified: bool = False) -> List[dict]:
+                  site_stamp: str = None, allow_unverified: bool = False,
+                  site_alignment: dict = None, window_alignment: dict = None,
+                  bridge: str = None) -> List[dict]:
     """Overlap each BEB site with the signal windows' alignment columns.
 
     The two inputs do not necessarily share a coordinate system. BEB site
@@ -86,7 +92,21 @@ def cross_windows(sites, windows_tsv: Path, min_prob: float = 0.0,
 
     window_stamp = stamps.pop() if len(stamps) == 1 else None
     verified = bool(site_stamp and window_stamp and site_stamp == window_stamp)
-    if not verified and not allow_unverified:
+
+    # The honest resolution when the two coordinate systems really do differ:
+    # carry the sites across through a sequence present in both alignments,
+    # rather than refusing or pretending they agree. steps/codeml.py runs on
+    # the family codon alignment while the windows come from the clan protein
+    # alignment, so this is the normal case for the pipeline path, not an edge.
+    translate = site_alignment is not None and window_alignment is not None
+    if translate:
+        if bridge is None:
+            raise ValueError(
+                "Translating between alignments needs a bridge sequence "
+                "present in both (bridge=...)"
+            )
+        verified = True
+    elif not verified and not allow_unverified:
         raise ValueError(
             "Refusing to cross BEB sites with signal windows whose coordinate "
             f"system is unconfirmed (site_stamp={site_stamp!r}, "
@@ -98,17 +118,32 @@ def cross_windows(sites, windows_tsv: Path, min_prob: float = 0.0,
             "to record the doubt in the output."
         )
 
+    kept = [(site, aa, prob) for site, aa, prob in sites if prob >= min_prob]
+    if translate:
+        moved = translate_columns([s for s, _, _ in kept],
+                                  site_alignment, window_alignment, via=bridge)
+    else:
+        moved = [s for s, _, _ in kept]
+
     rows = []
-    for site, aa, prob in sites:
-        if prob < min_prob:
+    for (site, aa, prob), target in zip(kept, moved):
+        if target is None:
+            rows.append({
+                "site": site, "aa": aa, "prob": prob,
+                "n_windows": 0, "window_seqs": "", "signals": "",
+                "coordinates_verified": verified,
+                "translated_site": None, "untranslatable": True,
+            })
             continue
-        hit = [(s, sig) for lo, hi, s, sig in windows if lo <= site <= hi]
+        hit = [(s, sig) for lo, hi, s, sig in windows if lo <= target <= hi]
         seqs = sorted({s for s, _ in hit})
         signals = sorted({sig for _, sig in hit if sig})
         rows.append({
             "site": site, "aa": aa, "prob": prob,
             "n_windows": len(hit),
             "coordinates_verified": verified,
+            "translated_site": target if translate else None,
+            "untranslatable": False,
             "window_seqs": ",".join(seqs),
             "signals": ";".join(signals),
         })

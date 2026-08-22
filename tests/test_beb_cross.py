@@ -127,3 +127,46 @@ def test_an_unverified_cross_is_marked_as_such_in_every_row(tmp_path):
     rows = cross_windows([(150, "A", 0.9)], w, allow_unverified=True)
 
     assert rows[0]["coordinates_verified"] is False
+
+
+def test_cross_translates_between_alignments_when_both_are_supplied(tmp_path):
+    # BEB sites live in the family codon alignment; windows in the clan
+    # protein alignment. Given both and a bridge sequence, the cross should
+    # translate rather than refuse (#42).
+    w = tmp_path / "w.tsv"
+    w.write_text(
+        "seq_id\tstart\tend\tpeak_pos\tpeak_attention\tmean_attention\t"
+        "aln_col_start\taln_col_end\tdeeploc_signals\n"
+        "g1\t1\t3\t2\t0.9\t0.5\t3\t5\tNucleus\n"
+    )
+    site_aln = {"g1": "MK-W", "g2": "MKYW"}
+    window_aln = {"g1": "--MKW", "g2": "XXMKW"}
+
+    # site 4 of the family alignment is residue 3 of g1 -> column 5 of the clan
+    rows = cross_windows([(4, "W", 0.9)], w,
+                         site_alignment=site_aln, window_alignment=window_aln,
+                         bridge="g1")
+
+    assert rows[0]["n_windows"] == 1
+    assert rows[0]["coordinates_verified"] is True
+    assert rows[0]["translated_site"] == 5
+
+
+def test_a_site_the_bridge_cannot_carry_is_reported_not_dropped(tmp_path):
+    w = tmp_path / "w.tsv"
+    w.write_text(
+        "seq_id\tstart\tend\tpeak_pos\tpeak_attention\tmean_attention\t"
+        "aln_col_start\taln_col_end\tdeeploc_signals\n"
+        "g1\t1\t3\t2\t0.9\t0.5\t3\t5\tNucleus\n"
+    )
+    site_aln = {"g1": "MK-W", "g2": "MKYW"}
+    window_aln = {"g1": "--MKW", "g2": "XXMKW"}
+
+    # column 3 is a gap in the bridge, so it has no clan-alignment position
+    rows = cross_windows([(3, "Y", 0.9)], w,
+                         site_alignment=site_aln, window_alignment=window_aln,
+                         bridge="g1")
+
+    assert rows[0]["translated_site"] is None
+    assert rows[0]["n_windows"] == 0
+    assert rows[0]["untranslatable"] is True
