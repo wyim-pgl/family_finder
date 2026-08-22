@@ -365,3 +365,140 @@ def structure_coherence(
             "coherent": coherent,
         })
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Can a reference species' subfamily NAMES be transferred at all?
+# ---------------------------------------------------------------------------
+
+def anchor_transferability(
+    newick: str,
+    anchor_labels: Dict[str, str],
+    query_prefixes: Optional[List[str]] = None,
+) -> List[dict]:
+    """Test whether reference subfamily labels designate anything in the query.
+
+    The standard comparative-genomics recipe (e.g. Musa MYB classification,
+    PLOS ONE 10.1371/journal.pone.0239275) names query subfamilies by clade
+    membership with reference-species anchors. That is only valid when the
+    reference subfamilies predate the split with the query lineage.
+
+    Two reference labels whose anchors are each other's nearest relatives —
+    with no query gene between them — are a REFERENCE-LINEAGE-SPECIFIC
+    duplication: the names cannot designate distinct query groups. Measured
+    case: Arabidopsis PPC1 and PPC3 are sisters at support 100 in the PEPC
+    clan, and naming by symbol duly labelled six different Caryophyllales
+    subfamilies "PPC1".
+
+    Returns one row per label (plus rows with ``label=None`` for anchor-free
+    clades, the "lineage-specific expansion" case the paper reports by hand).
+    """
+    from utils.newick import parse_newick
+
+    root = parse_newick(newick)
+
+    def leaves_of(node):
+        if not node.children:
+            return [node.name]
+        out: List[str] = []
+        for c in node.children:
+            out += leaves_of(c)
+        return out
+
+    all_leaves = leaves_of(root)
+    anchors = set(anchor_labels)
+
+    def is_query(leaf: str) -> bool:
+        if leaf in anchors:
+            return False
+        if query_prefixes is None:
+            return True
+        return any(leaf.startswith(p) for p in query_prefixes)
+
+    def smallest_clade_with(targets: set):
+        best = None
+        def rec(node):
+            nonlocal best
+            L = set(leaves_of(node))
+            if targets <= L and (best is None or len(L) < len(best)):
+                best = L
+            for c in node.children:
+                rec(c)
+        rec(root)
+        return best or set(all_leaves)
+
+    def first_informative_clade(own: set) -> set:
+        """Smallest clade containing `own` PLUS at least one other leaf.
+
+        A single anchor's own "clade" is itself, which says nothing. Grow
+        until something joins — whatever joins FIRST is what the label is
+        actually adjacent to, and that is the thing that decides
+        transferability.
+        """
+        best = None
+        def rec(node):
+            nonlocal best
+            L = set(leaves_of(node))
+            if own <= L and len(L) > len(own):
+                if best is None or len(L) < len(best):
+                    best = L
+            for c in node.children:
+                rec(c)
+        rec(root)
+        return best or set(all_leaves)
+
+    rows: List[dict] = []
+    labels = sorted(set(anchor_labels.values()))
+    for label in labels:
+        own = {a for a, l in anchor_labels.items() if l == label}
+        clade = first_informative_clade(own)
+        others = sorted({anchor_labels[a] for a in clade & anchors} - {label})
+        n_query = sum(1 for x in clade if is_query(x))
+        transferable = (not others) and n_query > 0
+        if others and n_query == 0:
+            verdict = ("reference-lineage-specific duplication with "
+                       + ", ".join(others)
+                       + " — no query gene separates them, so these names do "
+                         "not designate distinct query subfamilies")
+        elif others:
+            verdict = ("shares its smallest clade with " + ", ".join(others)
+                       + " — the split is not resolved, treat the names as one group")
+        elif n_query == 0:
+            verdict = "no query gene in the anchor's clade — nothing to name"
+        else:
+            verdict = f"transferable — {n_query} query genes in the labelled clade"
+        rows.append({
+            "label": label,
+            "n_anchors": len(own),
+            "clade_size": len(clade),
+            "n_query_in_clade": n_query,
+            "blocked_by": others,
+            "transferable": transferable,
+            "verdict": verdict,
+        })
+
+    # anchor-free clades: the lineage-specific-expansion case
+    def maximal_anchor_free(node) -> List[set]:
+        L = set(leaves_of(node))
+        if L & anchors:
+            out: List[set] = []
+            for c in node.children:
+                out += maximal_anchor_free(c)
+            return out
+        return [L] if len(L) > 1 else []
+
+    for clade in maximal_anchor_free(root):
+        n_query = sum(1 for x in clade if is_query(x))
+        if n_query < 2:
+            continue
+        rows.append({
+            "label": None,
+            "n_anchors": 0,
+            "clade_size": len(clade),
+            "n_query_in_clade": n_query,
+            "blocked_by": [],
+            "transferable": False,
+            "verdict": ("query-only clade — lineage-specific expansion, no "
+                        "reference name applies"),
+        })
+    return rows
