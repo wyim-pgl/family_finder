@@ -14,6 +14,66 @@ crystallinum*(Mcry, Aizoaceae) 유전자가 **Round 1 OrthoFinder 클러스터�
 가능성이 높고, 어느 것인지는 아직 측정되지 않았다.** 결정적 측정은 대부분 클러스터에 이미
 있는 산출물로 가능하며 파이프라인 재실행이 필요 없다.
 
+## 1.5 🔴 9차 라운드 (2026-08-22) — **이 문서의 기존 결론이 뒤집혔다**
+
+**먼저 읽을 것.** 이 문서는 오랫동안 *"확정된 원인은 MCL/그래프 파편화"* 로 기록해 왔다.
+v2 산출물에서 미배치 유전자를 전수 분류한 결과 **그 결론은 잔여 미배치 풀에 대해 성립하지
+않는다.** 재진단을 시작하기 전에 아래를 읽고, MCL 그래프 개입에 착수하지 말 것.
+
+### 측정 — `classify_unplaced.py` (신규, 테스트 14건), 4종 전부
+
+| 종 | 미배치 | 그래프 절단 | lineage-specific | 진짜 고아 | 프루닝 |
+|---|---|---|---|---|---|
+| **Mcry** | 3,383 | **15.8%** ← 최저 | 10.2% | **73.9%** ← 최고 | 0.1% |
+| Cgig | 738 | 33.5% | 11.7% | 52.8% | 2.0% |
+| Ococ | 1,354 | 47.6% | 9.7% | 41.6% | 1.2% |
+| Obas | 1,611 | 49.5% | 7.3% | 41.4% | 1.8% |
+
+**Mcry는 그래프 파편화가 가장 적은 종이다.** 프루닝 기여도는 전 종에서 0.1–2.0%로,
+"프루닝 ✗" 판정이 v2 산출물에서 재확인된다.
+
+### #8과 모순되지 않는다 — 서로 다른 집합을 잰 것이다
+
+`forensics_r8.py`의 *"실패 사례의 90%가 강한 DIAMOND 히트 또는 splinter OG를 가짐"* 은
+**HMMER rescue로 구제된 유전자**를 truth set으로 잰 값이다. 그 집합은 정의상 *HMM으로 family
+소속이 검출되는* 유전자만 모은 것이라 히트가 있는 게 당연하다. 이번 측정 대상은 그
+**여집합** — rescue조차 못 붙인 잔여물이다.
+
+### 🔴 더 큰 문제 — 종간 미배치율 비교 자체가 교란돼 있었다
+
+| 종 | 총계 | **최소 단백질 길이** | <100 aa | 원시 미배치율 | **≥100 aa 미배치율** |
+|---|---|---|---|---|---|
+| **Mcry** | 25,226 | **3 aa** | 3,374 | 13.4% | **6.2%** |
+| Cgig | 29,163 | **151 aa** | **0** | 2.5% | 2.5% |
+| Ococ | 33,745 | 46 aa | 1,730 | 4.0% | 2.9% |
+| Obas | 28,244 | 33 aa | 2,383 | 5.7% | 3.2% |
+
+**`Cgig.pep.fa`(MAKER)에는 100 aa 미만이 하나도 없다 — 최단 151 aa.** 즉 우리는 주석 정책이
+서로 다른 프로테옴들의 미배치율을 비교해 왔다. `measure_v2.py`가 이제 길이 층화하고
+`[!] CONFOUND` 경고를 낸다(`12d651f`).
+
+### 확정된 결론
+
+1. **Mcry 문제는 파이프라인 결함이 아니다.** 겉보기 격차 2.4–5.4배 중 **약 2/3가 입력 주석
+   품질**(구조 파손 모델 + 짧은 모델 정책), 나머지 **약 1.7배는 Mcry가 패널의 유일한
+   Aizoaceae라는 환원 불가능한 taxon sampling 성질**이다.
+2. **15sp는 이것을 고치지 못한다.** 추정 종트리에서 Mcry는 여전히 Portulacineae+Cactaceae
+   전체의 자매이고, 새로 들어오는 4종(Tfru/Ccac/Pami/Pole)은 전부 Mcry로부터 선인장과 같은
+   거리다. **브리징 taxon이 하나도 늘지 않는다.**
+3. **MCL inflation은 죽은 노브**(#10 스윕). **그래프 개입도 착수 근거가 없다.**
+
+### 아직 갈리는 것 — 두 증거가 충돌한다
+
+온전한 짧은 Mcry 모델 2,543개 중 몇 개가 진짜인가:
+- **엑손 구조**: 단일엑손 58.6% vs CgigH 대조 28.3% → **초과 약 770개**
+- **발현**(가뭄×일주기 TPM, 25,219/25,219 조인): **침묵 비율이 전 구간 9–13%로 평평.**
+  770개가 spurious ORF라면 침묵 클래스에 몰려야 하는데 농축이 **없다**
+
+발현은 *침묵 DNA 위의 ORF*만 배제하고 *실재 전사체 위의 오호출*은 배제하지 못한다.
+**개별 식별은 미달성.** 구조 파손 831개(24.6%)만 가정 없이 방어 불가로 확정된다.
+
+관련 이슈: #36(측정 전체), #43(주석 세대 불일치), #34(tier-3 — 표적이 짧아 기대 수익 낮음)
+
 ## 2. 증상 지표
 
 | 종 | 유전자 | R10 후 미배치 | 미배치율 | HMMER 구제 | 구제율 | 최종 배치율 |
@@ -120,7 +180,10 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 독해, HMMER 동점 편향(실증), OrthoFinder v3.1.3의 `-I`/`-S`/`-og`/`-b` 지원
 (`run/process_args.py:672/775/861/406`).
 
-**유력 가설 (측정 필요):**
+**유력 가설 (측정 필요) — 2026-08-22 기준 전부 해소됨, §1.5 참조:**
+> ⚠️ 아래는 8차 라운드까지의 상태다. 9차 라운드에서 미배치 풀 전수 분류로 결론이
+> 뒤집혔다. 그래프 포렌식 3분할·BUSCO OJR·inflation 스윕은 **다시 돌리지 말 것.**
+
 - pep/CDS ID 불일치로 인한 Mcry 유전자의 조용한 소실 (§3 크기 게이트 절 — 최우선 확인)
 - Round-1 클러스터링에서의 실제 Mcry 오배정 (BUSCO OJR로 측정)
 - MCL inflation / OrthoFinder 유전자별 포함 임계값 / DIAMOND 민감도 중 어느 것이 병목인지
@@ -154,7 +217,7 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 ### 🔴 조용한 실패 — 에러 없이 그럴듯한 틀린 결과를 내는 것들 (8차 라운드에서 전부 실측)
 | 증상 | 진짜 원인 | 판정법 |
 |---|---|---|
-| foldseek `createdb`가 **0.00초**에 끝남 | `--prostt5-model`에 **`.gguf` 파일**을 줬다. 3Di 없이 **아미노산 DB**를 뱉는다(로그엔 경로가 정상 출력됨) | **디렉터리**를 줄 것. `ls <db>_ss` 로 3Di DB 존재 확인 |
+| foldseek `createdb`가 **0.00초**에 끝남 | 3Di 없이 **아미노산 DB**를 뱉는다(로그엔 경로가 정상 출력됨). ⚠️ **2026-08-22 정정: 원인이 `.gguf` 파일 경로가 아니다.** 같은 바이너리·가중치·머신에서 `.gguf`를 줘도 72.75초 동안 정상 3Di를 만든다. 원 관측은 **불완전한 `.gguf` 다운로드**를 잡았을 가능성이 크다(소급 확인 불가) | 원인과 무관하게 **상태**로 판정: `steps/prostt5_chunks.py`의 `verify_3di_db()` — `_ss` 없음/빈 파일/인덱스 없음/**AA DB와 바이트 동일**/엔트리 수 불일치를 전부 하드 실패 |
 | `--gpu 1` 을 줬는데 GPU 0% | createdb가 이 플래그를 **무시**한다 (`Use GPU 0`) | ProstT5 변환은 CPU 전용으로 계획 |
 | codeml 잡이 SLURM에 **FAILED** | `error: end of tree file` — 결과를 다 쓴 **뒤** exit 1. **3회 재현** | SLURM 상태 말고 `lnL` 줄 + BEB 블록 존재로 판정 |
 | BEB 확률이 파싱값과 다름 | results.txt에 **NEB 블록이 BEB보다 먼저** 나오고 값이 다르다 (site 568: NEB 0.931 vs BEB 0.970) | `Bayes Empirical Bayes` 헤더 **이후만** 파싱 |
@@ -164,6 +227,12 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 | tblout 병합이 조용히 적은 결과를 냄 | 죽은 태스크가 **겉보기 멀쩡한 잘린 tblout**을 남긴다 | `merge_tblouts`가 `# [ok]` 검사로 차단 — 우회하지 말 것 |
 | 원격 축 결과를 로컬 merge에 넣으면 실패 | 축은 원격에서 돌아 경로가 원격이다 | `annotate_stack.py`가 fetch 후 로컬 경로로 명령을 출력 (8c5cdc4) |
 | `~/dir` 가 아니라 `~`라는 **디렉터리**가 생김 | `shlex.quote('~/x')` → `'~/x'` (리터럴) | `qpath()` 사용 |
+| 종트리가 검증을 통과했는데 프루닝이 무력 | 가지 길이가 **전부 `1.0`인 위상 전용 트리**. 양수라 `Non-positive` 검사를 통과하고, 최대 쌍거리가 **정확히 10.0**인데 게이트가 `> 10.0`이라 딱 빗나간다. `data_12sp`·`14sp`·`15sp`·`17sp` **네 패널이 이 상태로 돌았다** | `validate_species_tree`가 이제 **모든 가지 길이가 동일**하면 실패시킨다 (`ce05e53`). 임계값 조정은 근본 수정이 아니다 — 전부 `0.1`이면 최대 0.4로 어떤 범위 검사도 통과한다 |
+| 종간 미배치율 비교가 그럴듯한데 틀림 | 프로테옴마다 **주석 길이 하한이 다르다**. Cgig(MAKER) 최단 151 aa / Mcry 최단 3 aa | `measure_v2.py --pep-dir`로 길이 층화. 하한이 다르면 `[!] CONFOUND` 경고 (`12d651f`) |
+| SDP 스캔이 "신호 없음"을 냄 | 트리용으로 **trim한 행렬을 잔기 분석에 재사용**했다. `-gappyout`은 gappy 컬럼을 자르는데 **N말단 조절 확장부는 어느 패밀리에서나 gappy하다** — 가장 볼 가치가 있는 구간이 먼저 잘린다. PEPC에서 CAM 인산화 모티프 SIDAQL(잔기 11–16)이 통째로 사라졌다 | **SDP는 항상 untrimmed 정렬에서 스캔.** 줄여야 하면 전역이 아니라 **그룹별 최대 점유율**(`select_columns(groups=...)`, `e31372d`) — 전역 임계값은 소수 서브패밀리 고유 구간을 산술적으로 지운다(천장 = k/N) |
+| 그룹에 SDP가 없다고 보고됨 | `min_cover`(기본 0.7)가 그 그룹의 컬럼을 **통째로 조용히 스킵**했다. PEPC ppc-1E1은 N말단을 70개 중 33개(47%)만 덮어 **1468컬럼 중 539개(37%)가 판정조차 안 됐다** | `coverage_suppressed()`를 `sdp_scan` 옆에서 같이 호출해 보고할 것 (`e31372d`). ⚠️ 불변 코어 지표에는 아직 같은 보고가 없다 |
+| TE 중첩 비율이 종간에 깨끗하게 갈림 | EDTA 라이브러리가 ***Opuntia*에서 만들어졌다.** 선인장 대조군(CgigH 6.1%)이 Aizoaceae(Mcry 0.9%)보다 라이브러리에 가깝다 — **TE 함량이 아니라 계통 거리를 재고 있다** | 종별 repeat 라이브러리 없이 종간 TE 비교를 하지 말 것 |
+| 미배치 유전자가 100% pseudogene 후보로 나옴 | 파이프라인이 **모든 미배치 유전자를 `is_orphan`으로 자동 플래그**한다. 순환 지표다 | `pseudogene_candidates.tsv`의 `is_orphan`·테이블 존재 여부를 미배치 질문의 증거로 쓰지 말 것. CDS를 직접 읽을 것 |
 
 ## 6. 다음 단계 — 열린 이슈 (2026-08-22 기준)
 
@@ -410,45 +479,84 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 서브에이전트·모니터·워크플로는 세션 종료와 함께 사라진다.
 
 ### 즉시 확인할 것
-**실행 중인 잡은 없다** (2026-08-22 03:40 기준). pronghorn 큐의 `blast.part=*`,
-`calculateRSEM*`은 **다른 프로젝트(PGRP)** 잡이다. gpu는 유휴.
+🔴 **15sp v2 프로덕션 런이 돌고 있다** — SLURM `6097190` (`ff_15sp_v2`), 2026-08-21 23:15 시작,
+16코어/64GB/3일 제한, `cpu-35`. 산출물 `output_15sp_v2/`. **이 디렉터리를 건드리지 말 것.**
+pronghorn 큐의 `blast.part=*`, `calculateRSEM*`은 **다른 프로젝트(PGRP)** 잡이다.
 ```bash
-ssh pronghorn 'squeue -u wyim -o "%.10i %.14j %.9T %.11M"' | grep -viE "blast|RSEM|combine|filter"
-ssh gpu 'nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader'
+ssh pronghorn 'squeue -j 6097190 -o "%.10i %.3t %.10M %.11L"'
+ssh pronghorn 'tail -5 ~/scratch/bin/family_finder/logs/ff_15sp_v2_6097190.log'
 git status --short && python3 -m pytest tests/ -q | tail -1
 ```
-기대값: 잡 0건 / GPU 0% / 워킹트리 clean / **352 passed**.
+기대값: 워킹트리 clean / **449 passed**.
+
+완주 후 확인할 것: 청크 병합이 `# [ok]` 검사 통과 · `measure_v2.py --pep-dir`로 종별
+미배치율(길이 층화 필수) · `cam_pairs` TOGETHER 유지 · PEPC clan이 단일 family로 병합되는지.
 
 ### 결정이 필요한 것 (이것부터)
-**#41 — 15sp 종트리 방침.** `data_15sp/species_tree.nwk`의 가지 길이가 전부 `1.0`(더미)이라
-종 인지 프루닝이 무력화된다. 두 선택지:
-- **(a) 2패스** — 더미로 1회 돌려 단일카피 family 확보 → supermatrix → IQ-TREE → 재실행.
-  5sp가 밟은 경로이고 그때 외군 비대칭·22배 과대추정을 잡아냈다. **비용: 런 2회. 권고.**
-- **(b) 대체 트리** — 문헌 분기시간 외삽. 빠르지만 출처 명시 필요, 근거 약함.
+1. 🔴 **#34 tier-3 지표** — `tier3_assign`이 `alntmscore`만 보는데 **ProstT5 DB에는 CA 좌표가
+   없어 계산 자체가 불가능**하다(`No datafile could be found for db_p5_ca!`). 현재 tier-3는
+   ESMFold 구조를 요구한다. **bits 기반 경로 신설 vs ESMFold 사용** 결정 전까지 #34 전체와
+   #36의 tier-3 재측정이 멈춰 있다. 권고: bits 경로 신설.
+2. **위키 `7ee3401` 정정** — `.gguf` 함정이 재현되지 않았다(§5 표 참조). 게시는 승인 사항.
+3. **#43 항목 2** — "Ppc2" 라벨 반전 정정 범위. 사용자가 결과 확인 후 직접 정리하기로 함.
 
 ### 바로 착수 가능한 것 (막힘 없음)
-1. **#40 잔여** — Ppc2의 선인장 증거 보강. `Ococ_OcoChr10G09070` / `Obas__…_000494` 좌위의
-   **synteny를 Cgig·Sund·Cjam 유전체에서 직접 확인** (정렬에 단편 추가하지 말 것).
-   그리고 ppc-1E1/ppc-1E2 결과를 methods.md에 반영.
-2. **#32 닫기** — #40이 답했으므로 요약 코멘트 후 close.
+1. **#42** — 불변 코어에 `min_cover` 억제 보고 추가(§5 표의 조용한 실패 재발), 공간 널을
+   잔기 공간 거리로 교체, 특성규명 멤버가 있으면 `candidates`로 우선하도록 배선.
+   ⚠️ **운용 임계값(0.95 vs 1.00)은 #35 완주 후 다수 패밀리로 보정할 것** — PEPC 하나로는
+   0.90에서 실패한다.
+2. **#40 잔여** — methods.md에 재구축 레시피(AU 검정, EPA-ng 배치) 서술. synteny·SDP·
+   인산화·Ccac는 전부 완료.
 3. **#39** — 리팩터 3건(`rescue_unplaced` 141줄/중첩5, `taxonomic_composition` 85/5,
-   `narrative()` 93줄), 도구 버전 5개(Possvm/TreeCluster/CLEAN/ESMFold/Foldseek) 확인,
-   **구조 응집도 서열 통제**. ⚠️ 리팩터는 **산출물 체크섬을 먼저 잡고 바이트 동일을 증명한 뒤**
-   테스트를 추가할 것 (5a38495에서 쓴 순서).
-4. **#34** ProstT5 스크린 — 반드시 **디렉터리** 형식 + `ls <db>_ss` 확인 + 분할.
-5. **#33** MYB — ATH MYB 132개 앵커 확보부터. 명명 전 `anchor_transferability()` 필수.
+   `narrative()` 93줄), 도구 버전 5개 확인, 구조 응집도 서열 통제.
+   ⚠️ 리팩터는 **산출물 체크섬을 먼저 잡고 바이트 동일을 증명한 뒤** 테스트를 추가할 것.
+4. **#36** — methods.md §2.X.8의 "39–47% 방어 불가" 서술을 발현 결과와 함께 재조정
+   (엑손 증거와 발현 증거가 갈린다, §1.5 참조).
+5. **`Ococ_OcoChr10G09070.t1` ID 형식 불일치** — PEPC 파일럿 FASTA와 #40 `groups.json`이
+   `.t1` 접미사를 떼도 매칭되지 않는다. 두 데이터셋 재조인 전 확인.
 
-### 재사용할 도구 (이번 라운드에 생긴 것)
+### #35 완주까지 대기
+#33(MYB) · #34 전수 스크린(**≥150 aa 부분에만**) · #36 tier-3 재측정 · #42 임계값 보정
+
+### 폐기 결정 (2026-08-22)
+**`data_12sp` / `data_14sp` / `data_17sp` 패널을 폐기한다** — 셋 다 더미 종트리로 돌아
+프루닝이 비활성이었다. 15sp(#35)가 유일한 프로덕션 런이다. **예외**: #43-2의 Ppc2 라벨
+판정은 `output_12sp_portulacineae`에서 나왔지만 근거가 **라운드-1 클러스터링의 orthogroup
+배정**이고 라운드-1은 종트리를 쓰지 않으므로 유효하다.
+
+**5sp는 Helixer로 재실행하지 않는다** — 15sp가 이미 Helixer(27,583)다. 5sp는 MAKER(29,163,
+151 aa 하한)로 남기고 caveat만 명시한다.
+
+### 재사용할 도구
 | 도구 | 용도 |
 |---|---|
+| `build_supermatrix.py` | 런 자체의 단일카피 마커로 코돈 supermatrix. `--markers genecount`는 **프루닝·종트리와 독립** |
+| `classify_unplaced.py` | 미배치 유전자를 5판정으로 분류 (§1.5) |
+| `utils/alignment.py` | 컬럼 점유율·**그룹 인지 선택**·`column_map` |
+| `steps/subfamily.coverage_suppressed()` | `min_cover`가 조용히 스킵한 컬럼 보고 |
+| `steps/subfamily.sdp_core_relationship()` | 레퍼런스 없는 코어 판정. `no_interpretation_available` 명시 출력 |
+| `steps/prostt5_chunks.py` | 3Di DB 분할 + `verify_3di_db` 5조건 하드 실패 + `.done` 센티넬 |
 | `steps/subfamily.anchor_transferability()` | 레퍼런스 서브패밀리 이름이 전이 가능한지 사전 판정 |
-| `annotation_matrix.py` | 6축 병합 + member/intruder/review 판정 |
-| `annotate_stack.py` | 전 축을 1커맨드로 (dry-run으로 계획 확인 가능) |
-| `region_disorder.py` | 영역 pLDDT를 비-focal 대조군과 비교 |
+| `annotation_matrix.py` / `annotate_stack.py` | 6축 병합 / 전 축 1커맨드 |
+| `region_disorder.py` | 영역 pLDDT를 **비-focal 대조군**과 비교 |
 | `beb_cross.py` | codeml BEB × 신호 윈도우 |
-| `measure_v2.py` | 종별 미배치율 vs 베이스라인 |
-| `steps/hmm_chunks.py` | SLURM 선택적 청크 실행 + 실패 시 병합 거부 |
-| `fs_transfer.py` | foldseek AFDB 히트 → UniProt 기능 전이 TSV |
+| `measure_v2.py` | 종별 미배치율 — **`--pep-dir`로 길이 층화 필수** |
+| `steps/hmm_chunks.py` | SLURM 청크 실행 + 실패 시 병합 거부 |
+| `fs_transfer.py` | foldseek AFDB 히트 → UniProt 기능 전이 |
+
+### 데이터가 어디 있는가 (오래 못 찾았던 것)
+`~/scratch/data/opuntia_coche/revision/` = **Opuntia 원고 프로젝트**. family_finder에는 파생
+`pep/`·`cds/`만 오므로 유전체·좌표·출처는 전부 여기서 찾을 것.
+- `jcvi/` — **121개 쌍 synteny** (`.bed`/`.cds`/`.anchors`/`.lifted.anchors`/`.pdf`)
+- `species_annotation_table.tsv` — 11종 메타데이터 (**Ccac·Dcar·Sof·Sole 누락**)
+- `method.md` — **Ccac = *Cistanthe cachinalensis*, Montiaceae, 통성 CAM** (Chomentowska
+  et al. 2025 *New Phytologist* 247:388-407, PRJNA1181828). 선인장이 **아니다**
+- `gff_external/`, `genome_external/` — Dcar, Sof, Sole
+
+`~/scratch/data/lab_reference_genome/` — Mcry 유전체+GFF(`iceplant_*`), Ococ, Pitaya(=Sund),
+Bvul, 그리고 **Mcry 발현 시계열**(`iceplant_*.featurecounts.tpm.tsv*`).
+`~/scratch/data/opuntia_coche/annotation/purged.fa.mod.EDTA.TElib.fa` — EDTA TE 라이브러리
+(***Opuntia* 유래 — 종간 비교에 쓰지 말 것**, §5 표 참조)
 
 ## 8. 재현 정보
 
