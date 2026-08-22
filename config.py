@@ -1,7 +1,49 @@
 """Configuration for the family_finder pipeline."""
 
 import json
+import shutil
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+
+class ToolNotFoundError(FileNotFoundError):
+    """A configured external tool could not be found."""
+
+
+def resolve_tool(value: str, key: str) -> str:
+    """Absolute path to an external tool, or a failure that names the setting.
+
+    Issue #44. A bare tool name means "whichever binary a shell happens to
+    expose", which is irreproducibility written into the configuration: seven
+    PAML installations spanning 4.9i to 4.10.10 exist across this project's two
+    hosts, and codeml prints no version banner, so a finished run cannot be
+    attributed to a version afterwards. The same applies to any tool whose
+    output ends up in a manuscript.
+
+    Resolution is deliberately not done at startup for every tool: the
+    pipeline prepends a conda environment to PATH at runtime, so a bare name
+    that looks unresolvable here is fine by the time it is used. Call this at
+    the point of use instead, and let the failure name the setting to pin.
+    """
+    if not value:
+        raise ToolNotFoundError(
+            f"{key} is empty; set it to the tool's absolute path"
+        )
+    if "/" in value:
+        if Path(value).exists():
+            return value
+        raise ToolNotFoundError(
+            f"{key} points at {value}, which does not exist"
+        )
+    found = shutil.which(value)
+    if found:
+        return found
+    raise ToolNotFoundError(
+        f"{key} is the bare name {value!r} and no such executable is on PATH. "
+        f"Pin it to an absolute path in the config: a bare name resolves to "
+        f"whichever build a shell exposes, and a tool that does not print its "
+        f"version cannot be attributed to one after the run."
+    )
 
 
 @dataclass

@@ -7,7 +7,7 @@ from typing import Dict, Set
 
 from Bio import AlignIO
 
-from config import Config
+from config import Config, resolve_tool
 
 logger = logging.getLogger("family_finder")
 
@@ -247,24 +247,50 @@ def benjamini_hochberg(pvalues) -> list:
 
 
 def run_codeml(ctl_path: Path, work_dir: Path, config: Config) -> Path:
-    """Run codeml with the given control file."""
+    """Run codeml with the given control file.
+
+    The binary is resolved through `config.resolve_tool` so a missing or
+    unpinned codeml fails naming the setting rather than as a bare OSError
+    from subprocess (issue #44).
+
+    **Success is judged from the output, not from the exit status.** codeml
+    writes its results and then exits 1 with "error: end of tree file"; this
+    was reproduced three times and is recorded in resume.md. Treating a
+    non-zero return as failure therefore discards completed analyses. A run
+    counts as complete when results.txt carries an lnL line, which is what
+    every downstream parser needs; anything less is a real failure and the
+    stderr is raised with it.
+    """
+    binary = resolve_tool(config.codeml_bin, "codeml_bin")
     logger.debug(f"Running codeml: {ctl_path}")
 
     result = subprocess.run(
-        [config.codeml_bin, str(ctl_path.name)],
+        [binary, str(ctl_path.name)],
         cwd=str(work_dir),
         capture_output=True,
         text=True,
         timeout=3600,
     )
 
-    if result.returncode != 0:
-        logger.error(f"codeml failed for {ctl_path}:\n{result.stderr}")
-        raise RuntimeError(f"codeml failed with return code {result.returncode}")
-
     results_file = work_dir / "results.txt"
     if not results_file.exists():
-        raise FileNotFoundError(f"codeml output not found: {results_file}")
+        raise RuntimeError(
+            f"codeml wrote no results.txt for {ctl_path} "
+            f"(return code {result.returncode}):\n{result.stderr}"
+        )
+
+    if "lnL" not in results_file.read_text():
+        raise RuntimeError(
+            f"codeml results for {ctl_path} carry no lnL line, so the run did "
+            f"not finish (return code {result.returncode}):\n{result.stderr}"
+        )
+
+    if result.returncode != 0:
+        logger.warning(
+            f"codeml exited {result.returncode} for {ctl_path} but wrote "
+            f"complete results; accepting them. stderr: "
+            f"{result.stderr.strip().splitlines()[-1] if result.stderr.strip() else ''}"
+        )
 
     return results_file
 

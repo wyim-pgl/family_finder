@@ -2,6 +2,7 @@
   "orthofinder_bin": "/data/gpfs/assoc/pgl/bin/conda/conda_envs/orthofinder/bin/orthofinder",
   "mafft_bin": "/data/gpfs/assoc/pgl/bin/conda/conda_envs/orthofinder/bin/mafft",
   "fasttree_bin": "/data/gpfs/assoc/pgl/bin/conda/conda_envs/orthofinder/bin/FastTree",
+  "codeml_bin": "/data/gpfs/home/wyim/scratch/bin/conda/conda_envs/family_finder/bin/codeml",
   "pal2nal_bin": "/data/gpfs/home/wyim/scratch/bin/PAL2NAL/pal2nal.pl",
   "hmmbuild_bin": "/data/gpfs/home/wyim/scratch/bin/hmmer-3.2.1/bin/hmmbuild",
   "hmmsearch_bin": "/data/gpfs/home/wyim/scratch/bin/hmmer-3.2.1/bin/hmmsearch",
