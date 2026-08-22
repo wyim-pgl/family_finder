@@ -232,6 +232,9 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 | SDP 스캔이 "신호 없음"을 냄 | 트리용으로 **trim한 행렬을 잔기 분석에 재사용**했다. `-gappyout`은 gappy 컬럼을 자르는데 **N말단 조절 확장부는 어느 패밀리에서나 gappy하다** — 가장 볼 가치가 있는 구간이 먼저 잘린다. PEPC에서 CAM 인산화 모티프 SIDAQL(잔기 11–16)이 통째로 사라졌다 | **SDP는 항상 untrimmed 정렬에서 스캔.** 줄여야 하면 전역이 아니라 **그룹별 최대 점유율**(`select_columns(groups=...)`, `e31372d`) — 전역 임계값은 소수 서브패밀리 고유 구간을 산술적으로 지운다(천장 = k/N) |
 | 그룹에 SDP가 없다고 보고됨 | `min_cover`(기본 0.7)가 그 그룹의 컬럼을 **통째로 조용히 스킵**했다. PEPC ppc-1E1은 N말단을 70개 중 33개(47%)만 덮어 **1468컬럼 중 539개(37%)가 판정조차 안 됐다** | `coverage_suppressed()`를 `sdp_scan` 옆에서 같이 호출해 보고할 것 (`e31372d`). ⚠️ 불변 코어 지표에는 아직 같은 보고가 없다 |
 | TE 중첩 비율이 종간에 깨끗하게 갈림 | EDTA 라이브러리가 ***Opuntia*에서 만들어졌다.** 선인장 대조군(CgigH 6.1%)이 Aizoaceae(Mcry 0.9%)보다 라이브러리에 가깝다 — **TE 함량이 아니라 계통 거리를 재고 있다** | 종별 repeat 라이브러리 없이 종간 TE 비교를 하지 말 것 |
+| 같은 이름의 두 서열이 **다른 단백질** | #40 clan 트리는 `Ococ_OcoChr10G09070_M`(**949 aa**, SIDAQL 있음)을, synteny 채점과 배포 주석은 `Ococ_OcoChr10G09070.t1`(**660 aa**, N말단 없음)을 썼다. `_M`은 recruitment 단계의 재예측 모델이고 6개 있다(Ococ/Pami/Sund×2/Tfru×2) | 좌위 이름으로 조인하기 전에 **서열 길이·N말단을 대조**할 것. `_M`은 isoform이 아니므로 `utils/gene_ids.py`가 정당하게 매칭 실패시킨다 |
+| ID 불일치로 커버리지가 조용히 깎임 | 모듈마다 정규화 규칙이 달랐다. 구조 파일명은 `.`→`_`, transcript 접미사는 한쪽만 붙는다. 과거 111개 중 29개 매칭, `region_disorder`에서 16/111 손실 | `utils/gene_ids.match_ids()` — exact→canonical→isoform 순으로 필요한 만큼만 느슨해지고 **어느 레벨을 썼는지·무엇이 안 맞았는지·비율**을 반환. `max_unmatched` 상한 초과 시 실패 |
+| 잔기 좌표를 다른 정렬끼리 교차 | `beb_cross`가 codeml 사이트(패밀리 코돈 정렬)와 signal window(clan 단백질 정렬)를 **구간 겹침만으로** 교차했다. 불일치 시 0 overlap이 나오고 `classify()`가 그것을 neofunctionalization **반증**으로 승격시킨다 | `alignment_id()`로 stamp를 달고, 다르면 `translate_columns()`로 다리 서열 경유 번역. `cross_windows`가 이제 요구한다 (`9a986f9`). **PEPC 실측 대조 결과 세 축 전부 1,371컬럼/102 taxa로 일치했으므로 기존 SF3 결론은 안전** |
 | 미배치 유전자가 100% pseudogene 후보로 나옴 | 파이프라인이 **모든 미배치 유전자를 `is_orphan`으로 자동 플래그**한다. 순환 지표다 | `pseudogene_candidates.tsv`의 `is_orphan`·테이블 존재 여부를 미배치 질문의 증거로 쓰지 말 것. CDS를 직접 읽을 것 |
 
 ## 6. 다음 단계 — 열린 이슈 (2026-08-22 기준)
@@ -535,7 +538,10 @@ git status --short && python3 -m pytest tests/ -q | tail -1
 | `utils/alignment.py` | 컬럼 점유율·**그룹 인지 선택**·`column_map` |
 | `steps/subfamily.coverage_suppressed()` | `min_cover`가 조용히 스킵한 컬럼 보고 |
 | `steps/subfamily.sdp_core_relationship()` | 레퍼런스 없는 코어 판정. `no_interpretation_available` 명시 출력 |
-| `steps/prostt5_chunks.py` | 3Di DB 분할 + `verify_3di_db` 5조건 하드 실패 + `.done` 센티넬 |
+| `steps/esmfold_chunks.py` | **tier-3 채택 경로.** PDB 산출물 5조건 검증 + `.done` 센티넬 + `estimate_runtime` (측정 상수 내장, `MAX_LEN=1100`의 근거 포함) |
+| `steps/prostt5_chunks.py` | 3Di DB 분할 + `verify_3di_db` 5조건 하드 실패 (ProstT5는 미채택, 패턴은 유효) |
+| `utils/gene_ids.py` | `canon_gene_id` / `strip_isoform` / `match_ids` — 매칭 실패율 상한, 충돌 감지 |
+| `utils/alignment.alignment_id()` / `translate_columns()` | 잔기 좌표계 stamp + 다리 서열 경유 번역 |
 | `steps/subfamily.anchor_transferability()` | 레퍼런스 서브패밀리 이름이 전이 가능한지 사전 판정 |
 | `annotation_matrix.py` / `annotate_stack.py` | 6축 병합 / 전 축 1커맨드 |
 | `region_disorder.py` | 영역 pLDDT를 **비-focal 대조군**과 비교 |
