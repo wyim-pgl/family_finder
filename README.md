@@ -524,7 +524,28 @@ Provide a Newick-format species tree with branch lengths. Leaf names must match 
 ((Mcry:0.5,Cgig:0.5):0.3,(Ococ:0.2,Obas:0.2):0.3);
 ```
 
-Recommended approach: estimate branch lengths from a concatenated single-copy ortholog (e.g. BUSCO) codon alignment with IQ-TREE. Do NOT use ASTRAL output directly — its coalescent-unit branch lengths break the observed/expected distance ratio used for pruning.
+Branch lengths **must** be substitution rates. Do NOT use ASTRAL output directly — its coalescent-unit branch lengths break the observed/expected distance ratio used for pruning. A topology-only tree (every branch written as `1.0`) is worse than it looks: it passes naive range checks while making every species pair equidistant by construction, which silently disables pruning. `validate_species_tree` rejects it explicitly.
+
+Estimate the tree from the pipeline's own single-copy families with `build_supermatrix.py`. Markers come either from OrthoFinder's round-1 gene counts (`--markers genecount`, the default) or from confirmed families (`--markers summary`). The `genecount` route is independent of both the species tree and pruning, so it works on a first pass run with a placeholder tree — round-1 clustering never reads the species tree:
+
+```bash
+# pass 1: run the pipeline once with any topology, then estimate the tree from it
+python build_supermatrix.py \
+  --run-dir output_15sp --species Ahyp,Bvul,Ccac,Cgig,Cjam,Dcar,Mcry,Obas,Ococ,Pami,Pole,Sof,Sole,Sund,Tfru \
+  --out species_tree_est --markers genecount
+
+# same model family as the FastTree gene trees (-nt -gtr -gamma), so observed
+# and expected distances end up in commensurate units
+iqtree2 -s species_tree_est/supermatrix.fa -m GTR+F+G4 -nt 16 \
+        -alrt 1000 -bb 1000 -seed 42 -pre species_tree
+
+# strip support labels before handing it to the pipeline
+sed -E 's/\)[0-9.]+\/[0-9.]+:/):/g' species_tree.treefile > data/species_tree.nwk
+
+# pass 2: rerun with the estimated tree
+```
+
+BUSCO was tried first and was unusable here — the available BUSCO runs were genome-mode and yield genomic coordinates rather than protein identifiers.
 
 To include two annotations of the same genome (e.g., MAKER vs Helixer), add them as sister taxa with near-zero distance:
 
@@ -542,6 +563,18 @@ for sp in Mcry Ococ Obas Cgig; do
   diff <(echo "$pep_ids") <(echo "$cds_ids") | head -5
   echo "${sp}: $(grep -c '^>' data/pep/${sp}.pep.fa) pep, $(grep -c '^>' data/cds/${sp}.cds.fa) cds"
 done
+
+# Annotation heterogeneity — DO NOT SKIP.
+# Proteomes from different annotators apply different minimum-length policies,
+# and that alone changes how many genes can be placed. Compare the FLOORS:
+python -c "
+from Bio import SeqIO
+for f in ['Mcry','Ococ','Obas','Cgig']:
+    L = [len(r.seq.rstrip('*')) for r in SeqIO.parse(f'data/pep/{f}.pep.fa','fasta')]
+    print(f'{f}: min={min(L)} aa, <100aa={sum(1 for x in L if x<100)}/{len(L)}')
+"
+# If one species has a floor of ~150 aa and another has 3 aa, their raw
+# unplaced rates are NOT comparable. Use measure_v2.py --pep-dir to stratify.
 
 # Check for internal stop codons (annotation quality)
 python -c "
@@ -1001,7 +1034,45 @@ Addressed issues found during the 5-species (143K sequences) production run:
 
 - **Ococ annotation quality**: 161 genes have internal stop codons in CDS, causing pal2nal failures. The pipeline auto-filters these and falls back to protein trees.
 - **TreeShrink**: Requires Python <=3.9; may not install in newer environments. Pipeline works without it (Stage 2 pruning only).
-- **Large outlier pools** *(v1 run; the v2 figure is pending)*: After HMMER rescue, 7,605 genes remain unplaced. Most are from orthogroups with <4 members (below `min_orthogroup_size`) or are species-specific orphans.
+- **Large outlier pools**: after HMMER rescue, 9,786 genes remain unplaced in the 5-species v2 run. See *Interpreting Unplaced Genes* below — most are not a clustering failure.
+- **Annotation heterogeneity across species**: input proteomes are annotated by different pipelines with different minimum-length policies. In the 5-species panel the *C. gigantea* MAKER set has no protein below 151 aa while *M. crystallinum* goes down to 3 aa, so raw per-species unplaced rates compare annotation policy as much as pipeline behaviour. Always stratify by length before comparing species.
+- **Topology-only species trees pass naive validation**: a tree with every branch length set to `1.0` has positive branches and a plausible maximum pairwise distance, so range checks alone miss it. `validate_species_tree` now flags any tree whose branch lengths are all identical.
+
+## Interpreting Unplaced Genes
+
+A gene left unplaced is not automatically a clustering failure. `classify_unplaced.py`
+assigns each unplaced gene one verdict from the strongest evidence found across all rounds:
+
+| verdict | meaning |
+|---|---|
+| `PRUNED` | was in a cross-species orthogroup at or above `min_orthogroup_size` — it was aligned and treed, and pruning ejected it |
+| `SPLINTER` | was in a cross-species orthogroup *below* the size gate: it clustered with other species but the cluster was too small to work on. Graph fragmentation. |
+| `LINEAGE_ONLY` | only ever clustered with its own species |
+| `SINGLETON_HIT` | never clustered, but DIAMOND found a cross-species homolog — MCL cut an edge that existed |
+| `SINGLETON_NOHIT` | never clustered and no cross-species homolog at OrthoFinder's own search sensitivity |
+
+```bash
+python classify_unplaced.py --run-dir output_5sp_v2 --species Mcry \
+    --out unplaced_class/Mcry.tsv
+```
+
+`SPLINTER + SINGLETON_HIT` is the graph-fragmentation share; `SINGLETON_NOHIT` is the
+ceiling that no clustering change can move. In the 5-species v2 run the outgroup
+(*M. crystallinum*) had the **lowest** fragmentation share of all four species (15.8%)
+and the highest no-homolog share (73.9%) — the opposite of what a clustering defect
+would produce.
+
+Pair it with the stratified metric, which refuses to compare species whose annotations
+have different length floors:
+
+```bash
+python measure_v2.py --run-dir output_5sp_v2 --pep-dir data/pep --floor 100
+```
+
+It prints the per-species minimum protein length, warns when the floors differ
+(`[!] CONFOUND`), and reports unplaced rates separately for short and long proteins
+alongside the raw headline number. On the 5-species panel this reduced the outgroup's
+apparent 2.4–5.4x excess to 1.6–2.0x. See methods.md §2.X.8.
 
 ## Annotation & Naming Stack (post-run)
 
@@ -1087,6 +1158,9 @@ family_finder/
   subfamily_report.py       # Subfamily diagnostics report
   beb_cross.py              # BEB sites x signal windows
   extract_plaza_orthology.py  # DIAMOND fwd/rev -> orthology TSV (RBH per species)
+  build_supermatrix.py      # Codon supermatrix from the run's own single-copy markers
+  classify_unplaced.py      # Why each unplaced gene stayed unplaced (5 verdicts)
+  measure_v2.py             # Per-species unplaced rate, length-stratified
   config.py                 # Config dataclass + JSON loader
   pipeline.py               # Iterative loop orchestrator
   steps/
