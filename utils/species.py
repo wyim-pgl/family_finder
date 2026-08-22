@@ -36,6 +36,10 @@ def get_species(gene_id: str, delimiter: str = "_") -> str:
 MIN_PLAUSIBLE_MAX_DISTANCE = 0.05
 MAX_PLAUSIBLE_MAX_DISTANCE = 10.0
 
+# A tree whose branch lengths are all the same number carries topology only.
+# Below this many branches, equal lengths can be a legitimate small estimate.
+MIN_BRANCHES_FOR_UNIFORMITY_CHECK = 3
+
 
 def validate_species_tree(species_tree, expected_species: Set[str]) -> List[str]:
     """Validate a loaded species tree against the species present in the data.
@@ -66,15 +70,31 @@ def validate_species_tree(species_tree, expected_species: Set[str]) -> List[str]
         )
 
     bad_branches = []
+    branch_lengths = []
     for node in species_tree.traverse():
         if node.up is None:  # root has no branch above it
             continue
         if node.dist is None or node.dist <= 0:
             bad_branches.append(node.name or "<internal>")
+        else:
+            branch_lengths.append(node.dist)
     if bad_branches:
         problems.append(
             f"Non-positive or missing branch lengths on {len(bad_branches)} "
             f"node(s): {bad_branches} — distance ratios will be unreliable"
+        )
+
+    # A topology-only tree (every branch the same number) passes every bound
+    # check above at the right scale, yet makes all species pairs equidistant
+    # by construction, which silently disables species-aware pruning (#41).
+    if (len(branch_lengths) >= MIN_BRANCHES_FOR_UNIFORMITY_CHECK
+            and len(set(branch_lengths)) == 1):
+        problems.append(
+            f"Every branch length is identical ({branch_lengths[0]:g}) — this is "
+            "a topology-only tree, not an estimate. Pruning compares observed to "
+            "expected distance, so every species pair looks equally related and "
+            "pruning is effectively disabled. Estimate branch lengths first "
+            "(IQ-TREE concatenation of single-copy families)"
         )
 
     if len(leaves) >= 2:

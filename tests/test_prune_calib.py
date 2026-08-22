@@ -292,3 +292,58 @@ def test_validate_flags_nonpositive_branch_lengths():
 
     # Assert
     assert any("Non-positive or missing branch lengths" in p for p in problems)
+
+
+def test_validate_flags_a_topology_only_tree_whose_branches_are_all_equal():
+    # Arrange: data_15sp/species_tree.nwk shipped with every branch = 1.0
+    # (issue #41). The old bounds let it through — its max pairwise distance
+    # lands at exactly 10.0 and the guard was `> 10.0`.
+    dummy = FakeTree(
+        leaf_dists={"S1": 1.0, "S2": 1.0, "S3": 1.0},
+        pairwise={("S1", "S2"): 2.0, ("S1", "S3"): 4.0, ("S2", "S3"): 4.0},
+        internal_dists=(1.0, 1.0),
+    )
+
+    # Act
+    problems = validate_species_tree(dummy, {"S1", "S2", "S3"})
+
+    # Assert
+    assert any("identical" in p for p in problems)
+
+
+def test_uniform_branch_length_check_is_independent_of_scale():
+    # Arrange: all 0.1 — max pairwise 0.4 sits inside the plausible band and
+    # would never trip the distance bounds, yet carries no rate information.
+    dummy = FakeTree(
+        leaf_dists={"S1": 0.1, "S2": 0.1, "S3": 0.1},
+        pairwise={("S1", "S2"): 0.2, ("S1", "S3"): 0.4, ("S2", "S3"): 0.4},
+        internal_dists=(0.1,),
+    )
+
+    # Act
+    problems = validate_species_tree(dummy, {"S1", "S2", "S3"})
+
+    # Assert
+    assert any("identical" in p for p in problems)
+
+
+def test_an_estimated_tree_is_not_mistaken_for_a_topology_only_tree():
+    # Act
+    problems = validate_species_tree(_good_tree(), {"S1", "S2", "S3"})
+
+    # Assert
+    assert not any("identical" in p for p in problems)
+
+
+def test_two_branch_tree_is_too_small_to_call_uniformity_suspicious():
+    # Arrange: (S1:0.1,S2:0.1) is a legitimate two-taxon estimate
+    pair = FakeTree(
+        leaf_dists={"S1": 0.1, "S2": 0.1},
+        pairwise={("S1", "S2"): 0.2},
+    )
+
+    # Act
+    problems = validate_species_tree(pair, {"S1", "S2"})
+
+    # Assert
+    assert not any("identical" in p for p in problems)
