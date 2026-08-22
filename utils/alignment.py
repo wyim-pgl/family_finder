@@ -16,6 +16,8 @@ scale-free — a five-member subfamily's own region is 100% occupied within that
 group. Only columns empty in every group are genuinely uninformative.
 """
 from collections import Counter
+import hashlib
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 GAP = "-"
@@ -206,3 +208,90 @@ def choose_reference(alignment: Dict[str, str],
         raise ValueError("Cannot choose a reference from an empty alignment")
     return min(pool, key=lambda name: (-sum(1 for c in alignment[name] if c != GAP),
                                        name))
+
+
+# ---------------------------------------------------------------------------
+# Coordinate stamping and translation (issue #42)
+#
+# Residue-level artifacts are full of column numbers with nothing recording
+# which alignment those numbers belong to. beb_cross.py crosses codeml BEB
+# sites -- columns of the family's untrimmed codon alignment -- with signal
+# windows expressed in clan protein-alignment columns, which for the PEPC work
+# was trimAl-trimmed from 1,468 to 876. The cross is a plain interval overlap
+# with no check of any kind, so a mismatch produces zero overlaps, and
+# subfunctionalization.classify() reports zero overlaps as evidence AGAINST
+# neofunctionalization. A coordinate bug manufactures a specific scientific
+# conclusion, silently.
+#
+# Detecting the mismatch is not enough, because the two alignments differ for
+# good reasons: different taxon sets, different trimming, different purposes.
+# They have to be translatable. Any sequence present in both, with the same
+# residues, is a bridge: column -> its residue -> column.
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class AlignmentStamp:
+    """Identifies the matrix a set of column numbers refers to."""
+    digest: str
+    n_columns: int
+    n_sequences: int
+
+    def __str__(self) -> str:
+        return f"{self.digest}:{self.n_sequences}x{self.n_columns}"
+
+
+def alignment_id(alignment: Dict[str, str]) -> AlignmentStamp:
+    """Content stamp for an alignment, independent of dictionary order.
+
+    Attach it to anything that reports column numbers, and refuse to combine
+    artifacts whose stamps differ without translating first.
+    """
+    h = hashlib.sha256()
+    for name in sorted(alignment):
+        h.update(name.encode())
+        h.update(b"\t")
+        h.update(alignment[name].encode())
+        h.update(b"\n")
+    return AlignmentStamp(digest=h.hexdigest()[:16],
+                          n_columns=_columns(alignment),
+                          n_sequences=len(alignment))
+
+
+def _residue_of_column(seq: str) -> Dict[int, int]:
+    out, n = {}, 0
+    for col, ch in enumerate(seq, start=1):
+        if ch != GAP:
+            n += 1
+            out[col] = n
+    return out
+
+
+def translate_columns(columns: Sequence[int],
+                      source: Dict[str, str],
+                      target: Dict[str, str],
+                      via: str) -> List[Optional[int]]:
+    """Re-express `columns` of `source` as columns of `target`.
+
+    `via` must appear in both alignments carrying the same ungapped residues —
+    it is the bridge. A source column where the bridge is gapped has no residue
+    to carry across and comes back as None, which the caller must handle rather
+    than treat as position zero.
+    """
+    for name, aln in (("source", source), ("target", target)):
+        if via not in aln:
+            raise ValueError(f"Bridge sequence {via!r} is absent from the {name} alignment")
+    src_seq, tgt_seq = source[via], target[via]
+    if src_seq.replace(GAP, "") != tgt_seq.replace(GAP, ""):
+        raise ValueError(
+            f"Bridge sequence {via!r} has different residues in the two "
+            "alignments — they do not describe the same protein, so column "
+            "numbers cannot be translated between them"
+        )
+    width = _columns(source)
+    bad = [c for c in columns if c < 1 or c > width]
+    if bad:
+        raise ValueError(f"Columns outside the source alignment (width {width}): {bad}")
+
+    src_res = _residue_of_column(src_seq)
+    tgt_col = {res: col for col, res in _residue_of_column(tgt_seq).items()}
+    return [tgt_col.get(src_res[c]) if c in src_res else None for c in columns]

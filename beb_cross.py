@@ -52,9 +52,26 @@ def parse_beb(text: str) -> List[Tuple[int, str, float]]:
     return sites
 
 
-def cross_windows(sites, windows_tsv: Path, min_prob: float = 0.0) -> List[dict]:
-    """Overlap each BEB site with the signal windows' alignment columns."""
+def cross_windows(sites, windows_tsv: Path, min_prob: float = 0.0,
+                  site_stamp: str = None, allow_unverified: bool = False) -> List[dict]:
+    """Overlap each BEB site with the signal windows' alignment columns.
+
+    The two inputs do not necessarily share a coordinate system. BEB site
+    numbers are columns of the family's codon alignment (untrimmed, family
+    taxon set); the windows were written in whatever alignment
+    extract_signal_windows.py was given, which for the PEPC clan was trimmed
+    from 1,468 columns to 876 over a different taxon set. Overlapping them by
+    interval alone always returns a number, and zero overlaps is exactly what
+    subfunctionalization.classify() reports as evidence against
+    neofunctionalization — so a coordinate mismatch manufactures a conclusion.
+
+    Pass `site_stamp` (see utils.alignment.alignment_id) and let the windows
+    file carry an `aln_stamp` column. When they cannot be compared, either
+    translate first (utils.alignment.translate_columns) or set
+    allow_unverified, which marks every row rather than hiding the doubt.
+    """
     windows = []
+    stamps = set()
     with open(windows_tsv, newline="") as f:
         for row in csv.DictReader(f, delimiter="\t"):
             try:
@@ -62,7 +79,24 @@ def cross_windows(sites, windows_tsv: Path, min_prob: float = 0.0) -> List[dict]
                 hi = int(row["aln_col_end"])
             except (KeyError, ValueError):
                 continue
+            stamp = (row.get("aln_stamp") or "").strip()
+            if stamp and stamp != "-":
+                stamps.add(stamp)
             windows.append((lo, hi, row["seq_id"], row.get("deeploc_signals", "")))
+
+    window_stamp = stamps.pop() if len(stamps) == 1 else None
+    verified = bool(site_stamp and window_stamp and site_stamp == window_stamp)
+    if not verified and not allow_unverified:
+        raise ValueError(
+            "Refusing to cross BEB sites with signal windows whose coordinate "
+            f"system is unconfirmed (site_stamp={site_stamp!r}, "
+            f"window_stamp={window_stamp!r}). Column numbers from different "
+            "alignments are not comparable, and a mismatch here silently "
+            "returns zero overlaps, which is read downstream as evidence "
+            "against neofunctionalization. Translate with "
+            "utils.alignment.translate_columns, or pass allow_unverified=True "
+            "to record the doubt in the output."
+        )
 
     rows = []
     for site, aa, prob in sites:
@@ -74,6 +108,7 @@ def cross_windows(sites, windows_tsv: Path, min_prob: float = 0.0) -> List[dict]
         rows.append({
             "site": site, "aa": aa, "prob": prob,
             "n_windows": len(hit),
+            "coordinates_verified": verified,
             "window_seqs": ",".join(seqs),
             "signals": ";".join(signals),
         })

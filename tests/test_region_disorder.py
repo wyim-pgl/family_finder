@@ -105,3 +105,25 @@ def test_measure_skips_sequences_with_too_little_region(tmp_path):
     _pdb(pdb_dir / "Gappy_g.pdb", [0.9, 0.9])
     r = measure(pdb_dir, aln, 3, 7, {"Focal_g0", "Focal_g1", "Focal_g2"})
     assert r["n_focal"] + r["n_other"] == 7   # Gappy_g excluded
+
+
+def test_measure_reports_genes_it_skipped_rather_than_dropping_them(tmp_path):
+    # A structure whose name is absent from the alignment used to vanish
+    # silently; shrinking coverage then looks like an absent signal (#42).
+    pdb_dir = tmp_path / "pdb"
+    pdb_dir.mkdir()
+    for gene in ("g1", "ghost"):
+        (pdb_dir / f"{gene}.pdb").write_text(
+            "\n".join(
+                f"ATOM  {i:>5}  CA  ALA A{i:>4}       1.000   2.000   3.000  1.00 80.00           C"
+                for i in range(1, 11)
+            ) + "\nEND\n"
+        )
+    aln = tmp_path / "aln.fa"
+    aln.write_text(">g1\n" + "M" * 10 + "\n>g2\n" + "M" * 10 + "\n")
+
+    import region_disorder as rd
+    result = rd.measure(pdb_dir, aln, 1, 10, {"g1"})
+
+    assert "ghost" in result["skipped"]["not_in_alignment"]
+    assert result["n_skipped"] == 1

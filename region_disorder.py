@@ -110,17 +110,25 @@ def measure(pdb_dir: Path, alignment: Path, lo: int, hi: int,
     focal_members = {canon(m) for m in members}
 
     focal, other, rows = [], [], []
+    skipped = {"not_in_alignment": [], "region_too_short": [], "no_plddt": []}
     for pdb in sorted(Path(pdb_dir).glob("*.pdb")):
         gene = pdb.stem
         seq = aln.get(gene)
         if seq is None:
+            # An id-form mismatch between structure filenames and alignment
+            # names drops genes here without a word; on the PEPC clan that once
+            # left 29 of 111 matching. Record it so shrinking coverage is
+            # distinguishable from an absent signal.
+            skipped["not_in_alignment"].append(gene)
             continue
         region = columns_to_residues(seq, lo, hi)
         if len(region) < min_residues:
+            skipped["region_too_short"].append(gene)
             continue
         plddt = residue_plddt(pdb)
         inside = [plddt[r] for r in region if r in plddt]
         if len(inside) < min_residues:
+            skipped["no_plddt"].append(gene)
             continue
         whole = statistics.mean(plddt.values())
         delta = statistics.mean(inside) - whole
@@ -141,6 +149,8 @@ def measure(pdb_dir: Path, alignment: Path, lo: int, hi: int,
         "all_below": bool(focal) and all(d < 0 for d in focal),
         "p": mann_whitney_p(focal, other) if (focal and other) else None,
         "per_gene": rows,
+        "n_skipped": sum(len(v) for v in skipped.values()),
+        "skipped": skipped,
     }
     return result
 

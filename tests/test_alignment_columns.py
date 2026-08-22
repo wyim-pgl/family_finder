@@ -13,11 +13,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from utils.alignment import (
+    alignment_id,
     apply_columns,
     column_map,
     column_occupancy,
     group_occupancy,
     select_columns,
+    translate_columns,
 )
 
 # 5 sequences. Columns 1-2 are universal, column 3 is covered ONLY by the
@@ -199,3 +201,77 @@ def test_reference_selection_can_be_restricted_to_named_sequences():
 def test_reference_selection_on_an_empty_alignment_raises():
     with pytest.raises(ValueError):
         choose_reference({})
+
+
+# --------------------------------------------------------------------------
+# coordinate stamping and translation (issue #42)
+#
+# Residue-level artifacts carry column numbers, and nothing currently records
+# WHICH alignment those columns belong to. beb_cross crosses codeml BEB sites
+# (family codon alignment, untrimmed) with signal windows (clan protein
+# alignment, trimAl-trimmed) by plain interval overlap, so a mismatch yields 0
+# overlaps -- which classify() then reports as evidence against
+# neofunctionalization. Detection is not enough: the two alignments differ
+# legitimately, so they must be translatable.
+# --------------------------------------------------------------------------
+
+ALN_A = {"g1": "MK-W", "g2": "MKYW"}
+ALN_B = {"g1": "--MKW", "g2": "XXMKW"}   # g1 ungapped MKW in both
+
+
+def test_alignment_id_is_stable_for_identical_content():
+    assert alignment_id(ALN_A) == alignment_id(dict(ALN_A))
+
+
+def test_alignment_id_ignores_dictionary_order():
+    reordered = {"g2": ALN_A["g2"], "g1": ALN_A["g1"]}
+
+    assert alignment_id(reordered) == alignment_id(ALN_A)
+
+
+def test_alignment_id_changes_when_a_column_is_trimmed():
+    trimmed = {k: v[:3] for k, v in ALN_A.items()}
+
+    assert alignment_id(trimmed) != alignment_id(ALN_A)
+
+
+def test_alignment_id_reports_shape_alongside_the_digest():
+    stamp = alignment_id(ALN_A)
+
+    assert stamp.n_columns == 4
+    assert stamp.n_sequences == 2
+    assert len(stamp.digest) >= 8
+
+
+# ------------------------------------------------------------ translation --
+
+def test_translating_into_the_same_alignment_is_the_identity():
+    assert translate_columns([1, 2, 4], ALN_A, ALN_A, via="g1") == [1, 2, 4]
+
+
+def test_columns_translate_through_a_shared_sequence():
+    # g1: ALN_A "MK-W" cols 1,2,4 hold M,K,W; ALN_B "--MKW" holds them at 3,4,5
+    assert translate_columns([1, 2, 4], ALN_A, ALN_B, via="g1") == [3, 4, 5]
+
+
+def test_a_column_where_the_bridge_sequence_is_gapped_cannot_be_translated():
+    # ALN_A col 3 is a gap in g1
+    assert translate_columns([3], ALN_A, ALN_B, via="g1") == [None]
+
+
+def test_translation_refuses_a_bridge_absent_from_either_alignment():
+    with pytest.raises(ValueError, match="g9"):
+        translate_columns([1], ALN_A, ALN_B, via="g9")
+
+
+def test_translation_refuses_a_bridge_whose_residues_disagree():
+    # same id, different underlying protein -> translating would be nonsense
+    other = {"g1": "MKQW-"}
+
+    with pytest.raises(ValueError, match="differ"):
+        translate_columns([1], ALN_A, other, via="g1")
+
+
+def test_translation_rejects_a_column_outside_the_source_alignment():
+    with pytest.raises(ValueError, match="outside"):
+        translate_columns([99], ALN_A, ALN_B, via="g1")
