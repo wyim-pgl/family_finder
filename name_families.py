@@ -145,11 +145,25 @@ def main():
     print(f"mapped {len(rows)}, unmatched {len(unmatched)}")
 
     weights = {"direct": 1.0, "orthology": args.orthology_weight}
-    named = name_groups(rows, key="family_id", weights=weights)
+    fam_sizes = {fid: len(members) for fid, members in families.items()}
+    named = name_groups(rows, key="family_id", weights=weights,
+                        group_sizes=fam_sizes)
     write_tsv(named, outdir / "family_names.tsv")
     if groups:
-        write_tsv(name_groups(rows, key="subfamily", weights=weights),
-                  outdir / "subfamily_names.tsv")
+        sub_sizes: dict = {}
+        for sub in groups.values():
+            sub_sizes[sub] = sub_sizes.get(sub, 0) + 1
+        named_sub = name_groups(rows, key="subfamily", weights=weights,
+                                group_sizes=sub_sizes)
+        write_tsv(named_sub, outdir / "subfamily_names.tsv")
+        thin = [n for n in named_sub
+                if n["coverage"] is not None and n["coverage"] < 0.5]
+        if thin:
+            print(f"  WARNING: {len(thin)} subfamily names rest on <50% of "
+                  "their members — support alone will look confident. "
+                  "Check the coverage column: "
+                  + ", ".join(f"{n['group_id']}({n['n_annotated']}/"
+                              f"{n['group_size']})" for n in thin[:5]))
     print(f"named {len(named)} families "
           f"(low-support <0.5: {sum(1 for n in named if n['support'] < 0.5)})")
 

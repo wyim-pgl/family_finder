@@ -218,3 +218,47 @@ def test_read_orthology_tsv(tmp_path):
         "Mcry_g1": ("AT1G53310", "PPC1"),
         "Ococ_x1": ("AT2G42600", "PPC2"),
     }
+
+
+# --- coverage: support must not hide who did not vote --------------------
+
+def test_support_alone_hides_non_voters():
+    """A clade where 2 of 20 members carry an annotation reports support
+    1.00 — 'everyone who voted agreed' reads as 'the clade agrees'.
+    Measured on the real PEPC clan: OG15 has 20 members, 2 votes,
+    support 1.00. coverage is what separates the two."""
+    from steps.family_naming import name_groups
+    rows = [{"gene_id": f"g{i}", "subfamily": "OG15", "description": "PPC3"}
+            for i in range(2)]
+    named = name_groups(rows, key="subfamily", group_sizes={"OG15": 20})[0]
+    assert named["support"] == 1.0
+    assert named["coverage"] == 0.1          # 2 / 20
+    assert named["n_annotated"] == 2
+    assert named["group_size"] == 20
+
+
+def test_coverage_is_one_when_every_member_votes():
+    from steps.family_naming import name_groups
+    rows = [{"gene_id": f"g{i}", "subfamily": "A", "description": "X"}
+            for i in range(4)]
+    named = name_groups(rows, key="subfamily", group_sizes={"A": 4})[0]
+    assert named["coverage"] == 1.0
+
+
+def test_group_sizes_optional_keeps_backward_compatibility():
+    """Without group_sizes the old fields must still be produced."""
+    from steps.family_naming import name_groups
+    rows = [{"gene_id": "g1", "subfamily": "A", "description": "X"}]
+    named = name_groups(rows, key="subfamily")[0]
+    assert named["support"] == 1.0
+    assert named["coverage"] is None
+    assert named["group_size"] is None
+
+
+def test_coverage_never_exceeds_one_if_sizes_disagree():
+    """A stale group_sizes map must not yield coverage > 1."""
+    from steps.family_naming import name_groups
+    rows = [{"gene_id": f"g{i}", "subfamily": "A", "description": "X"}
+            for i in range(5)]
+    named = name_groups(rows, key="subfamily", group_sizes={"A": 3})[0]
+    assert named["coverage"] == 1.0

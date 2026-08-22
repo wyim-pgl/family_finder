@@ -164,13 +164,21 @@ def name_groups(
     rows: List[dict],
     key: str = "family_id",
     weights: Optional[Dict[str, float]] = None,
+    group_sizes: Optional[Dict[str, int]] = None,
 ) -> List[dict]:
     """Name each group by its weighted-majority member description.
 
     Each row votes with the weight of its evidence source (rows without a
     "source" are direct — the pre-#30 single-species layer). support =
     winning weight / total weight — a 0.5 support name is a coin flip,
-    report it as such. Ties break toward a direct-backed description, then
+    report it as such.
+
+    ⚠️ support is computed over the members that CARRY an annotation, so on
+    its own it cannot distinguish "the clade agrees" from "the two members
+    who voted agreed". Pass `group_sizes` (group_id -> total members) to get
+    `coverage` = annotated / total alongside it. Measured on the PEPC clan:
+    naming subfamilies by Arabidopsis symbol gave OG15 (20 members) support
+    1.00 from 2 votes — coverage 0.10 is the number that says so. Ties break toward a direct-backed description, then
     lexicographically (deterministic output). Rows with an empty group
     value (e.g. genes without a subfamily label when key="subfamily") are
     skipped. provenance says what carried the winning name: direct when
@@ -202,11 +210,15 @@ def name_groups(
             key=lambda d: (-weight_of[d], d not in direct_backed, d),
         )
         total = sum(weight_of.values())
+        size = (group_sizes or {}).get(group_id)
+        coverage = min(1.0, len(members) / size) if size else None
         named.append({
             "group_id": group_id,
             "name": top,
             "support": weight_of[top] / total,
+            "coverage": coverage,
             "n_annotated": len(members),
+            "group_size": size,
             "n_direct": n_direct,
             "n_orthology": n_orthology,
             "provenance": "direct" if top in direct_backed else "orthology",
