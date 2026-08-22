@@ -25,6 +25,8 @@ the sequence-defined subfamilies are visible in structure space at all.
 """
 
 import logging
+import random
+import statistics
 from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -154,6 +156,132 @@ def coverage_suppressed(alignment: Dict[str, str],
             "min_coverage": min(coverage) if coverage else None,
         }
     return report
+
+
+def sdp_core_relationship(
+    alignment: Dict[str, str],
+    groups: Dict[str, List[str]],
+    *,
+    min_group: int = 5,
+    in_cons: float = 0.8,
+    out_max: float = 0.2,
+    min_cover: float = 0.7,
+    invariant_threshold: float = 0.95,
+    n_null: int = 1000,
+    seed: int = 0,
+) -> dict:
+    """Where diagnostic residues sit relative to the reference-free core.
+
+    Issue #32 concluded that the PEPC diagnostic residues avoid the catalytic
+    core. Stating that required knowing which motif is catalytic, which is
+    available for a handful of families and for none of the rest. The
+    reference-free stand-in is `utils.alignment.invariant_columns`: the columns
+    every subfamily independently agrees on.
+
+    **The obvious comparison is worthless.** A diagnostic column means one group
+    differs; an invariant column means none do. The two sets are disjoint by
+    definition, so their overlap is always zero and says nothing — measured on
+    the PEPC clan it is zero at every threshold from 0.80 to 1.00. `overlap` is
+    reported with `overlap_is_by_construction` set so nobody mistakes it for
+    evidence.
+
+    The claim that carries information is spatial: are the diagnostic columns
+    *further from* the core than columns picked at random from the same
+    scannable pool? That is testable against a null and needs no reference.
+
+    Returns a verdict of `avoids_core`, `at_core`, `indistinguishable`, or
+    `no_interpretation_available` with a `reason` — silence and "no signal"
+    have to be distinguishable (issue #40).
+    """
+    from utils.alignment import group_occupancy, invariant_columns
+
+    lengths = {len(s) for s in alignment.values()}
+    if len(lengths) > 1:
+        raise ValueError(f"ragged alignment: lengths {sorted(lengths)}")
+    alen = lengths.pop() if lengths else 0
+
+    skipped = sorted(name for name, members in groups.items()
+                     if len([m for m in members if m in alignment]) < min_group)
+    hits = sdp_scan(alignment, groups, min_group=min_group, in_cons=in_cons,
+                    out_max=out_max, min_cover=min_cover)
+    sdp_cols = sorted({h["aln_col"] for h in hits})
+    invariant = invariant_columns(alignment, groups,
+                                  threshold=invariant_threshold,
+                                  min_cover=min_cover)
+    inv_cols = sorted(invariant)
+
+    # Columns sdp_scan was able to judge at all: every group covers them.
+    occ = group_occupancy(alignment, groups)
+    candidates = [c + 1 for c in range(alen)
+                  if occ and all(v[c] >= min_cover for v in occ.values())]
+
+    result = {
+        "n_sdp_columns": len(sdp_cols),
+        "n_invariant_columns": len(inv_cols),
+        "n_candidate_columns": len(candidates),
+        "skipped_groups": skipped,
+        "overlap": len(set(sdp_cols) & set(inv_cols)),
+        "overlap_is_by_construction": True,
+        "observed_median_distance": None,
+        "null_median_distance": None,
+        "null_p05": None,
+        "null_p95": None,
+        "p_value": None,
+        "verdict": "no_interpretation_available",
+        "reason": "",
+    }
+
+    if skipped and len(skipped) == len(groups):
+        result["reason"] = (
+            f"every group is smaller than min_group={min_group}: {skipped}"
+        )
+        return result
+    if not sdp_cols:
+        result["reason"] = "no diagnostic columns were found for any group"
+        return result
+    if not inv_cols:
+        result["reason"] = (
+            f"no invariant columns at threshold {invariant_threshold} — the "
+            "family has no core the groups agree on, so there is nothing to "
+            "measure distance from"
+        )
+        return result
+    if len(candidates) < len(sdp_cols):
+        result["reason"] = (
+            f"only {len(candidates)} column(s) were scannable, fewer than the "
+            f"{len(sdp_cols)} diagnostic column(s); no null can be built"
+        )
+        return result
+
+    def nearest(col: int) -> int:
+        return min(abs(col - j) for j in inv_cols)
+
+    observed = statistics.median(nearest(c) for c in sdp_cols)
+    rng = random.Random(seed)
+    null = sorted(statistics.median(nearest(c) for c in
+                                    rng.sample(candidates, len(sdp_cols)))
+                  for _ in range(n_null))
+    p_far = sum(1 for v in null if v >= observed) / len(null)
+    p_near = sum(1 for v in null if v <= observed) / len(null)
+
+    result["observed_median_distance"] = observed
+    result["null_median_distance"] = statistics.median(null)
+    result["null_p05"] = null[int(0.05 * len(null))]
+    result["null_p95"] = null[int(0.95 * len(null)) - 1]
+    if p_far <= 0.05:
+        result["verdict"] = "avoids_core"
+        result["p_value"] = p_far
+    elif p_near <= 0.05:
+        result["verdict"] = "at_core"
+        result["p_value"] = p_near
+    else:
+        result["verdict"] = "indistinguishable"
+        result["p_value"] = min(p_far, p_near)
+    result["reason"] = (
+        f"{len(sdp_cols)} diagnostic vs {len(inv_cols)} invariant columns, "
+        f"null drawn from {len(candidates)} scannable columns"
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------

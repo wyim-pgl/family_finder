@@ -331,3 +331,93 @@ def test_groups_below_min_group_are_still_reported_as_skipped_entirely():
 
     assert report["tiny"]["skipped_too_small"] is True
     assert report["a"]["skipped_too_small"] is False
+
+
+# ---------------------------------------------------------------------------
+# SDP vs the reference-free core (issue #42 A/C)
+# ---------------------------------------------------------------------------
+
+def _core_fixture():
+    """10 universally invariant columns, then 10 group-diagnostic ones."""
+    core = "M" * 10
+    a = {f"a{i}": core + "K" * 10 for i in range(5)}
+    b = {f"b{i}": core + "Q" * 10 for i in range(5)}
+    aln = {**a, **b}
+    groups = {"a": sorted(a), "b": sorted(b)}
+    return aln, groups
+
+
+def test_diagnostic_columns_can_never_be_invariant_columns():
+    from steps.subfamily import sdp_core_relationship
+    aln, groups = _core_fixture()
+
+    rel = sdp_core_relationship(aln, groups, min_group=5)
+
+    assert rel["overlap"] == 0
+
+
+def test_zero_overlap_is_flagged_as_forced_so_it_is_not_read_as_evidence():
+    # An SDP means one group differs; an invariant column means none do. The
+    # two sets are disjoint by definition, so a zero overlap says nothing
+    # about biology and must not be reported as though it did.
+    from steps.subfamily import sdp_core_relationship
+    aln, groups = _core_fixture()
+
+    rel = sdp_core_relationship(aln, groups, min_group=5)
+
+    assert rel["overlap_is_by_construction"] is True
+
+
+def test_diagnostic_columns_clustered_away_from_the_core_are_called_avoiding():
+    from steps.subfamily import sdp_core_relationship
+    aln, groups = _core_fixture()
+
+    rel = sdp_core_relationship(aln, groups, min_group=5, seed=0)
+
+    assert rel["verdict"] == "avoids_core"
+    assert rel["observed_median_distance"] > rel["null_median_distance"]
+
+
+def test_no_invariant_column_means_no_interpretation_rather_than_a_verdict():
+    from steps.subfamily import sdp_core_relationship
+    # every column is group-diagnostic; there is no agreed core at all
+    aln = {**{f"a{i}": "KKKK" for i in range(5)},
+           **{f"b{i}": "QQQQ" for i in range(5)}}
+    groups = {"a": [f"a{i}" for i in range(5)], "b": [f"b{i}" for i in range(5)]}
+
+    rel = sdp_core_relationship(aln, groups, min_group=5)
+
+    assert rel["verdict"] == "no_interpretation_available"
+    assert "invariant" in rel["reason"]
+
+
+def test_no_diagnostic_column_means_no_interpretation_rather_than_a_verdict():
+    from steps.subfamily import sdp_core_relationship
+    aln = {f"s{i}": "MMMM" for i in range(10)}
+    groups = {"a": [f"s{i}" for i in range(5)], "b": [f"s{i}" for i in range(5, 10)]}
+
+    rel = sdp_core_relationship(aln, groups, min_group=5)
+
+    assert rel["verdict"] == "no_interpretation_available"
+    assert "diagnostic" in rel["reason"]
+
+
+def test_groups_too_small_to_scan_are_reported_not_silently_dropped():
+    from steps.subfamily import sdp_core_relationship
+    aln, groups = _core_fixture()
+
+    rel = sdp_core_relationship(aln, groups, min_group=99)
+
+    assert rel["verdict"] == "no_interpretation_available"
+    assert rel["skipped_groups"] == ["a", "b"]
+
+
+def test_the_null_is_seeded_so_the_verdict_is_reproducible():
+    from steps.subfamily import sdp_core_relationship
+    aln, groups = _core_fixture()
+
+    first = sdp_core_relationship(aln, groups, min_group=5, seed=7)
+    second = sdp_core_relationship(aln, groups, min_group=5, seed=7)
+
+    assert first["null_median_distance"] == second["null_median_distance"]
+    assert first["p_value"] == second["p_value"]

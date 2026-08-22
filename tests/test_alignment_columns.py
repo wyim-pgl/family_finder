@@ -110,3 +110,92 @@ def test_ragged_alignments_are_rejected_rather_than_silently_truncated():
 def test_empty_alignment_yields_no_columns():
     assert column_occupancy({}) == []
     assert select_columns({}, threshold=0.5) == []
+
+
+# ---------------------------------------------------------------------------
+# family-wide invariant columns (issue #42 A)
+# ---------------------------------------------------------------------------
+
+from utils.alignment import choose_reference, invariant_columns  # noqa: E402
+
+# col1 universal M; col2 every group fixed but on DIFFERENT residues;
+# col3 group "a" fixed, group "b" split; col4 universal but poorly covered in b
+INV = {
+    "a1": "MKWA", "a2": "MKWA", "a3": "MKWA",
+    "b1": "MQWA", "b2": "MQY-", "b3": "MQW-",
+}
+INV_GROUPS = {"a": ["a1", "a2", "a3"], "b": ["b1", "b2", "b3"]}
+
+
+def test_invariant_column_needs_every_group_fixed_on_the_same_residue():
+    inv = invariant_columns(INV, INV_GROUPS, threshold=1.0, min_cover=0.5)
+
+    assert 1 in inv and inv[1] == "M"
+
+
+def test_a_column_where_groups_are_each_fixed_but_disagree_is_not_invariant():
+    # col2: group a is all K, group b is all Q. Both conserved, not shared.
+    inv = invariant_columns(INV, INV_GROUPS, threshold=1.0, min_cover=0.5)
+
+    assert 2 not in inv
+
+
+def test_a_column_one_group_fails_to_conserve_is_not_invariant():
+    # col3: a is WWW, b is WYW -> b at 2/3
+    inv = invariant_columns(INV, INV_GROUPS, threshold=1.0, min_cover=0.5)
+
+    assert 3 not in inv
+
+
+def test_threshold_is_applied_within_each_group_not_across_the_alignment():
+    # at 0.66 group b's 2/3 W passes, so col3 becomes invariant
+    inv = invariant_columns(INV, INV_GROUPS, threshold=0.66, min_cover=0.5)
+
+    assert inv[3] == "W"
+
+
+def test_a_group_below_min_cover_disqualifies_the_column():
+    # col4: group b covers 1/3 -> cannot be called invariant on b's behalf
+    inv = invariant_columns(INV, INV_GROUPS, threshold=1.0, min_cover=0.5)
+
+    assert 4 not in inv
+
+
+def test_invariant_columns_ignores_sequences_outside_the_groups():
+    aln = dict(INV, outsider="XXXX")
+
+    inv = invariant_columns(aln, INV_GROUPS, threshold=1.0, min_cover=0.5)
+
+    assert inv[1] == "M"
+
+
+def test_invariant_columns_rejects_groups_that_match_nothing():
+    with pytest.raises(ValueError, match="no members"):
+        invariant_columns(INV, {"ghost": ["NOPE"]}, threshold=1.0)
+
+
+# ---------------------------------------------------------------------------
+# reference auto-selection (issue #42 B)
+# ---------------------------------------------------------------------------
+
+def test_reference_is_the_most_complete_sequence():
+    aln = {"short": "M--A", "long": "MKWA", "mid": "MK-A"}
+
+    assert choose_reference(aln) == "long"
+
+
+def test_reference_tie_is_broken_by_identifier_so_the_choice_is_deterministic():
+    aln = {"zeta": "MKWA", "alpha": "MKWA", "mid": "MK-A"}
+
+    assert choose_reference(aln) == "alpha"
+
+
+def test_reference_selection_can_be_restricted_to_named_sequences():
+    aln = {"short": "M--A", "long": "MKWA", "mid": "MK-A"}
+
+    assert choose_reference(aln, candidates=["short", "mid"]) == "mid"
+
+
+def test_reference_selection_on_an_empty_alignment_raises():
+    with pytest.raises(ValueError):
+        choose_reference({})

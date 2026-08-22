@@ -15,9 +15,14 @@ The group-aware rule keeps a column when **any** group covers it, which is
 scale-free — a five-member subfamily's own region is 100% occupied within that
 group. Only columns empty in every group are genuinely uninformative.
 """
+from collections import Counter
 from typing import Dict, List, Optional, Sequence, Tuple
 
 GAP = "-"
+
+
+def _most_common(residues: Sequence[str]) -> Tuple[str, int]:
+    return Counter(residues).most_common(1)[0]
 
 
 def _columns(alignment: Dict[str, str]) -> int:
@@ -117,3 +122,87 @@ def column_map(columns: Sequence[int],
             n += 1
             ref_pos[col] = n
     return [(k, col, ref_pos.get(col)) for k, col in enumerate(columns, start=1)]
+
+
+def invariant_columns(alignment: Dict[str, str],
+                      groups: Dict[str, Sequence[str]],
+                      *, threshold: float = 0.95,
+                      min_cover: float = 0.7) -> Dict[int, str]:
+    """Columns every group holds at the same residue: `{column: residue}`.
+
+    This is the reference-free stand-in for "the functionally constrained
+    core". Saying that a diagnostic residue avoids the catalytic site requires
+    knowing which motif is catalytic; saying it avoids the columns on which
+    every subfamily independently agrees requires only the alignment, and is
+    therefore available for every family a run produces.
+
+    Agreement is judged **within each group separately** and then compared
+    across groups, not pooled. Pooling would let a large group carry a column
+    on its own — the same size bias that makes a global occupancy threshold
+    unusable (see `select_columns`). A group covering the column below
+    `min_cover` disqualifies it, because absence is not agreement.
+
+    `threshold` below 1.0 is deliberate: on real data a functional motif
+    carries the occasional substitution, and strict identity would miss most
+    of one. Measured on the PEPC clan, strict identity keeps 255 columns and
+    0.95 keeps 422, while the catalytic motif GYSDSGKDAGR itself contains a
+    column at 0.53.
+    """
+    width = _columns(alignment)
+    if not alignment:
+        return {}
+    if not any(m in alignment for members in groups.values() for m in members):
+        raise ValueError(
+            f"The {len(groups)} supplied group(s) have no members in the "
+            f"alignment. Groups: {sorted(groups)}"
+        )
+    present = {name: [m for m in members if m in alignment]
+               for name, members in groups.items()}
+    out: Dict[int, str] = {}
+    for i in range(width):
+        agreed: Optional[str] = None
+        for members in present.values():
+            if not members:
+                agreed = None
+                break
+            column = [alignment[m][i] for m in members]
+            residues = [c for c in column if c != GAP]
+            if not residues or len(residues) / len(members) < min_cover:
+                agreed = None
+                break
+            top, count = _most_common(residues)
+            if count / len(residues) < threshold:
+                agreed = None
+                break
+            if agreed is None:
+                agreed = top
+            elif agreed != top:
+                agreed = None
+                break
+        if agreed is not None:
+            out[i + 1] = agreed
+    return out
+
+
+def choose_reference(alignment: Dict[str, str],
+                     candidates: Optional[Sequence[str]] = None) -> str:
+    """Pick the sequence to number diagnostic positions against.
+
+    A family with no characterised member still needs a stable coordinate
+    system, so the reference is chosen from the family itself: the most
+    complete sequence, i.e. the one with the most non-gap residues. Coverage
+    is the criterion rather than typicality (a medoid) because the reference's
+    only job is to give as many columns as possible a citable residue number —
+    a column where the reference is gapped cannot be cited at all.
+
+    Ties break on the identifier so the same alignment always yields the same
+    reference, and therefore the same published positions.
+    """
+    pool = list(candidates) if candidates is not None else list(alignment)
+    missing = [c for c in pool if c not in alignment]
+    if missing:
+        raise ValueError(f"Candidate sequences not in the alignment: {missing}")
+    if not pool:
+        raise ValueError("Cannot choose a reference from an empty alignment")
+    return min(pool, key=lambda name: (-sum(1 for c in alignment[name] if c != GAP),
+                                       name))
