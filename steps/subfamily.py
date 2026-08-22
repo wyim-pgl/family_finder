@@ -112,6 +112,50 @@ def sdp_scan(
     return rows
 
 
+def coverage_suppressed(alignment: Dict[str, str],
+                        groups: Dict[str, List[str]],
+                        min_cover: float = 0.7,
+                        min_group: int = 5) -> Dict[str, dict]:
+    """Which columns `sdp_scan` never judged for each group, and why.
+
+    `sdp_scan` skips a column for a group whose non-gap coverage falls below
+    `min_cover`, and skips a group smaller than `min_group` outright. Both are
+    correct — conservation over three of seventy sequences is not conservation
+    — but both are silent, so "no diagnostic columns here" is indistinguishable
+    from "this group was never examined here". Issue #40 hit exactly that: the
+    ppc-1E1 subfamily covers the N-terminal regulatory region in only 33 of 70
+    members, so every N-terminal column was filtered out and the region read as
+    signal-free.
+
+    Call this next to `sdp_scan` and report it alongside the hits.
+    """
+    lengths = {len(s) for s in alignment.values()}
+    if len(lengths) > 1:
+        raise ValueError(f"ragged alignment: lengths {sorted(lengths)}")
+    alen = lengths.pop() if lengths else 0
+
+    report: Dict[str, dict] = {}
+    for group_id, members in sorted(groups.items()):
+        present = [m for m in members if m in alignment]
+        coverage = []
+        for col in range(alen):
+            if not present:
+                coverage.append(0.0)
+                continue
+            nongap = sum(1 for m in present if alignment[m][col] != "-")
+            coverage.append(nongap / len(present))
+        suppressed = [c + 1 for c, cov in enumerate(coverage) if cov < min_cover]
+        report[group_id] = {
+            "n_members": len(present),
+            "skipped_too_small": len(present) < min_group,
+            "n_suppressed": len(suppressed),
+            "columns": suppressed,
+            "coverage": coverage,
+            "min_coverage": min(coverage) if coverage else None,
+        }
+    return report
+
+
 # ---------------------------------------------------------------------------
 # Taxonomy attribution
 # ---------------------------------------------------------------------------

@@ -276,3 +276,58 @@ def test_parse_pairwise_scores_keeps_best_and_symmetric(tmp_path):
     )
     scores = parse_pairwise_scores(tsv)
     assert scores == {frozenset(("Sp1_a1", "Sp2_a2")): 850.0}
+
+
+# ---------------------------------------------------------------------------
+# coverage suppression reporting (issue #42, found via #40)
+# ---------------------------------------------------------------------------
+
+def test_reports_columns_where_a_group_is_suppressed_by_the_coverage_filter():
+    # `big` covers column 3 in only 1 of 4 members (0.25), below min_cover, so
+    # sdp_scan skips that column for `big` and says nothing about it. On the
+    # PEPC clan this made a whole N-terminal region look signal-free when it
+    # was simply filtered out.
+    from steps.subfamily import coverage_suppressed
+    aln = {
+        "A_1": "MKW", "A_2": "MK-", "A_3": "MK-", "A_4": "MK-",
+        "B_1": "MQW", "B_2": "MQW",
+    }
+    groups = {"big": ["A_1", "A_2", "A_3", "A_4"], "small": ["B_1", "B_2"]}
+
+    report = coverage_suppressed(aln, groups, min_cover=0.7)
+
+    assert report["big"]["n_suppressed"] == 1
+    assert report["big"]["columns"] == [3]
+    assert report["small"]["n_suppressed"] == 0
+
+
+def test_suppression_report_records_the_coverage_that_caused_it():
+    from steps.subfamily import coverage_suppressed
+    aln = {"A_1": "MW", "A_2": "M-", "B_1": "MW", "B_2": "MW"}
+    groups = {"a": ["A_1", "A_2"], "b": ["B_1", "B_2"]}
+
+    report = coverage_suppressed(aln, groups, min_cover=0.7)
+
+    assert report["a"]["coverage"][3 - 1 - 1] == pytest.approx(0.5)
+    assert report["a"]["min_coverage"] == pytest.approx(0.5)
+
+
+def test_a_group_covering_everything_reports_no_suppression():
+    from steps.subfamily import coverage_suppressed
+    aln = {"A_1": "MKW", "A_2": "MKW", "B_1": "MQW", "B_2": "MQW"}
+    groups = {"a": ["A_1", "A_2"], "b": ["B_1", "B_2"]}
+
+    report = coverage_suppressed(aln, groups, min_cover=0.7)
+
+    assert all(r["n_suppressed"] == 0 for r in report.values())
+
+
+def test_groups_below_min_group_are_still_reported_as_skipped_entirely():
+    from steps.subfamily import coverage_suppressed
+    aln = {"A_1": "MK", "A_2": "MK", "B_1": "MQ"}
+    groups = {"a": ["A_1", "A_2"], "tiny": ["B_1"]}
+
+    report = coverage_suppressed(aln, groups, min_cover=0.7, min_group=2)
+
+    assert report["tiny"]["skipped_too_small"] is True
+    assert report["a"]["skipped_too_small"] is False
