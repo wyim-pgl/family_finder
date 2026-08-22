@@ -121,3 +121,48 @@ def test_predictions_on_the_same_contig_that_do_not_overlap_are_both_kept():
     b = Prediction("Chr1", 5000, 6000, "+", 0.95, 1, "y", "MMM")
 
     assert len(best_per_locus([a, b])) == 2
+
+
+# ------------------------------------------------- frameshift exclusion ----
+#
+# miniprot --trans skips frameshifts when emitting the protein, so the GFF CDS
+# intervals do not splice back into it. All four reconstructed models missed by
+# 3 to 14 residues and had to be dropped from the codon alignment. Excluding
+# frameshifted predictions up front is what keeps the codon path usable.
+
+GFF_FS = """##gff-version 3
+##STA\tMARNLEKMASIDAQLRLL
+Chr3\tminiprot\tmRNA\t100\t900\t4240\t+\t.\tID=MP000001;Rank=1;Identity=0.9900;Frameshift=1;Target=anchor 1 949
+##STA\tMATAKLEKLASIDAHLR
+Chr4\tminiprot\tmRNA\t100\t900\t4240\t+\t.\tID=MP000002;Rank=1;Identity=0.9900;Target=anchor 1 949
+"""
+
+
+def test_frameshift_count_is_read_from_the_gff():
+    a, b = parse_miniprot(GFF_FS)
+
+    assert a.frameshifts == 1
+    assert b.frameshifts == 0
+
+
+def test_a_prediction_carrying_a_frameshift_is_rejected_by_default():
+    pred = Prediction("Chr3", 1, 900, "+", 0.99, 1, "a", "M" * 900, frameshifts=1)
+
+    ok, reason = accept(pred)
+
+    assert not ok
+    assert "frameshift" in reason
+
+
+def test_frameshift_free_predictions_still_pass():
+    pred = Prediction("Chr4", 1, 900, "+", 0.99, 1, "a", "M" * 900, frameshifts=0)
+
+    assert accept(pred)[0] is True
+
+
+def test_frameshifts_can_be_allowed_when_only_the_protein_is_wanted():
+    pred = Prediction("Chr3", 1, 900, "+", 0.99, 1, "a", "M" * 900, frameshifts=2)
+
+    ok, _ = accept(pred, max_frameshifts=2)
+
+    assert ok is True

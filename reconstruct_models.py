@@ -57,6 +57,7 @@ class Prediction:
     rank: int
     anchor: str
     protein: str
+    frameshifts: int = 0
 
 
 def parse_miniprot(text: str) -> List[Prediction]:
@@ -87,15 +88,29 @@ def parse_miniprot(text: str) -> List[Prediction]:
             contig=fields[0], start=int(fields[3]), end=int(fields[4]),
             strand=fields[6], identity=float(attrs.get("Identity", 0.0)),
             rank=int(attrs.get("Rank", 0)), anchor=target.split()[0] if target else "",
-            protein=protein,
+            protein=protein, frameshifts=int(attrs.get("Frameshift", 0)),
         ))
         protein = None
     return preds
 
 
 def accept(prediction: Prediction, min_identity: float = MIN_IDENTITY,
-           min_length: int = MIN_LENGTH) -> Tuple[bool, str]:
-    """Is this model supported by the genome it was predicted from?"""
+           min_length: int = MIN_LENGTH,
+           max_frameshifts: int = 0) -> Tuple[bool, str]:
+    """Is this model supported by the genome it was predicted from?
+
+    Frameshifted predictions are rejected by default. `--trans` skips
+    frameshifts when writing the protein, so the GFF CDS intervals no longer
+    splice back into it: all four models reconstructed for issue #40 missed
+    their own protein by 3 to 14 residues and could not enter the codon
+    alignment. Raise `max_frameshifts` only when the protein alone is wanted.
+    """
+    if prediction.frameshifts > max_frameshifts:
+        return False, (
+            f"{prediction.frameshifts} frameshift(s) — the translated protein "
+            "skips them, so its CDS cannot be recovered from the GFF and the "
+            "model is unusable in a codon alignment"
+        )
     if prediction.identity < min_identity:
         return False, (
             f"identity {prediction.identity:.4f} below {min_identity} — the "
