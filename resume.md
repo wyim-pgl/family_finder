@@ -281,6 +281,10 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 
 ### 🔴 조용한 실패 — 에러 없이 그럴듯한 틀린 결과를 내는 것들 (8차 라운드에서 전부 실측)
 | 증상 | 진짜 원인 | 판정법 |
+| **바이트 동일 증명이 통과했는데 경로가 증명 안 됨** | 기준선 픽스처가 분기를 안 태운다. 실측 2건: (1) rescue 기준선이 `_concat_hmms`를 덮었지만 프로파일이 ~50바이트라 8192 read 루프가 **1회만** 돌아 멀티청크 경로 미증명 (2) `narrative()` 픽스처 `_sf3_evidence()`가 `coordinates_verified=True`뿐이라 `CANNOT BE JUDGED` 문단과 `[cannot judge]` 요약줄이 **한 번도 실행 안 됨** | 체크섬 전에 **문장 커버리지**를 볼 것. `narrative()`를 만지면 픽스처에 `coordinates_verified=False`를 반드시 넣을 것 (`test_narrative_says_it_cannot_judge_instead_of_reporting_a_clean_region`, `test_unverified_coordinates_produce_an_explicit_cannot_judge_entry`가 그 분기를 탄다) |
+| **통제 플래그가 통제 성립을 뜻하지 않음** | `sequence_controlled`가 "identities 인자를 받았는가"였다. reason이 `UNCONTROLLED`인 행이 True로 집계된다 | 플래그는 verdict와 같은 기준으로 정의할 것 (b73bde9). 회귀 테스트 `test_the_flag_and_the_verdict_never_disagree` |
+| **fident 선형 통제가 가짜 음성을 만든다** | `alntmscore`는 1.0에서 포화하는데 `fident`는 계속 오른다 → 고identity 쌍(=within 쌍 대부분)이 구조와 무관하게 회귀선 아래. 실측 r2 0.43–0.50, 십분위 잔차 비단조(최악 13σ) | 잔차 비교 전에 **적합 적정성**과 **identity 중첩 지지도**를 검사. 미달이면 `no_interpretation_available` |
+| **`.hmm` glob이 hmmpress 인덱스를 삼킴** | `*.hmm*`로 쓰면 `.h3i`/`.h3m`까지 연결된다. 그리고 정렬이 사전순이라 **`R10_`이 `R1_`보다 앞선다**(`'0' < '_'`) | E-value 타이브레이크(CLAUDE.md)와 같은 함정이 연결 순서에도 있다. 테스트로 고정할 것 |
 |---|---|---|
 | foldseek `createdb`가 **0.00초**에 끝남 | 3Di 없이 **아미노산 DB**를 뱉는다(로그엔 경로가 정상 출력됨). ⚠️ **2026-08-22 정정: 원인이 `.gguf` 파일 경로가 아니다.** 같은 바이너리·가중치·머신에서 `.gguf`를 줘도 72.75초 동안 정상 3Di를 만든다. 원 관측은 **불완전한 `.gguf` 다운로드**를 잡았을 가능성이 크다(소급 확인 불가) | 원인과 무관하게 **상태**로 판정: `steps/prostt5_chunks.py`의 `verify_3di_db()` — `_ss` 없음/빈 파일/인덱스 없음/**AA DB와 바이트 동일**/엔트리 수 불일치를 전부 하드 실패 |
 | `--gpu 1` 을 줬는데 GPU 0% | createdb가 이 플래그를 **무시**한다 (`Use GPU 0`) | ProstT5 변환은 CPU 전용으로 계획 |
