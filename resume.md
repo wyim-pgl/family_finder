@@ -287,7 +287,7 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 | **`.hmm` glob이 hmmpress 인덱스를 삼킴** | `*.hmm*`로 쓰면 `.h3i`/`.h3m`까지 연결된다. 그리고 정렬이 사전순이라 **`R10_`이 `R1_`보다 앞선다**(`'0' < '_'`) | E-value 타이브레이크(CLAUDE.md)와 같은 함정이 연결 순서에도 있다. 테스트로 고정할 것 |
 |---|---|---|
 | foldseek `createdb`가 **0.00초**에 끝남 | 3Di 없이 **아미노산 DB**를 뱉는다(로그엔 경로가 정상 출력됨). ⚠️ **2026-08-22 정정: 원인이 `.gguf` 파일 경로가 아니다.** 같은 바이너리·가중치·머신에서 `.gguf`를 줘도 72.75초 동안 정상 3Di를 만든다. 원 관측은 **불완전한 `.gguf` 다운로드**를 잡았을 가능성이 크다(소급 확인 불가) | 원인과 무관하게 **상태**로 판정: `steps/prostt5_chunks.py`의 `verify_3di_db()` — `_ss` 없음/빈 파일/인덱스 없음/**AA DB와 바이트 동일**/엔트리 수 불일치를 전부 하드 실패 |
-| `--gpu 1` 을 줬는데 GPU 0% | createdb가 이 플래그를 **무시**한다 (`Use GPU 0`) | ProstT5 변환은 CPU 전용으로 계획 |
+| ~~`--gpu 1`을 줬는데 GPU 0%~~ **기각 2026-08-22** | createdb는 이 플래그를 **무시하지 않는다.** `No GPU devices found`로 exit 1 (5 ms). 진짜 원인은 **우리 foldseek 빌드에 CUDA가 없는 것** — `ldd`·`strings`로 cuda/cublas/cudart 심볼 **0건**. 상류 버그가 아니므로 보고하지 않았다 | GPU 3Di 변환을 원하면 **CUDA 빌드 foldseek을 따로 확보**할 것. 현 빌드(commit `1847881`, 2026-08-19)는 CPU 전용 |
 | codeml 잡이 SLURM에 **FAILED** | `error: end of tree file` — 결과를 다 쓴 **뒤** exit 1. **3회 재현** | SLURM 상태 말고 `lnL` 줄 + BEB 블록 존재로 판정 |
 | BEB 확률이 파싱값과 다름 | results.txt에 **NEB 블록이 BEB보다 먼저** 나오고 값이 다르다 (site 568: NEB 0.931 vs BEB 0.970) | `Bayes Empirical Bayes` 헤더 **이후만** 파싱 |
 | 구조 관련 대조가 이상하게 적게 매칭됨 | 구조 파일명은 유전자 ID의 `.`을 `_`로 바꾼다. 정규화 없이 대조하면 **111개 중 29개만** 매칭되고 에러가 없다 | 양쪽 ID를 canonical form으로 |
