@@ -10,6 +10,7 @@ cannot detect distant homologs. This module:
 
 import logging
 import os
+import shutil
 import subprocess
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -24,6 +25,8 @@ os.environ.pop("MAFFT_BINARIES", None)
 from steps.hmm_chunks import merge_tblouts, split_hmm_file, write_runner_script
 
 logger = logging.getLogger("family_finder")
+
+_COPY_CHUNK_BYTES = 8192   # streaming unit for the profile-database concatenation
 
 
 def _build_hmm_worker(args: tuple) -> Optional[str]:
@@ -40,7 +43,12 @@ def _build_hmm_worker(args: tuple) -> Optional[str]:
 
 
 def _concat_hmms(hmm_dir: Path, combined_path: Path) -> Optional[Path]:
-    """Concatenate individual HMM files into a single HMM database and press it."""
+    """Concatenate the individual HMM profiles into a single HMM database.
+
+    Streamed rather than read whole: the 5sp panel's database is ~1.6 GB.
+    Returns None — leaving any existing combined_path untouched — when the
+    directory holds no profile to concatenate.
+    """
     hmm_files = sorted(hmm_dir.glob("*.hmm"))
     if not hmm_files:
         return None
@@ -48,11 +56,7 @@ def _concat_hmms(hmm_dir: Path, combined_path: Path) -> Optional[Path]:
     with open(combined_path, "wb") as out_f:
         for hf in hmm_files:
             with open(hf, "rb") as inf:
-                while True:
-                    chunk = inf.read(8192)
-                    if not chunk:
-                        break
-                    out_f.write(chunk)
+                shutil.copyfileobj(inf, out_f, _COPY_CHUNK_BYTES)
 
     return combined_path
 
@@ -142,6 +146,146 @@ def _parse_hmmsearch_tblout(
     return best_hits
 
 
+def _collect_hmm_work_items(
+    families: Dict[str, Set[str]], outdir: Path, hmm_dir: Path, config: Config
+) -> list:
+    """Which families still need an hmmbuild run, as _build_hmm_worker args."""
+    work_items = []
+    for family_id in families:
+        aln_path = _find_family_alignment(family_id, outdir)
+        if aln_path is None:
+            continue
+        hmm_path = hmm_dir / f"{family_id}.hmm"
+        if not hmm_path.exists():
+            work_items.append((family_id, str(aln_path), str(hmm_path), config.hmmbuild_bin))
+    return work_items
+
+
+def _run_hmmbuild_pool(work_items: list, n_workers: int) -> Tuple[int, int]:
+    """Run the hmmbuild work items in a process pool -> (n_ok, n_failed)."""
+    n_ok = 0
+    n_failed = 0
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(_build_hmm_worker, item): item[0]
+                   for item in work_items}
+        done = 0
+        for future in as_completed(futures):
+            try:
+                if future.result() is not None:
+                    n_ok += 1
+                else:
+                    n_failed += 1
+            except Exception as e:
+                n_failed += 1
+                logger.debug(f"  hmmbuild worker exception for "
+                             f"{futures[future]}: {e}")
+            done += 1
+            if done % 2000 == 0:
+                logger.info(f"  hmmbuild progress: {done}/{len(work_items)}")
+    return n_ok, n_failed
+
+
+def _build_profile_db(
+    families: Dict[str, Set[str]], outdir: Path, rescue_dir: Path,
+    hmm_dir: Path, config: Config,
+) -> Optional[Path]:
+    """Build every missing HMM profile and concatenate them into one database.
+
+    Returns the database path, or None when the rescue cannot proceed (no
+    profile built, nothing to concatenate, or hmmpress failed).
+    """
+    work_items = _collect_hmm_work_items(families, outdir, hmm_dir, config)
+    n_built = sum(1 for f in hmm_dir.glob("*.hmm") if f.stat().st_size > 0)
+
+    logger.info(f"HMMER rescue: building {len(work_items)} HMM profiles "
+                f"({n_built} already exist), using {config.n_workers} workers")
+
+    if work_items:
+        n_ok, n_failed = _run_hmmbuild_pool(
+            work_items, min(config.n_workers, len(work_items)))
+        n_built += n_ok
+        if n_failed:
+            logger.info(f"  hmmbuild: {n_failed} profiles failed")
+
+    logger.info(f"HMMER rescue: {n_built} HMM profiles ready")
+
+    if n_built == 0:
+        logger.warning("HMMER rescue: no HMM profiles built, skipping")
+        return None
+
+    combined_hmm = rescue_dir / "all_families.hmm"
+    if _concat_hmms(hmm_dir, combined_hmm) is None:
+        logger.warning("HMMER rescue: no HMM files to concatenate")
+        return None
+
+    # hmmpress is only needed by hmmscan, never by hmmsearch; skip it when
+    # chunking (it costs minutes and 1.6 GB on the 5sp panel for nothing).
+    if not config.hmmer_chunk_size:
+        press_cmd = [config.hmmpress_bin, "-f", str(combined_hmm)]
+        press_result = subprocess.run(press_cmd, capture_output=True, text=True)
+        if press_result.returncode != 0:
+            logger.error(f"hmmpress failed: {press_result.stderr[:300]}")
+            return None
+
+    return combined_hmm
+
+
+def _search_unplaced(
+    combined_hmm: Path, unplaced_pool: Dict[str, str], rescue_dir: Path,
+    config: Config,
+) -> Dict[str, Tuple[str, float]]:
+    """Search the unplaced pool against the profile database -> best hits."""
+    unplaced_fasta = rescue_dir / "unplaced_proteins.fa"
+    write_fasta(unplaced_pool, str(unplaced_fasta))
+
+    # One hmmsearch call, or chunked (issue #31)
+    tblout = rescue_dir / "hmmsearch_results.tblout"
+    if config.hmmer_chunk_size:
+        _run_hmmsearch_chunked(combined_hmm, unplaced_fasta, tblout,
+                               rescue_dir, config)
+    else:
+        _run_hmmsearch(combined_hmm, unplaced_fasta, tblout, config)
+
+    return _parse_hmmsearch_tblout(tblout, config.hmmer_evalue)
+
+
+def _group_by_family(
+    hits: Dict[str, Tuple[str, float]]
+) -> Dict[str, Set[str]]:
+    """Invert gene -> (family, E) into family -> {genes}."""
+    rescued_by_family: Dict[str, Set[str]] = {}
+    for gene_id, (family_id, evalue) in hits.items():
+        rescued_by_family.setdefault(family_id, set()).add(gene_id)
+        logger.debug(f"  Rescued {gene_id} → {family_id} (E={evalue:.1e})")
+    return rescued_by_family
+
+
+def _absorb_rescued(
+    families: Dict[str, Set[str]],
+    rescued_by_family: Dict[str, Set[str]],
+    protein_pool: Dict[str, str],
+    cds_pool: Dict[str, str],
+    outdir: Path,
+    config: Config,
+) -> Dict[str, Set[str]]:
+    """Add rescued genes to their families and re-align the ones that grew.
+
+    Hits against a family id that is not in `families` are dropped here —
+    they still appear in the rescue summary.
+    """
+    updated_families = dict(families)
+    for family_id, new_genes in rescued_by_family.items():
+        if family_id not in updated_families:
+            continue
+
+        updated_families[family_id] = updated_families[family_id] | new_genes
+        _realign_family(
+            family_id, updated_families[family_id],
+            protein_pool, cds_pool, outdir, config,
+        )
+    return updated_families
+
+
 def rescue_unplaced(
     families: Dict[str, Set[str]],
     unplaced_pool: Dict[str, str],
@@ -153,15 +297,14 @@ def rescue_unplaced(
     """HMMER rescue: assign unplaced genes to existing families via HMM profile search.
 
     Args:
-        families: Dict of family_id -> set of confirmed gene_ids.
-        unplaced_pool: Dict of gene_id -> protein sequence for unplaced genes.
-        protein_pool: Full protein pool (all genes, for re-alignment).
-        cds_pool: Full CDS pool (all genes).
-        outdir: Pipeline output directory.
-        config: Pipeline configuration.
+        families: family_id -> set of confirmed gene_ids.
+        unplaced_pool: gene_id -> protein sequence, for unplaced genes only.
+        protein_pool, cds_pool: the full pools, used to re-align a grown family.
+        outdir, config: pipeline output directory and configuration.
 
     Returns:
-        Updated families dict with rescued genes added.
+        `families` with rescued genes added — or `families` itself, unchanged,
+        whenever the rescue cannot place anything.
     """
     rescue_dir = outdir / "hmmer_rescue"
     rescue_dir.mkdir(parents=True, exist_ok=True)
@@ -175,112 +318,22 @@ def rescue_unplaced(
     logger.info(f"HMMER rescue: {len(unplaced_pool)} unplaced genes, "
                 f"{len(families)} family profiles to search against")
 
-    # Step 1: Build HMM profiles in parallel
-    work_items = []
-    for family_id in families:
-        aln_path = _find_family_alignment(family_id, outdir)
-        if aln_path is None:
-            continue
-        hmm_path = hmm_dir / f"{family_id}.hmm"
-        if not hmm_path.exists():
-            work_items.append((family_id, str(aln_path), str(hmm_path), config.hmmbuild_bin))
-
-    # Already-built HMMs
-    n_existing = sum(1 for f in hmm_dir.glob("*.hmm") if f.stat().st_size > 0)
-
-    logger.info(f"HMMER rescue: building {len(work_items)} HMM profiles "
-                f"({n_existing} already exist), using {config.n_workers} workers")
-
-    n_built = n_existing
-    n_failed = 0
-    if work_items:
-        n_workers = min(config.n_workers, len(work_items))
-        with ProcessPoolExecutor(max_workers=n_workers) as executor:
-            futures = {executor.submit(_build_hmm_worker, item): item[0]
-                       for item in work_items}
-            done = 0
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    if result is not None:
-                        n_built += 1
-                    else:
-                        n_failed += 1
-                except Exception as e:
-                    n_failed += 1
-                    fam_id = futures[future]
-                    logger.debug(f"  hmmbuild worker exception for {fam_id}: {e}")
-                done += 1
-                if done % 2000 == 0:
-                    logger.info(f"  hmmbuild progress: {done}/{len(work_items)}")
-    if n_failed:
-        logger.info(f"  hmmbuild: {n_failed} profiles failed")
-
-    logger.info(f"HMMER rescue: {n_built} HMM profiles ready")
-
-    if n_built == 0:
-        logger.warning("HMMER rescue: no HMM profiles built, skipping")
+    combined_hmm = _build_profile_db(families, outdir, rescue_dir, hmm_dir, config)
+    if combined_hmm is None:
         return families
 
-    # Step 2: Concatenate HMMs into single database
-    combined_hmm = rescue_dir / "all_families.hmm"
-    if _concat_hmms(hmm_dir, combined_hmm) is None:
-        logger.warning("HMMER rescue: no HMM files to concatenate")
-        return families
-
-    # hmmpress is only needed by hmmscan, never by hmmsearch; skip it when
-    # chunking (it costs minutes and 1.6 GB on the 5sp panel for nothing).
-    if not config.hmmer_chunk_size:
-        press_cmd = [config.hmmpress_bin, "-f", str(combined_hmm)]
-        press_result = subprocess.run(press_cmd, capture_output=True, text=True)
-        if press_result.returncode != 0:
-            logger.error(f"hmmpress failed: {press_result.stderr[:300]}")
-            return families
-
-    # Step 3: Write unplaced genes to FASTA
-    unplaced_fasta = rescue_dir / "unplaced_proteins.fa"
-    write_fasta(unplaced_pool, str(unplaced_fasta))
-
-    # Step 4: Run hmmsearch — one call, or chunked (issue #31)
-    tblout = rescue_dir / "hmmsearch_results.tblout"
-    if config.hmmer_chunk_size:
-        _run_hmmsearch_chunked(combined_hmm, unplaced_fasta, tblout,
-                               rescue_dir, config)
-    else:
-        _run_hmmsearch(combined_hmm, unplaced_fasta, tblout, config)
-
-    # Step 5: Parse results and assign genes to families
-    hits = _parse_hmmsearch_tblout(tblout, config.hmmer_evalue)
-
+    hits = _search_unplaced(combined_hmm, unplaced_pool, rescue_dir, config)
     if not hits:
         logger.info("HMMER rescue: no significant hits found")
         return families
 
-    # Group rescued genes by family
-    rescued_by_family: Dict[str, Set[str]] = {}
-    for gene_id, (family_id, evalue) in hits.items():
-        rescued_by_family.setdefault(family_id, set()).add(gene_id)
-        logger.debug(f"  Rescued {gene_id} → {family_id} (E={evalue:.1e})")
-
+    rescued_by_family = _group_by_family(hits)
     logger.info(f"HMMER rescue: {len(hits)} genes rescued into "
                 f"{len(rescued_by_family)} families")
 
-    # Step 6: Add rescued genes to families and re-align affected families
-    updated_families = dict(families)
-    for family_id, new_genes in rescued_by_family.items():
-        if family_id not in updated_families:
-            continue
-
-        old_members = updated_families[family_id]
-        updated_families[family_id] = old_members | new_genes
-
-        # Re-align the expanded family
-        _realign_family(
-            family_id, updated_families[family_id],
-            protein_pool, cds_pool, outdir, config,
-        )
-
-    # Write rescue summary
+    updated_families = _absorb_rescued(
+        families, rescued_by_family, protein_pool, cds_pool, outdir, config,
+    )
     _write_rescue_summary(hits, rescue_dir)
 
     return updated_families
