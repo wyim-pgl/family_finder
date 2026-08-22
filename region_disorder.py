@@ -119,6 +119,19 @@ def measure(pdb_dir: Path, alignment: Path, lo: int, hi: int,
 
     focal, other, rows = [], [], []
     skipped = {"not_in_alignment": [], "region_too_short": [], "no_plddt": []}
+    # The bucket name alone conflates two facts. On the PEPC clan every one of
+    # the ten `region_too_short` genes had ZERO residues in columns 165-209 --
+    # the block is absent from them, not merely short of min_residues -- and
+    # one, Ococ_OcoChr03G21490.t1, is 885 aa long while covering none of it.
+    # Carry the counts so the reader can tell those cases apart.
+    detail: List[dict] = []
+
+    def note(gene: str, reason: str, n_region: Optional[int] = None,
+             n_total: Optional[int] = None) -> None:
+        skipped[reason].append(gene)
+        detail.append({"gene": gene, "reason": reason,
+                       "n_region_residues": n_region, "n_residues": n_total})
+
     for pdb in pdb_files:
         gene = canon_gene_id(pdb.stem)
         ref = struct_match.mapping.get(pdb.stem)
@@ -128,16 +141,17 @@ def measure(pdb_dir: Path, alignment: Path, lo: int, hi: int,
             # names drops genes here without a word; on the PEPC clan that once
             # left 29 of 111 matching. Record it so shrinking coverage is
             # distinguishable from an absent signal.
-            skipped["not_in_alignment"].append(gene)
+            note(gene, "not_in_alignment")
             continue
+        n_residues = len(seq) - seq.count("-")
         region = columns_to_residues(seq, lo, hi)
         if len(region) < min_residues:
-            skipped["region_too_short"].append(gene)
+            note(gene, "region_too_short", len(region), n_residues)
             continue
         plddt = residue_plddt(pdb)
         inside = [plddt[r] for r in region if r in plddt]
         if len(inside) < min_residues:
-            skipped["no_plddt"].append(gene)
+            note(gene, "no_plddt", len(region), n_residues)
             continue
         whole = statistics.mean(plddt.values())
         delta = statistics.mean(inside) - whole
@@ -149,6 +163,9 @@ def measure(pdb_dir: Path, alignment: Path, lo: int, hi: int,
                      "whole_plddt": round(whole, 4),
                      "delta": round(delta, 4)})
 
+    covered = set(struct_match.mapping.values())
+    unfolded = sorted(name for name in raw_aln if name not in covered)
+
     result = {
         "region": f"{lo}-{hi}",
         "n_focal": len(focal),
@@ -159,8 +176,17 @@ def measure(pdb_dir: Path, alignment: Path, lo: int, hi: int,
         "all_below": bool(focal) and all(d < 0 for d in focal),
         "p": mann_whitney_p(focal, other) if (focal and other) else None,
         "per_gene": rows,
+        "n_structures": len(pdb_files),
+        "n_alignment_sequences": len(raw_aln),
+        # The mismatch has two directions and only one used to be visible.
+        # An aligned sequence nobody folded caps the measurable set just as
+        # hard as a structure with no alignment row, and reads the same way
+        # from the outside: fewer genes than the alignment holds.
+        "n_alignment_without_structure": len(unfolded),
+        "alignment_without_structure": unfolded,
         "n_skipped": sum(len(v) for v in skipped.values()),
         "skipped": skipped,
+        "skipped_detail": detail,
         "id_match_level": struct_match.level,
         "n_unmatched_structures": len(struct_match.unmatched),
     }
@@ -200,7 +226,13 @@ def main():
     print(f"Mann-Whitney p = {res['p']}")
     print(f"id matching: {res['id_match_level']} level, "
           f"{res['n_unmatched_structures']} structure(s) unmatched, "
-          f"{res['n_skipped']} gene(s) skipped {res['skipped']}")
+          f"{res['n_skipped']} gene(s) skipped "
+          f"{ {k: len(v) for k, v in res['skipped'].items()} }")
+    print(f"coverage: {res['n_structures']} structure(s) and "
+          f"{res['n_alignment_sequences']} aligned sequence(s) share "
+          f"{res['n_structures'] - res['n_unmatched_structures']}; "
+          f"{res['n_alignment_without_structure']} aligned sequence(s) have "
+          f"no structure")
     print(f"-> {args.out}")
     return 0
 

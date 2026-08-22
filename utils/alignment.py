@@ -109,6 +109,23 @@ def apply_columns(alignment: Dict[str, str], columns: Sequence[int]) -> Dict[str
     return {name: "".join(seq[i] for i in idx) for name, seq in alignment.items()}
 
 
+def reference_positions(sequence: str) -> Dict[int, int]:
+    """`{alignment column: ungapped residue number}` for one aligned sequence.
+
+    Columns where the sequence is gapped are absent from the mapping rather
+    than present with a placeholder: that sequence has no residue there, and a
+    caller that treats the absence as a position is off by however many gaps
+    precede it.
+    """
+    out: Dict[int, int] = {}
+    n = 0
+    for col, ch in enumerate(sequence, start=1):
+        if ch != GAP:
+            n += 1
+            out[col] = n
+    return out
+
+
 def column_map(columns: Sequence[int],
                reference: str) -> List[Tuple[int, int, Optional[int]]]:
     """`(position in the kept matrix, original column, reference residue)`.
@@ -117,12 +134,7 @@ def column_map(columns: Sequence[int],
     gapped maps to None. Emitting this alongside a trimmed matrix is what makes
     a diagnostic position citable later without redoing the alignment by hand.
     """
-    ref_pos: Dict[int, int] = {}
-    n = 0
-    for col, ch in enumerate(reference, start=1):
-        if ch != GAP:
-            n += 1
-            ref_pos[col] = n
+    ref_pos = reference_positions(reference)
     return [(k, col, ref_pos.get(col)) for k, col in enumerate(columns, start=1)]
 
 
@@ -184,6 +196,37 @@ def invariant_columns(alignment: Dict[str, str],
         if agreed is not None:
             out[i + 1] = agreed
     return out
+
+
+def invariant_suppressed(alignment: Dict[str, str],
+                         groups: Dict[str, Sequence[str]],
+                         *, min_cover: float = 0.7) -> dict:
+    """Columns `invariant_columns` never judged, because a group is too gappy.
+
+    `invariant_columns` disqualifies a column as soon as one group covers it
+    below `min_cover`, which is right — absence is not agreement — and silent,
+    which is not. The column then leaves the core for the same reason a column
+    the groups genuinely disagree on does, and downstream "this region is not
+    part of the core" cannot tell the two apart. That is the failure
+    `coverage_suppressed` already removed from `sdp_scan`; this is the same
+    report for the core.
+
+    Returns the union of suppressed columns (1-based), the per-group columns
+    that caused it, and how many columns were examined after all.
+    """
+    width = _columns(alignment)
+    occupancy = group_occupancy(alignment, groups)
+    by_group = {name: [i + 1 for i in range(width) if occ[i] < min_cover]
+                for name, occ in occupancy.items()}
+    columns = sorted({c for cols in by_group.values() for c in cols})
+    return {
+        "min_cover": min_cover,
+        "n_columns": width,
+        "n_suppressed": len(columns),
+        "n_examined": width - len(columns),
+        "columns": columns,
+        "by_group": by_group,
+    }
 
 
 def choose_reference(alignment: Dict[str, str],

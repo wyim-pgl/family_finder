@@ -48,6 +48,7 @@ from steps.subfamily import (  # noqa: E402
     parse_pair_identities,
     parse_pairwise_scores,
     resolve_groups,
+    resolve_reference,
     sdp_scan,
     sequence_confounding,
     structure_coherence,
@@ -279,7 +280,14 @@ def main():
                          "alntmscore is length-normalised and less confounded "
                          "(default: bits)")
     ap.add_argument("--ref-seq", default=None,
-                    help="Alignment sequence id for reference numbering")
+                    help="Alignment sequence id for reference numbering. "
+                         "Without it a characterised member is preferred, "
+                         "then the family's own representative.")
+    ap.add_argument("--characterised", default=None,
+                    help="File of characterised gene ids, one per line "
+                         "(SwissProt-backed anchors and the like). The most "
+                         "complete one becomes the coordinate reference, so "
+                         "positions can be compared with published ones.")
     ap.add_argument("--min-group", type=int, default=5)
     ap.add_argument("--max-unmatched", type=float, default=None,
                     help="Refuse when more than this fraction of --groups "
@@ -348,10 +356,22 @@ def main():
             print(f"  {name}: {len(info['unmatched'])} unmatched, e.g. "
                   f"{info['unmatched'][:3]}")
 
+    characterised = ([l.strip() for l in open(args.characterised) if l.strip()]
+                     if args.characterised else None)
+    reference = resolve_reference(alignment, ref_seq_id=args.ref_seq,
+                                  characterised=characterised)
+    print(f"coordinate reference: {reference.seq_id} "
+          f"({reference.source} — {reference.reason})")
+    if reference.unmatched_characterised:
+        print(f"  {len(reference.unmatched_characterised)} characterised id(s) "
+              f"not in the alignment, e.g. "
+              f"{reference.unmatched_characterised[:3]}")
+
     sdp = sdp_scan(alignment, groups, min_group=args.min_group,
-                   ref_seq_id=args.ref_seq)
+                   ref_seq_id=reference.seq_id)
     write_tsv(sdp, outdir / "sdp_residues.tsv")
-    print(f"sdp_residues.tsv: {len(sdp)} diagnostic columns")
+    print(f"sdp_residues.tsv: {len(sdp)} diagnostic columns, positions in "
+          f"{reference.seq_id}")
 
     taxonomy = load_taxonomy(Path(args.taxonomy)) if args.taxonomy else {}
     species_tree = (parse_newick(Path(args.species_tree).read_text())

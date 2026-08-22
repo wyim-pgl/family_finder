@@ -28,6 +28,7 @@ import logging
 import random
 import statistics
 from collections import Counter
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -110,6 +111,90 @@ def resolve_group_ids(
 
 
 # ---------------------------------------------------------------------------
+# Coordinate reference
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ReferenceChoice:
+    """Which sequence a set of residue positions is numbered against."""
+    seq_id: str
+    source: str  # "explicit" | "characterised" | "automatic"
+    n_characterised: int = 0
+    unmatched_characterised: List[str] = field(default_factory=list)
+    reason: str = ""
+
+
+def resolve_reference(
+    alignment: Dict[str, str],
+    *,
+    ref_seq_id: Optional[str] = None,
+    characterised: Optional[Sequence[str]] = None,
+) -> ReferenceChoice:
+    """Pick the sequence diagnostic positions are cited in, and say why.
+
+    A position is only citable against something. `utils.alignment.
+    choose_reference` already answers the reference-free case — the most
+    complete sequence in the family — but when the caller knows which members
+    are characterised (a SwissProt-backed anchor, an enzyme with published
+    residue numbers) those coordinates are the ones a reader can look up, so
+    they win. The automatic representative is the fallback, never a silent
+    one: `source` records which of the three routes was taken.
+
+    Ids are matched through `utils.gene_ids.match_ids`, so a characterised
+    anchor spelled with a transcript suffix the alignment does not carry is
+    still found instead of dropping to the fallback unnoticed.
+    """
+    from utils.alignment import choose_reference
+
+    if not alignment:
+        raise ValueError("Cannot choose a coordinate reference from an "
+                         "empty alignment")
+    names = list(alignment)
+
+    if ref_seq_id is not None:
+        hit = match_ids([ref_seq_id], names).mapping.get(ref_seq_id)
+        if hit is None:
+            raise ValueError(
+                f"Reference sequence {ref_seq_id!r} is absent from the "
+                "alignment even after id normalisation — refusing to number "
+                "positions against a sequence that is not there"
+            )
+        return ReferenceChoice(hit, "explicit",
+                               reason=f"caller named {ref_seq_id!r}")
+
+    wanted = list(characterised or [])
+    if wanted:
+        matched = match_ids(wanted, names)
+        pool = sorted(set(matched.mapping.values()))
+        if pool:
+            return ReferenceChoice(
+                choose_reference(alignment, candidates=pool),
+                "characterised",
+                n_characterised=len(pool),
+                unmatched_characterised=list(matched.unmatched),
+                reason=(f"most complete of {len(pool)} characterised member(s) "
+                        f"matched at the {matched.level!r} level"),
+            )
+        logger.warning(
+            "None of the %d characterised id(s) matched an alignment name "
+            "even at the %r level — numbering falls back to the automatic "
+            "representative: %s",
+            len(wanted), matched.level, matched.unmatched[:5],
+        )
+        return ReferenceChoice(
+            choose_reference(alignment), "automatic",
+            unmatched_characterised=list(matched.unmatched),
+            reason=(f"none of {len(wanted)} characterised id(s) is in the "
+                    "alignment; most complete sequence used instead"),
+        )
+
+    return ReferenceChoice(
+        choose_reference(alignment), "automatic",
+        reason="no characterised member supplied; most complete sequence used",
+    )
+
+
+# ---------------------------------------------------------------------------
 # SDP scan
 # ---------------------------------------------------------------------------
 
@@ -122,6 +207,7 @@ def sdp_scan(
     out_max: float = 0.2,
     min_cover: float = 0.7,
     ref_seq_id: Optional[str] = None,
+    characterised: Optional[Sequence[str]] = None,
     max_unmatched: Optional[float] = None,
 ) -> List[dict]:
     """Subfamily-diagnostic alignment columns.
@@ -130,14 +216,22 @@ def sdp_scan(
     members share one residue, G's non-gap coverage is >= min_cover, and
     that residue's frequency among the REST of the alignment's non-gap
     residues is <= out_max. Groups smaller than min_group are skipped
-    (their "conservation" is not meaningful). ref_seq_id adds a ref_pos
-    column with that sequence's ungapped numbering (e.g. ATH_PPC1
-    coordinates) so residues can be cited against published positions.
+    (their "conservation" is not meaningful).
+
+    Every row carries `ref_pos` — an ungapped residue number — and `ref_seq`,
+    the sequence that number is in. `ref_pos` alone was never citable: the
+    same integer means a different residue in every sequence of the family.
+    The reference is `ref_seq_id` when given, otherwise the most complete of
+    `characterised` (e.g. ATH_PPC1 and other SwissProt-backed anchors, so
+    positions can be compared with published ones), otherwise the family's own
+    representative — see `resolve_reference`.
 
     Member ids are resolved against the alignment through `resolve_groups`,
     not by exact string equality — pass `max_unmatched` to refuse rather than
     scan a group the id forms have quietly shrunk.
     """
+    from utils.alignment import reference_positions
+
     lengths = {len(s) for s in alignment.values()}
     if len(lengths) > 1:
         raise ValueError(f"ragged alignment: lengths {sorted(lengths)}")
@@ -153,14 +247,11 @@ def sdp_scan(
             id_report["level"],
         )
 
-    ref_pos: Dict[int, int] = {}
-    if ref_seq_id is not None:
-        ref = alignment[ref_seq_id]
-        n = 0
-        for col, ch in enumerate(ref, start=1):
-            if ch != "-":
-                n += 1
-                ref_pos[col] = n
+    reference = resolve_reference(alignment, ref_seq_id=ref_seq_id,
+                                  characterised=characterised)
+    ref_pos = reference_positions(alignment[reference.seq_id])
+    logger.info("sdp_scan: positions numbered against %s (%s — %s)",
+                reference.seq_id, reference.source, reference.reason)
 
     rows: List[dict] = []
     for group_id, members in sorted(groups.items()):
@@ -189,6 +280,7 @@ def sdp_scan(
                 "subfamily": group_id,
                 "n_members": len(members),
                 "aln_col": col + 1,
+                "ref_seq": reference.seq_id,
                 "ref_pos": ref_pos.get(col + 1),
                 "sf_residue": res,
                 "sf_freq": round(in_freq, 3),
@@ -257,6 +349,9 @@ def sdp_core_relationship(
     invariant_threshold: float = 0.95,
     n_null: int = 1000,
     seed: int = 0,
+    ref_seq_id: Optional[str] = None,
+    characterised: Optional[Sequence[str]] = None,
+    distance_space: str = "residue",
     max_unmatched: Optional[float] = None,
 ) -> dict:
     """Where diagnostic residues sit relative to the reference-free core.
@@ -278,11 +373,30 @@ def sdp_core_relationship(
     *further from* the core than columns picked at random from the same
     scannable pool? That is testable against a null and needs no reference.
 
+    **Distance is in residues, not columns.** An alignment column is a
+    bookkeeping slot: a 200-column insertion carried by one clade pushes the
+    core and a diagnostic residue 200 columns apart in a protein where nothing
+    moved. Both the observed distance and the null inherit that inflation, and
+    they inherit it unevenly, because the null samples columns wherever the
+    gaps happen to be. Distances are therefore measured in the ungapped
+    numbering of one reference sequence (`resolve_reference`), and
+    `distance_convention` records which sequence that is. `distance_space=
+    "column"` restores the old convention, labelled as such. Columns the
+    reference cannot place — it is gapped there — are counted in
+    `n_*_untranslatable` rather than folded in at some arbitrary position.
+
     Returns a verdict of `avoids_core`, `at_core`, `indistinguishable`, or
     `no_interpretation_available` with a `reason` — silence and "no signal"
     have to be distinguishable (issue #40).
     """
-    from utils.alignment import group_occupancy, invariant_columns
+    from utils.alignment import (group_occupancy, invariant_columns,
+                                 invariant_suppressed, reference_positions)
+
+    if distance_space not in ("residue", "column"):
+        raise ValueError(
+            f"unknown distance_space {distance_space!r}: use 'residue' (the "
+            "reference's own numbering) or 'column' (alignment columns)"
+        )
 
     lengths = {len(s) for s in alignment.values()}
     if len(lengths) > 1:
@@ -296,13 +410,28 @@ def sdp_core_relationship(
                                         max_unmatched=max_unmatched)
     skipped = sorted(name for name, members in groups.items()
                      if len(members) < min_group)
+
+    # Which sequence the positions below are numbered in. Resolved before the
+    # scan so the scan's ref_pos column and these distances agree.
+    reference = (resolve_reference(alignment, ref_seq_id=ref_seq_id,
+                                   characterised=characterised)
+                 if distance_space == "residue" else None)
+
     hits = sdp_scan(alignment, groups, min_group=min_group, in_cons=in_cons,
-                    out_max=out_max, min_cover=min_cover)
+                    out_max=out_max, min_cover=min_cover,
+                    ref_seq_id=ref_seq_id, characterised=characterised)
     sdp_cols = sorted({h["aln_col"] for h in hits})
     invariant = invariant_columns(alignment, groups,
                                   threshold=invariant_threshold,
                                   min_cover=min_cover)
     inv_cols = sorted(invariant)
+
+    # Columns min_cover kept the core from being judged on at all. Without
+    # this a gappy region reads as "the groups do not agree here" when no
+    # comparison was ever made (the same silence coverage_suppressed removed
+    # from sdp_scan).
+    core_suppressed = invariant_suppressed(alignment, groups,
+                                           min_cover=min_cover)
 
     # Columns sdp_scan was able to judge at all: every group covers them.
     occ = group_occupancy(alignment, groups)
@@ -313,9 +442,23 @@ def sdp_core_relationship(
         "n_sdp_columns": len(sdp_cols),
         "n_invariant_columns": len(inv_cols),
         "n_candidate_columns": len(candidates),
+        "n_core_suppressed_columns": core_suppressed["n_suppressed"],
+        "n_core_examined_columns": core_suppressed["n_examined"],
+        "core_suppressed_columns": core_suppressed["columns"],
+        "core_suppressed_by_group": {name: len(cols) for name, cols
+                                     in core_suppressed["by_group"].items()},
         "skipped_groups": skipped,
         "overlap": len(set(sdp_cols) & set(inv_cols)),
         "overlap_is_by_construction": True,
+        "distance_space": distance_space,
+        "distance_convention": ("column" if reference is None
+                                else f"residue:{reference.seq_id}"),
+        "distance_reference": None if reference is None else reference.seq_id,
+        "distance_reference_source": (None if reference is None
+                                      else reference.source),
+        "n_sdp_untranslatable": 0,
+        "n_invariant_untranslatable": 0,
+        "n_candidate_untranslatable": 0,
         "observed_median_distance": None,
         "null_median_distance": None,
         "null_p05": None,
@@ -337,23 +480,52 @@ def sdp_core_relationship(
         result["reason"] = (
             f"no invariant columns at threshold {invariant_threshold} — the "
             "family has no core the groups agree on, so there is nothing to "
-            "measure distance from"
+            f"measure distance from. {core_suppressed['n_suppressed']} of "
+            f"{alen} column(s) were never examined for it at all: some group "
+            f"covers them below min_cover={min_cover}"
         )
         return result
-    if len(candidates) < len(sdp_cols):
+
+    ref_pos = ({} if reference is None
+               else reference_positions(alignment[reference.seq_id]))
+
+    def place(columns: Sequence[int]) -> Tuple[List[int], List[int]]:
+        """Columns as reference residue numbers, plus the ones it cannot place."""
+        if reference is None:
+            return list(columns), []
+        return ([ref_pos[c] for c in columns if c in ref_pos],
+                [c for c in columns if c not in ref_pos])
+
+    sdp_pos, sdp_lost = place(sdp_cols)
+    inv_pos, inv_lost = place(inv_cols)
+    cand_pos, cand_lost = place(candidates)
+    result["n_sdp_untranslatable"] = len(sdp_lost)
+    result["n_invariant_untranslatable"] = len(inv_lost)
+    result["n_candidate_untranslatable"] = len(cand_lost)
+
+    if not sdp_pos or not inv_pos:
         result["reason"] = (
-            f"only {len(candidates)} column(s) were scannable, fewer than the "
-            f"{len(sdp_cols)} diagnostic column(s); no null can be built"
+            f"the reference {reference.seq_id!r} is gapped at "
+            f"{len(sdp_lost)} of {len(sdp_cols)} diagnostic and "
+            f"{len(inv_lost)} of {len(inv_cols)} invariant column(s), so they "
+            "have no residue number in it; pick a reference that covers them "
+            "or measure in alignment columns"
+        )
+        return result
+    if len(cand_pos) < len(sdp_pos):
+        result["reason"] = (
+            f"only {len(cand_pos)} column(s) were scannable, fewer than the "
+            f"{len(sdp_pos)} diagnostic column(s); no null can be built"
         )
         return result
 
-    def nearest(col: int) -> int:
-        return min(abs(col - j) for j in inv_cols)
+    def nearest(pos: int) -> int:
+        return min(abs(pos - j) for j in inv_pos)
 
-    observed = statistics.median(nearest(c) for c in sdp_cols)
+    observed = statistics.median(nearest(c) for c in sdp_pos)
     rng = random.Random(seed)
     null = sorted(statistics.median(nearest(c) for c in
-                                    rng.sample(candidates, len(sdp_cols)))
+                                    rng.sample(cand_pos, len(sdp_pos)))
                   for _ in range(n_null))
     p_far = sum(1 for v in null if v >= observed) / len(null)
     p_near = sum(1 for v in null if v <= observed) / len(null)
@@ -373,7 +545,10 @@ def sdp_core_relationship(
         result["p_value"] = min(p_far, p_near)
     result["reason"] = (
         f"{len(sdp_cols)} diagnostic vs {len(inv_cols)} invariant columns, "
-        f"null drawn from {len(candidates)} scannable columns"
+        f"null drawn from {len(candidates)} scannable columns, measured in "
+        f"{result['distance_convention']}; "
+        f"{core_suppressed['n_suppressed']} column(s) were never examined for "
+        f"the core (min_cover={min_cover})"
     )
     return result
 

@@ -129,6 +129,67 @@ def test_measure_reports_genes_it_skipped_rather_than_dropping_them(tmp_path):
     assert result["n_skipped"] == 1
 
 
+def test_a_gene_outside_the_region_is_distinguishable_from_a_merely_short_one(tmp_path):
+    # 'region_too_short' covers two different facts: a gene that reaches the
+    # region and stops inside it, and a gene with no residue there at all.
+    # On the PEPC clan all ten skips were the second kind — the block is
+    # absent, not short — and the bare label cannot say so.
+    pdb_dir, aln = _setup(tmp_path)
+    aln.write_text(aln.read_text()
+                   + ">Partial_g\nAAAA------\n"   # residues 3-4 inside 3-7
+                   + ">Absent_g\nAA--------\n")   # nothing inside 3-7
+    _pdb(pdb_dir / "Partial_g.pdb", [0.9] * 4)
+    _pdb(pdb_dir / "Absent_g.pdb", [0.9] * 2)
+
+    r = measure(pdb_dir, aln, 3, 7, {"Focal_g0", "Focal_g1", "Focal_g2"})
+    detail = {d["gene"]: d for d in r["skipped_detail"]}
+
+    assert detail["Partial_g"]["n_region_residues"] == 2
+    assert detail["Absent_g"]["n_region_residues"] == 0
+    assert detail["Absent_g"]["reason"] == "region_too_short"
+    assert detail["Absent_g"]["n_residues"] == 2
+
+
+def test_an_unmatched_structure_is_in_the_detail_with_nothing_invented(tmp_path):
+    pdb_dir, aln = _setup(tmp_path)
+    _pdb(pdb_dir / "ghost_g.pdb", [0.9] * 10)
+
+    r = measure(pdb_dir, aln, 3, 7, {"Focal_g0", "Focal_g1", "Focal_g2"})
+    detail = {d["gene"]: d for d in r["skipped_detail"]}
+
+    assert detail["ghost_g"]["reason"] == "not_in_alignment"
+    # It has no alignment row, so it has no residue counts. None, not zero:
+    # zero would read as a gene that covers nothing.
+    assert detail["ghost_g"]["n_region_residues"] is None
+    assert detail["ghost_g"]["n_residues"] is None
+
+
+def test_the_detail_accounts_for_every_skip(tmp_path):
+    pdb_dir, aln = _setup(tmp_path)
+    aln.write_text(aln.read_text() + ">Absent_g\nAA--------\n")
+    _pdb(pdb_dir / "Absent_g.pdb", [0.9] * 2)
+    _pdb(pdb_dir / "ghost_g.pdb", [0.9] * 10)
+
+    r = measure(pdb_dir, aln, 3, 7, {"Focal_g0", "Focal_g1", "Focal_g2"})
+
+    assert len(r["skipped_detail"]) == r["n_skipped"] == 2
+    assert r["n_focal"] + r["n_other"] + r["n_skipped"] == r["n_structures"]
+
+
+def test_alignment_members_with_no_structure_are_reported_too(tmp_path):
+    # The other direction of the same mismatch. On the PEPC clan seven of the
+    # 102 aligned sequences -- the ATH and Aco anchors -- were never folded,
+    # and nothing in the output said so: 85 measured out of 102 looked like
+    # loss, when 95 was the largest number the two inputs could ever share.
+    pdb_dir, aln = _setup(tmp_path)
+    aln.write_text(aln.read_text() + ">Unfolded_g\n" + "A" * 10 + "\n")
+
+    r = measure(pdb_dir, aln, 3, 7, {"Focal_g0", "Focal_g1", "Focal_g2"})
+
+    assert r["n_alignment_without_structure"] == 1
+    assert r["alignment_without_structure"] == ["Unfolded_g"]
+
+
 def test_measure_matches_transcript_suffixed_structures_through_the_matcher(tmp_path):
     # The PEPC pilot FASTA and #40's groups.json disagreed by a `.t1` suffix
     # (#34); region_disorder's own '.'->'_' rule cannot recover that, the
