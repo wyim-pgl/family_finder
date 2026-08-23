@@ -281,6 +281,10 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 
 ### 🔴 조용한 실패 — 에러 없이 그럴듯한 틀린 결과를 내는 것들 (8차 라운드에서 전부 실측)
 | 증상 | 진짜 원인 | 판정법 |
+| **`ldd` 로 CUDA 유무를 판정** | CUDA가 정적 링크라 **CUDA 빌드에서도 `ldd \| grep cuda` 는 0건**이다. 이 근거로 "CUDA 없음"을 판정했다가 상류에 오보를 올릴 뻔했다 | `strings <bin> \| grep -c cudaMalloc` (CUDA 39 / CPU 0) 또는 실행 |
+| **주석 프로그램이 서브패밀리로 오독됨** | PEPC 인트론 이탈률이 Helixer 0.52 / EVM 0.39 / AUGUSTUS·UNR 0.00 — 서브패밀리가 아니라 **주석 세대**를 따라간다. 통제 없이 쓰면 주석 차이가 생물학으로 읽힌다 | `steps/gene_structure.py` 가 프로그램 미상이면 인트론 수치를 **아예 출력하지 않는다** |
+| **발현 매트릭스를 파일명으로 지목** | SF3 74%는 `results/rnaseq/RSEM_TPM.tsv` 가 아니라 **29,405 diel 재분석**(`revision/rnaseq_29405/clustering/RSEM_TPM.average.tsv`) 값이다. 전자로는 82.8%가 나온다. `OcoChr03G21430` 이 한쪽 709.6 TPM / 다른 쪽 0.0 | 매트릭스 경로는 **CLI 입력**으로 두고 결과에 어느 매트릭스인지 남길 것 |
+| **커버리지를 한 방향으로만 셈** | `region_disorder` 85/102를 "손실 17"로 읽어왔으나, 정렬 102서열 중 **7개(ATH·Aco 앵커)는 접힌 적이 없다**. 공유 가능 최대치가 애초에 95 | 양쪽 방향을 다 셀 것: `111 = 16 + 10 + 85`, `102 = 95 + 7` |
 | **바이트 동일 증명이 통과했는데 경로가 증명 안 됨** | 기준선 픽스처가 분기를 안 태운다. 실측 2건: (1) rescue 기준선이 `_concat_hmms`를 덮었지만 프로파일이 ~50바이트라 8192 read 루프가 **1회만** 돌아 멀티청크 경로 미증명 (2) `narrative()` 픽스처 `_sf3_evidence()`가 `coordinates_verified=True`뿐이라 `CANNOT BE JUDGED` 문단과 `[cannot judge]` 요약줄이 **한 번도 실행 안 됨** | 체크섬 전에 **문장 커버리지**를 볼 것. `narrative()`를 만지면 픽스처에 `coordinates_verified=False`를 반드시 넣을 것 (`test_narrative_says_it_cannot_judge_instead_of_reporting_a_clean_region`, `test_unverified_coordinates_produce_an_explicit_cannot_judge_entry`가 그 분기를 탄다) |
 | **통제 플래그가 통제 성립을 뜻하지 않음** | `sequence_controlled`가 "identities 인자를 받았는가"였다. reason이 `UNCONTROLLED`인 행이 True로 집계된다 | 플래그는 verdict와 같은 기준으로 정의할 것 (b73bde9). 회귀 테스트 `test_the_flag_and_the_verdict_never_disagree` |
 | **fident 선형 통제가 가짜 음성을 만든다** | `alntmscore`는 1.0에서 포화하는데 `fident`는 계속 오른다 → 고identity 쌍(=within 쌍 대부분)이 구조와 무관하게 회귀선 아래. 실측 r2 0.43–0.50, 십분위 잔차 비단조(최악 13σ) | 잔차 비교 전에 **적합 적정성**과 **identity 중첩 지지도**를 검사. 미달이면 `no_interpretation_available` |
@@ -314,16 +318,16 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 
 | 이슈 | 우선순위 | 내용 | 막힘 |
 |---|---|---|---|
-| ~~[#40](https://github.com/wyim-pgl/family_finder/issues/40)~~ | **P0** | Ppc1/Ppc2 분리 — **완료 2026-08-22**, 교정 세트 재추정 + methods.md 반영 (§1.6) | 닫음 |
-| [#35](https://github.com/wyim-pgl/family_finder/issues/35) | P0 | 15sp v2 프로덕션 런 | **RUNNING** SLURM 6097190 (2026-08-21 23:15 시작, 3일 한도) |
-| [#33](https://github.com/wyim-pgl/family_finder/issues/33) | P1 | ATH MYB 앵커로 5종 MYB 서브클레이드 분리 | — |
-| [#34](https://github.com/wyim-pgl/family_finder/issues/34) | P1 | ProstT5 tier-3 스크린 — 함정 2건 파악됨, 분할 필요 | — |
-| [#36](https://github.com/wyim-pgl/family_finder/issues/36) | P1 | Mcry 미배치 v2로도 미해결 (13.4%) | #34 결과가 기여 |
-| [#38](https://github.com/wyim-pgl/family_finder/issues/38) | P2 | 주석 축 결손 — 유전자 구조·cis-element·발현 | — |
-| [#42](https://github.com/wyim-pgl/family_finder/issues/42) | P1 | SDP/잔기 해석을 레퍼런스 없는 패밀리로 일반화 — trim 커플링 결함 포함 | — |
-| [#43](https://github.com/wyim-pgl/family_finder/issues/43) | P1 | family_finder ↔ Opuntia 원고 불일치 3건 | — |
-| [#39](https://github.com/wyim-pgl/family_finder/issues/39) | P3 | 코드 건강 — 리팩터 3건, 미확인 버전, 구조 응집도 교란 | — |
-| [#25](https://github.com/wyim-pgl/family_finder/issues/25) [#26](https://github.com/wyim-pgl/family_finder/issues/26) | — | SPEC / 트래커 (살아있는 문서, 닫지 않음) | — |
+| [#35](https://github.com/wyim-pgl/family_finder/issues/35) | **P0** | 15sp v2 프로덕션 런 | **RUNNING** 6097190 — R1 22,051 → R5 1로 수렴 중, 잔여 2일 |
+| [#44](https://github.com/wyim-pgl/family_finder/issues/44) | **P1** | codeml 미설정 + **정본 branch-site 산출물 부재** | — (코드 완료 `b82fee3`, 재생성 미실행) |
+| [#42](https://github.com/wyim-pgl/family_finder/issues/42) | P1 | SDP/잔기 해석 일반화 | 임계값 보정만 #35 대기 |
+| [#43](https://github.com/wyim-pgl/family_finder/issues/43) | P1 | 원고 불일치 3건 | — |
+| [#33](https://github.com/wyim-pgl/family_finder/issues/33) | P1 | ATH MYB 앵커로 서브클레이드 분리 | 앵커 확보는 지금 가능, 본작업은 #35 |
+| [#34](https://github.com/wyim-pgl/family_finder/issues/34) | P1 | tier-3 구조 스크린 | **함정 2건 기각됨** — 아래 §5 |
+| [#36](https://github.com/wyim-pgl/family_finder/issues/36) | P1 | Mcry 미배치 | #35 재측정 |
+| [#38](https://github.com/wyim-pgl/family_finder/issues/38) | P2 | 주석 축 — **두 축 구현 완료** (`e1a794f`) | cis-element만 남음 |
+| ~~#39~~ ~~#40~~ ~~#41~~ ~~#32~~ ~~#37~~ | — | **전부 닫힘** (2026-08-21~22) | — |
+| [#25](https://github.com/wyim-pgl/family_finder/issues/25) [#26](https://github.com/wyim-pgl/family_finder/issues/26) | — | SPEC / 트래커 (살아있는 문서) | — |
 
 **3차 라운드 — v2 파이프라인 + 스윕 판정 (2026-08-19~20):**
 - **v2 tiered 아키텍처 확정·구현 완료** (#21): Tier1 클러스터링(OrthoFinder/SonicParanoid2 분기) →
@@ -547,51 +551,63 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 
 ---
 
-## 7. /clear 후 세션 재개 가이드 (2026-08-22 기준)
+## 7. /clear 후 세션 재개 가이드 (2026-08-23 기준)
 
-**정본 문서**: 이 파일 + 이슈 **#25**(스펙) + **#26**(트래커, 이슈 색인표 있음).
-서브에이전트·모니터·워크플로는 세션 종료와 함께 사라진다.
+**정본 문서**: 이 파일 + 이슈 **#25**(스펙) + **#26**(트래커). 서브에이전트·워크플로는 세션과 함께 사라진다.
+⚠️ **정본을 둘로 만들지 말 것.** 이 프로젝트에서 실제로 손해를 본 오류(`_M` 서열, Ccac 종 동정,
+발현 매트릭스 오기)가 전부 "같은 사실이 두 곳에 다르게 적혀 있었다"는 부류였다.
 
 ### 즉시 확인할 것
-🔴 **15sp v2 프로덕션 런이 돌고 있다** — SLURM `6097190` (`ff_15sp_v2`), 2026-08-21 23:15 시작,
-16코어/64GB/3일 제한, `cpu-35`. 산출물 `output_15sp_v2/`. **이 디렉터리를 건드리지 말 것.**
-pronghorn 큐의 `blast.part=*`, `calculateRSEM*`은 **다른 프로젝트(PGRP)** 잡이다.
+🔴 **15sp v2 런이 돌고 있다** — SLURM `6097190` (`ff_15sp_v2`), 2026-08-21 23:15 시작, 3일 한도.
+산출물 `output_15sp_v2/`. **이 디렉터리를 건드리지 말 것.**
+2026-08-23 00:30 시점: **R1 22,051 → R2 1,448 → R3 212 → R4 32 → R5 1** (5종 v2와 같은 수렴 곡선),
+누적 23,744 family, 잔여 2일 5시간. `profile_assign_per_round`가 실제로 켜져 도는 것을 로그로 확인.
 ```bash
 ssh pronghorn 'squeue -j 6097190 -o "%.10i %.3t %.10M %.11L"'
 ssh pronghorn 'tail -5 ~/scratch/bin/family_finder/logs/ff_15sp_v2_6097190.log'
 git status --short && python3 -m pytest tests/ -q | tail -1
 ```
-기대값: 워킹트리 clean / **449 passed**.
+기대값: 워킹트리 clean / **749 passed**.
 
-완주 후 확인할 것: 청크 병합이 `# [ok]` 검사 통과 · `measure_v2.py --pep-dir`로 종별
-미배치율(길이 층화 필수) · `cam_pairs` TOGETHER 유지 · PEPC clan이 단일 family로 병합되는지.
+완주 후: 청크 병합 `# [ok]` 검사 · `measure_v2.py --pep-dir`(**길이 층화 필수**) ·
+`cam_pairs` TOGETHER 유지 · PEPC clan이 단일 family로 병합되는지.
+⚠️ 배치율은 **세 층을 분리 보고**할 것 — raw / ≥100 aa / ≥100 aa + CDS 무결성 통과.
+raw 단독으로 종간 비교하지 않는다(§1.5).
 
-### 결정이 필요한 것 (이것부터)
-1. 🔴 **#34 tier-3 지표** — `tier3_assign`이 `alntmscore`만 보는데 **ProstT5 DB에는 CA 좌표가
-   없어 계산 자체가 불가능**하다(`No datafile could be found for db_p5_ca!`). 현재 tier-3는
-   ESMFold 구조를 요구한다. **bits 기반 경로 신설 vs ESMFold 사용** 결정 전까지 #34 전체와
-   #36의 tier-3 재측정이 멈춰 있다. 권고: bits 경로 신설.
-2. **위키 `7ee3401` 정정** — `.gguf` 함정이 재현되지 않았다(§5 표 참조). 게시는 승인 사항.
-3. **#43 항목 2** — "Ppc2" 라벨 반전 정정 범위. 사용자가 결과 확인 후 직접 정리하기로 함.
+### 결정이 필요한 것
+1. **#34 tier-3 지표** — `tier3_assign`이 `alntmscore`만 보는데 **ProstT5 DB에는 CA 좌표가 없다.**
+   GPU로 속도 문제는 사라졌지만(아래) **이 제약은 그대로**다. bits 경로 신설 + 임계값 보정이 필요하다.
+   권고: **ProstT5 전수 스크린 전에 ESMFold로 고아 몇백 개 파일럿**을 돌려 배정률을 먼저 잰다.
+   배정률 ≈ 0이면 새 경로를 만들기 전에 두 경로 다 폐기할 수 있다.
+2. **#43 항목 2** — "Ppc2" 라벨 반전 정정 범위. 사용자가 결과 확인 후 직접 정리하기로 함.
 
 ### 바로 착수 가능한 것 (막힘 없음)
-1. **#42** — 불변 코어에 `min_cover` 억제 보고 추가(§5 표의 조용한 실패 재발), 공간 널을
-   잔기 공간 거리로 교체, 특성규명 멤버가 있으면 `candidates`로 우선하도록 배선.
-   ⚠️ **운용 임계값(0.95 vs 1.00)은 #35 완주 후 다수 패밀리로 보정할 것** — PEPC 하나로는
-   0.90에서 실패한다.
-2. ~~**#40 잔여**~~ — **완료·닫음 2026-08-22.** methods.md §2.X.6에 교정 절차 문단 신설,
-   SDP·null 전부 교정 세트로 재계산(§1.6). AU 검정/EPA-ng 배치는 **하지 않았다** — 재추정
-   위상이 100/76으로 판정 가능해져 대안 위상 검정이 필요 없었다. 필요해지면 그때 돌릴 것.
-3. **#39** — 리팩터 3건(`rescue_unplaced` 141줄/중첩5, `taxonomic_composition` 85/5,
-   `narrative()` 93줄), 도구 버전 5개 확인, 구조 응집도 서열 통제.
-   ⚠️ 리팩터는 **산출물 체크섬을 먼저 잡고 바이트 동일을 증명한 뒤** 테스트를 추가할 것.
-4. **#36** — methods.md §2.X.8의 "39–47% 방어 불가" 서술을 발현 결과와 함께 재조정
-   (엑손 증거와 발현 증거가 갈린다, §1.5 참조).
-5. **`Ococ_OcoChr10G09070.t1` ID 형식 불일치** — PEPC 파일럿 FASTA와 #40 `groups.json`이
-   `.t1` 접미사를 떼도 매칭되지 않는다. 두 데이터셋 재조인 전 확인.
+1. 🔴 **#44** — `codeml_bin` 핀과 코드는 끝났다(`b82fee3`). 남은 것은 **정본 branch-site를 산출물과
+   함께 재생성**하는 것. `.ctl`/`rst`/`results.txt`/`lnL` 줄을 보존 디렉터리에 남길 것.
+   재생성 값이 LRT 15.3631과 다르면 **그 사실 자체가 보고 대상**이다.
+2. **#33 앵커 확보** — ATH MYB 132개 + Stracke S1–S25 라벨 provenance. #35와 무관하게 지금 가능.
+   본작업(clan 구성·트리)만 #35 대기.
+3. **#42 잔여** — known-answer 검정(레퍼런스 차단하고 PEPC 재현) · `candidates` 배선.
+   ⚠️ 임계값(`MIN_SHARED_BINS`, `MIN_WITHIN_IN_SHARED_BINS`)은 **#35 완주 후** 다수 패밀리로 보정.
+4. **#38 cis-element** — 우선순위 낮음. 상류 서열 품질 게이트를 먼저 정의할 것.
+5. **`run_manifest.json`** — 미구현. #35 완주 시점에 결과 디렉터리 메타데이터
+   (config.resolved / species_tree.used / input_counts / tool_versions / chunk_manifest)를 남기면
+   다음 런의 재현이 쉬워진다.
+6. **Sof 4개 GFF 조인 실패** — `Sapof.09G011500.1`이 `gff_external/Sof.gff3`의 어느 ID와도 안 맞는다.
+   매처 문제가 아니라 GFF 자체 문제. 그중 3개가 ppc-1E2다.
 
 ### #35 완주까지 대기
-#33(MYB) · #34 전수 스크린(**≥150 aa 부분에만**) · #36 tier-3 재측정 · #42 임계값 보정
+#33 본작업 · #34 스크린 · #36 재측정 · #42 임계값 보정
+
+### 2026-08-22 세션에서 끝난 것
+- **#40 닫힘** — §1.6. 교정 세트 재추정 + methods.md §2.X.6 전면 갱신
+- **#39 닫힘** — 리팩터 4건(전부 바이트 동일 증명), 도구 버전 9개, 구조 응집도 통제
+- **#42 코드** — 좌표 검증 배선 · ID 통일 · `extract_signal_windows.py` 반입 · 불변코어 억제 보고 ·
+  잔기 공간 널 · 레퍼런스 자동 선정 · `region_disorder` 26개 정체 확정
+- **#38 두 축** — `steps/gene_structure.py`(**모델 품질 축**) · `steps/expression.py`, known-answer 통과
+- **#44 신설** — codeml 미설정 + 정본 산출물 부재
+- **foldseek CUDA 빌드** — 위키 `guide/installs.md` 갱신(`969a95f`)
+- 테스트 **449 → 749**
 
 ### 폐기 결정 (2026-08-22)
 **`data_12sp` / `data_14sp` / `data_17sp` 패널을 폐기한다** — 셋 다 더미 종트리로 돌아
@@ -602,9 +618,16 @@ git status --short && python3 -m pytest tests/ -q | tail -1
 **5sp는 Helixer로 재실행하지 않는다** — 15sp가 이미 Helixer(27,583)다. 5sp는 MAKER(29,163,
 151 aa 하한)로 남기고 caveat만 명시한다.
 
+
 ### 재사용할 도구
 | 도구 | 용도 |
 |---|---|
+| `steps/gene_structure.py` | 인트론 위치 → **유전자-모델 품질 플래그**. 주석 프로그램 공변량 필수, 미상이면 수치 미출력 |
+| `steps/expression.py` | 종 **내부** 발현 점유율. 매트릭스 없는 종은 `expression unavailable`, 종간 합계는 산출하지 않음 |
+| `steps/gff_join.py` | pep ID ↔ GFF ID 조인, `match_ids` 경유 + 미매칭 상한 |
+| `extract_signal_windows.py` | DeepLoc 주의창 → 정렬 컬럼, 모든 행에 `aln_stamp` |
+| `config.resolve_tool()` | 도구 경로 해석 — 없으면 **설정 키 이름을 대며 실패**. 맨 이름은 재현 불가를 설정에 넣는 것 |
+| `~/bin/foldseek-cuda/bin/foldseek` (gpu) | CUDA 빌드. 3Di 변환 **37.6배**. ⚠️ CPU 빌드와 `version` 문자열이 같다 |
 | `build_supermatrix.py` | 런 자체의 단일카피 마커로 코돈 supermatrix. `--markers genecount`는 **프루닝·종트리와 독립** |
 | `classify_unplaced.py` | 미배치 유전자를 5판정으로 분류 (§1.5) |
 | `utils/alignment.py` | 컬럼 점유율·**그룹 인지 선택**·`column_map` |
