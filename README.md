@@ -316,6 +316,17 @@ pal2nal, HMMER, codeml and HyPhy have no GPU path — a CPU cluster runs
 everything in the sections above. GPUs only matter for three annotation axes
 that run protein language models.
 
+> ⚠️ **A prebuilt foldseek is CPU-only, and it does not say so gently.**
+> `foldseek`'s `CMakeLists.txt` sets `ENABLE_CUDA` to `0` by default, and the official
+> static binary is built that way — so `createdb --gpu 1` exits 1 with
+> `No GPU devices found` on a perfectly good GPU. `ldd` cannot tell you which build you
+> have (CUDA is linked statically; `ldd | grep cuda` is empty either way) — use
+> `strings <bin> | grep -c cudaMalloc`. Building with `-DENABLE_CUDA=1` made ProstT5 3Di
+> conversion **37.6x** faster here (100 PEPC proteins: 388 s -> 10.3 s). Build recipe and
+> the CUDA-version linking trap are in the lab wiki's `guide/installs.md`.
+> Note that GPU and CPU 3Di are **not byte-identical** (0.15% of residues differ, f16 vs
+> f32), so a database cannot be regenerated bit-for-bit across devices.
+
 **Reference machine** (what the measurements below were taken on):
 
 | | |
@@ -612,6 +623,27 @@ python family_finder.py \
   --threads 8
 ```
 
+**Resuming under a different configuration is refused.** Per-round outputs carry no
+record of the settings that produced them, so resuming after a parameter change would
+silently mix two configurations in one output directory. A run manifest is written at
+startup, and `--resume` compares its config hash against the current one, naming the
+settings that differ:
+
+```
+Resume refused: the configuration differs from the one that produced output/.
+
+  setting: on record -> now
+  orthofinder_inflation: 1.2 -> 1.5
+  profile_assign_per_round: False -> True
+```
+
+The hash covers every config field except resource knobs (worker/thread counts, chunk
+sizes) and tool paths, plus the species tree's **contents** and the input FASTA
+checksums — so moving a tree is fine, editing one is not, and adding a species mid-run
+is refused too. `--allow-config-change` overrides it and records that it was used. An
+output directory written before this existed has no manifest: it warns and proceeds,
+flagged `unverified_resume`.
+
 ### Required arguments
 
 | Argument | Description |
@@ -860,6 +892,22 @@ python family_finder.py \
 # Results in: output_5sp/codeml/<family_id>/<model>/results.txt
 ```
 
+**Pin `codeml_bin` in the config first.** It defaults to the bare name `codeml`, which
+means "whichever build a shell happens to expose" — and codeml prints no version banner,
+so a finished run cannot be attributed to a version afterwards. This project had seven
+PAML installations spanning 4.9i to 4.10.10 across two hosts and none of them on the
+pipeline's PATH, so the stage could not start at all. An unresolvable `codeml_bin` now
+fails naming the setting rather than as a bare error from `subprocess`.
+
+**codeml's exit status does not tell you whether it worked.** It writes complete results
+and *then* exits 1 with `error: end of tree file` — reproduced three times here. Success
+is read from the output instead: `results.txt` must exist and carry an `lnL` line. A
+non-zero exit with complete results is logged and accepted.
+
+One more parsing trap: `results.txt` prints an NEB block **before** the BEB block and the
+values differ (site 568: NEB 0.931 vs BEB 0.970). Parse only after the
+`Bayes Empirical Bayes` header.
+
 ---
 
 ## Example Results: 5-species cactus CAM gene analysis
@@ -1036,6 +1084,12 @@ Addressed issues found during the 5-species (143K sequences) production run:
 - **TreeShrink**: Requires Python <=3.9; may not install in newer environments. Pipeline works without it (Stage 2 pruning only).
 - **Large outlier pools**: after HMMER rescue, 9,786 genes remain unplaced in the 5-species v2 run. See *Interpreting Unplaced Genes* below — most are not a clustering failure.
 - **Annotation heterogeneity across species**: input proteomes are annotated by different pipelines with different minimum-length policies. In the 5-species panel the *C. gigantea* MAKER set has no protein below 151 aa while *M. crystallinum* goes down to 3 aa, so raw per-species unplaced rates compare annotation policy as much as pipeline behaviour. Always stratify by length before comparing species.
+- **`pal2nal -nogap` can silently delete most of a codon alignment**: it drops every codon
+  column containing a gap in any sequence. On a divergent clan that is not a trim, it is a
+  gutting — a 1,428-codon PEPC alignment came back as 599 codons (58% gone) with no
+  warning, which is the same outcome as codeml's `cleandata = 1` reached a different way.
+  Selection tests and BEB site numbers computed on it are not comparable to anything else.
+  Always check the codon alignment's column count against the protein alignment it came from.
 - **Topology-only species trees pass naive validation**: a tree with every branch length set to `1.0` has positive branches and a plausible maximum pairwise distance, so range checks alone miss it. `validate_species_tree` now flags any tree whose branch lengths are all identical.
 
 ## Interpreting Unplaced Genes
@@ -1055,6 +1109,22 @@ assigns each unplaced gene one verdict from the strongest evidence found across 
 python classify_unplaced.py --run-dir output_5sp_v2 --species Mcry \
     --out unplaced_class/Mcry.tsv
 ```
+
+Alongside the verdict each gene carries **flags** — `SHORT_PROTEIN`, `INVALID_CDS`
+(missing start or stop codon, length not divisible by three, or an internal stop) and
+`NO_CDS`. The flags are separate from the verdict on purpose: a 60-aa model with a broken
+CDS and no cross-species hit is all three at once, and `NO_CDS` is kept apart from
+`INVALID_CDS` because absent is not damaged.
+
+**Do not compare raw unplaced rates across species.** `measure_v2.py` prints a
+`comparable_unplaced_rate` beside the raw one, over genes that are at least 100 aa **and**
+have a complete CDS, and warns whenever the species differ in annotation policy. On the
+five-species panel the raw Mcry:Cgig gap of 5.4x becomes 2.5x on length alone and 2.0x on
+length plus CDS integrity — and within the comparable subset the *shape* changes too:
+Mcry's "no cross-species homolog" share falls from 73.9% to 53.0% while Cgig, whose
+unplaced genes are 100% comparable, stays at 52.8%. On models that can be compared, the
+two species look the same. 8.9% of Mcry's proteins carry a broken CDS against none of
+Cgig's, which MAKER filtered out.
 
 `SPLINTER + SINGLETON_HIT` is the graph-fragmentation share; `SINGLETON_NOHIT` is the
 ceiling that no clustering change can move. In the 5-species v2 run the outgroup
@@ -1087,12 +1157,33 @@ clustering criteria or membership filters. See methods.md §2.X.6–2.X.7.
 | `name_families.py` | Family/subfamily naming: direct annotation table + `--plaza-orthology` layer (DIAMOND best-hit/RBH vs PLAZA ath, built by `extract_plaza_orthology.py`), weighted majority (direct 1.0 > orthology 0.5) with provenance columns. |
 | `subfamily_report.py` | Subfamily diagnostics: SDP scan, `--species-tree` monophyly/MRCA attribution (root-span rule; taxonomy TSV = optional labels), foldseek structural coherence. With `--focal-subfamily` + selection evidence (RELAX/MEME/aBSREL JSONs, expression share, signal region) also writes `subfunctionalization.md` — a narrative verdict (sub- vs neo-functionalization) explaining HOW the subfamily diverged. |
 | `steps/hmm_chunks.py` | Optional chunked hmmsearch for the rescue (`hmmer_chunk_size`, default 0 = single run). Splits the profile DB, writes a **SLURM-optional** runner (`sbatch --wait --array` when available, bounded local pool otherwise), and merges — refusing any chunk missing HMMER's `# [ok]` terminator. Needed at 15sp scale: cost is profiles x sequences, so one run extrapolates past the 3-day limit. |
+| `steps/gene_structure.py` | Intron positions from GFF3, projected onto alignment columns. **A gene-model quality axis, not a subfamily one** — see below. Emits the annotation programme as a covariate on every row and refuses to score a gene whose GFF names none |
+| `steps/expression.py` | Subfamily expression share, computed **within a species only** (a cross-species TPM sum has no units). States coverage outright (`2 of 17 species`) and emits `expression unavailable` rather than dropping a species |
 | `beb_cross.py` | codeml branch-site BEB sites × DeepLoc signal windows (alignment-column overlap; requires the branch-site run to use `cleandata = 0`). |
 
 Caveat that motivated the design: no sequence-, orthology-, or
 structure-based tool sees residue-level catalytic loss (the SF2 tandem-array
 lesson) — EC and structure calls are read alongside domain/catalytic-residue
 evidence.
+
+**Two axes are deliberately weaker than they look, and say so in their output.**
+
+*Gene structure* was built expecting it to help resolve subfamilies where the tree
+cannot. It does not: on the PEPC clan all nine conserved intron positions are shared by
+both subfamilies at 92–100% and **none is diagnostic**, because the conservation predates
+the duplication being split. What the same measurement does support is model quality —
+24 of 61 scorable genes deviate from the conserved set, and the deviation rate tracks the
+annotation programme (Helixer 0.52 stray introns per gene, EVM 0.39, AUGUSTUS and UNR
+0.00). Reported without that covariate, the axis reads annotation vintage as biology.
+
+*Structural coherence* (foldseek within-vs-between subfamily) looked positive — 5 of 6
+subfamilies coherent, ratio median 1.24. Controlling for sequence identity does not turn
+that negative so much as remove the ground to stand on: the linear control is
+misspecified (r² ≈ 0.5, binned residuals non-monotonic, alntmscore saturating while
+fident keeps rising), and within- and between-subfamily pairs barely share an identity
+range at all. `structure_coherence` therefore returns `no_interpretation_available` with
+the reason, rather than a verdict — and `sequence_controlled` means the control held, not
+that identities were supplied.
 
 ### Running the stack on one family
 
@@ -1159,8 +1250,10 @@ family_finder/
   beb_cross.py              # BEB sites x signal windows
   extract_plaza_orthology.py  # DIAMOND fwd/rev -> orthology TSV (RBH per species)
   build_supermatrix.py      # Codon supermatrix from the run's own single-copy markers
-  classify_unplaced.py      # Why each unplaced gene stayed unplaced (5 verdicts)
-  measure_v2.py             # Per-species unplaced rate, length-stratified
+  classify_unplaced.py      # Why each unplaced gene stayed unplaced (5 verdicts + CDS/length flags)
+  measure_v2.py             # Per-species unplaced rate: raw AND comparable (length + CDS integrity)
+  extract_signal_windows.py # DeepLoc attention windows -> alignment columns, stamped
+  reconstruct_models.py     # Re-predict gene models and gate them on their own genome
   config.py                 # Config dataclass + JSON loader
   pipeline.py               # Iterative loop orchestrator
   steps/
@@ -1174,13 +1267,21 @@ family_finder/
     pseudogene.py            # Pseudogene detection (evidence collection + reporting)
     ec_sources.py            # eggNOG-mapper + CLEAN parsers/merge
     family_naming.py         # Naming vote logic (direct + orthology weights)
-    subfamily.py             # HOG subfamilies, SDP scan, monophyly attribution
+    subfamily.py             # HOG subfamilies, SDP scan, monophyly, anchor transferability + grade
+    gene_structure.py        # Intron positions as a GENE-MODEL QUALITY axis (see below)
+    gff_join.py              # pep id <-> GFF id joining through utils.gene_ids, with a cap
+    expression.py            # Per-species subfamily expression share, coverage stated
+    subfunctionalization.py  # Multi-axis verdict + narrative
     deeploc.py / retargeting.py / esm.py / epa.py  # annotation & placement tiers
   utils/
     seqio.py                 # FASTA I/O, species splitting
     species.py               # Species tree loading, pairwise distances
     parallel.py              # ProcessPoolExecutor wrapper
     checkpoint.py            # Resume/checkpoint logic
+    manifest.py              # Run manifest + config-hash resume guard
+    gene_ids.py              # One canonical gene id; match_ids reports what it lost
+    alignment.py             # Column occupancy, group-aware selection, alignment_id stamps
+    newick.py                # Dependency-free Newick parser, Fitch, `#1` clade marking
     logging_setup.py         # Logging configuration
 ```
 
