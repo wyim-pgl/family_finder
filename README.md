@@ -953,14 +953,46 @@ All key CAM (Crassulacean Acid Metabolism) genes clustered correctly across 5 sp
 
 CgigH (Helixer annotation) recovered PPC4 and PPCK genes that were present but unannotated in the MAKER annotation, confirming their presence in the *Carnegiea gigantea* genome.
 
-### Value of iteration: CAM genes found only through later rounds
+### Value of iteration: measured per round
 
-33 CAM pathway genes were placed into correct families only through iterative rounds (R2--R10), having been pruned or misassigned in R1. Examples include:
+> ⚠️ **An earlier version of this section claimed 33 CAM pathway genes were placed
+> "only through iterative rounds (R2--R10)", with Hkl1 at R9. That was measured on v1
+> and does not hold for v2.** Every flagship CAM gene is now in Round 1:
+> `Mcr8G11630` (Ppc1), `Mcr7G08600` (Ppc2) and `Ococ_OcoChr03G21370` all sit in
+> `R1_OG0000134` (39 genes, 5 species) — the PEPC clan the subfamily work is built
+> on — and `Mcr6G09730` (PPC4) is in `R1_OG0010572`. Per-round profile assignment and
+> relative pruning changed what round 1 keeps.
 
-- **R2--R4:** NADP-Me3, Snrk2.3, CIPK24, Ers1/Etr1, Myb61
-- **R9:** Hkl1
+What iteration is actually worth, on the five-species v2 run (14,949 families /
+134,175 placed genes):
 
-These genes would have been lost in a single-pass OrthoFinder analysis.
+| round | families | genes | share of placed genes |
+|---|---|---|---|
+| **R1** | 14,234 | **127,829** | **95.3%** |
+| R2 | 549 | 5,110 | 3.8% |
+| R3 | 115 | 882 | 0.7% |
+| R4 | 37 | 241 | 0.2% |
+| R5 | 13 | 109 | 0.1% |
+| R6 | 1 | 4 | 0.003% |
+
+Round 2 earns its place. Rounds 4 through 6 place 0.26% of the genes between them,
+and on the fifteen-species panel one of those rounds spent **2h11m in profile
+assignment to place nothing** — it rebuilds all 23,744 family profiles every round
+(`0 cached` in the log). The tail is handled far more cheaply by the post-convergence
+rescue, which placed 29,943 genes against the 1,236 that rounds 3 and later
+contributed.
+
+Two settings follow from this, both defaulting to the previous behaviour:
+
+- `convergence_min_yield` — stop when a round places less than this fraction of the
+  pool it started from. The old rule is this with the threshold at zero. At `0.001`
+  the five-species run ends after round 4, at a cost of 113 genes.
+- `profile_assign_off_after_barren` — skip per-round profile assignment once it has
+  assigned nothing for this many consecutive rounds (default 2). Clustering continues.
+
+Each run writes `round_yield.tsv` (round, pool size, new families, genes placed,
+yield, genes assigned by the profile tier) so the threshold can be set from the data
+rather than from this table.
 
 ### Pseudogene detection results
 

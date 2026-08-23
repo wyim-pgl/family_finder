@@ -8,7 +8,7 @@ import json
 import logging
 import shutil
 from pathlib import Path
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, Optional, Set, Tuple, List
 
 from config import Config
 from steps.orthofinder import run_orthofinder, parse_orthogroups
@@ -220,6 +220,57 @@ def _check_id_agreement(
     return stats
 
 
+def round_yield(n_genes_placed: int, pool_size: int) -> float:
+    """Fraction of the round's input pool that the round actually placed.
+
+    Genes, not families: one family can hold forty genes or two, so a family
+    count says nothing about how much of the pool moved.
+    """
+    if pool_size <= 0:
+        return 0.0
+    return n_genes_placed / pool_size
+
+
+def should_stop_iterating(recent_yields: List[float], config: Config) -> bool:
+    """Whether the round loop has stopped paying for itself (issue #46).
+
+    Two rules, and the second contains the first. With
+    `convergence_min_yield` at its default 0.0 this is exactly the old
+    behaviour - stop after `convergence_no_new_families` consecutive rounds
+    that placed nothing. Raise the threshold and the loop also ends when a
+    round's yield falls below it, which is what the measured tail asks for:
+    on the 5-species run rounds 5 and 6 placed 113 genes of 134,175 between
+    them, at roughly two hours each on the 15-species panel.
+    """
+    if not recent_yields:
+        return False
+    if config.convergence_min_yield > 0:
+        return recent_yields[-1] < config.convergence_min_yield
+    barren = 0
+    for y in reversed(recent_yields):
+        if y > 0:
+            break
+        barren += 1
+    return barren >= config.convergence_no_new_families
+
+
+def should_skip_profile_tier(assignments_per_round: List[int],
+                             config: Config) -> bool:
+    """Whether per-round profile assignment has earned another round.
+
+    It rebuilds every family profile from scratch each round - the log says
+    `0 cached` every time - so a round that assigns nothing is hours of
+    hmmbuild and hmmsearch for no placement. Measured on the 15-species run:
+    round 4 placed 4 genes, round 5 placed 0 in 2h11m.
+    """
+    limit = config.profile_assign_off_after_barren
+    if limit <= 0:
+        return False
+    if len(assignments_per_round) < limit:
+        return False
+    return all(n == 0 for n in assignments_per_round[-limit:])
+
+
 def _write_round_families(round_dir, new_families: Dict[str, Set[str]]):
     """Write this round's confirmed families incrementally (resume support).
 
@@ -391,6 +442,9 @@ def run(
 
     round_num = start_round - 1
     rounds_with_no_new = 0
+    round_yields: List[float] = []
+    profile_assignments: List[int] = []
+    yield_log: List[dict] = []
 
     while round_num < config.max_rounds:
         round_num += 1
@@ -497,7 +551,15 @@ def run(
         # Per-round profile assignment (issue #13): offer this round's outliers
         # to the confirmed families' HMM profiles BEFORE recycling them into
         # the next outliers-only OrthoFinder run. Errors must never kill a round.
-        if config.profile_assign_per_round and all_confirmed_families and new_outlier_pool:
+        skip_profiles = should_skip_profile_tier(profile_assignments, config)
+        if skip_profiles:
+            logger.info(
+                f"Round {round_num}: skipping profile assignment — the last "
+                f"{config.profile_assign_off_after_barren} rounds assigned "
+                f"nothing and it rebuilds every profile each round"
+            )
+        if (config.profile_assign_per_round and all_confirmed_families
+                and new_outlier_pool and not skip_profiles):
             try:
                 from steps.profile_assign import run_profile_assignment
                 from steps.hmmer_rescue import _find_family_alignment
@@ -520,6 +582,7 @@ def run(
                     n_assigned += len(genes)
                     for gid in genes:
                         new_outlier_pool.pop(gid, None)
+                profile_assignments.append(n_assigned)
                 logger.info(
                     f"Round {round_num}: profile assignment placed {n_assigned} "
                     f"outlier genes into {len(assigned)} families"
@@ -552,7 +615,39 @@ def run(
 
         save_checkpoint(round_dir, round_num, len(new_outlier_pool), "completed")
 
-        # Step 7: Check convergence
+        # Step 7: Check convergence — on genes placed, not families created
+        placed = sum(len(g) for g in new_families.values())
+        this_yield = round_yield(placed, len(current_pool))
+        round_yields.append(this_yield)
+        yield_log.append({
+            "round": round_num,
+            "pool_size": len(current_pool),
+            "new_families": len(new_families),
+            "genes_placed": placed,
+            "yield": round(this_yield, 6),
+            "profile_assigned": profile_assignments[-1] if profile_assignments else None,
+        })
+        with open(outdir / "round_yield.tsv", "w") as f:
+            f.write("round\tpool_size\tnew_families\tgenes_placed\tyield"
+                    "\tprofile_assigned\n")
+            for r in yield_log:
+                f.write(f"{r['round']}\t{r['pool_size']}\t{r['new_families']}\t"
+                        f"{r['genes_placed']}\t{r['yield']}\t"
+                        f"{'' if r['profile_assigned'] is None else r['profile_assigned']}\n")
+        logger.info(
+            f"Round {round_num} yield: {placed} gene(s) of {len(current_pool)} "
+            f"= {this_yield:.4%}"
+        )
+
+        if should_stop_iterating(round_yields, config):
+            logger.info(
+                f"Converged after round {round_num}: yield {this_yield:.4%} "
+                f"(threshold {config.convergence_min_yield:.4%})"
+                if config.convergence_min_yield > 0 else
+                f"Converged after round {round_num}"
+            )
+            break
+
         if len(new_families) == 0:
             rounds_with_no_new += 1
         else:

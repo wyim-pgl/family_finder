@@ -86,6 +86,19 @@ class Config:
     min_family_size: int = 2      # floor to EMIT a family after pruning
     convergence_threshold: int = 5
     convergence_no_new_families: int = 2
+    # Stop when a round places less than this fraction of the pool it started
+    # from (issue #46). The existing rule is a yield threshold of exactly zero:
+    # a round that placed 4 genes out of 35,735 kept the loop alive, and on the
+    # 15-species run the round after it spent 2h11m to place none. Measured
+    # per-round yields on the 5-species v2 run were .953 / .038 / .007 / .002 /
+    # .001 / .00003, so 0.001 ends it after round 4 and costs 113 of 134,175
+    # genes. Default 0.0 reproduces the previous behaviour exactly.
+    convergence_min_yield: float = 0.0
+    # Skip per-round profile assignment after this many consecutive rounds that
+    # assigned nothing. It rebuilds every family profile from scratch each round
+    # ("0 cached" in the log), so a barren round is hours spent for no
+    # placement. 0 disables the auto-off.
+    profile_assign_off_after_barren: int = 2
 
     # Pruning parameters
     distance_ratio_threshold: float = 5.0
