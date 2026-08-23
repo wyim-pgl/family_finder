@@ -108,3 +108,79 @@ def test_the_evalue_is_still_reported(tmp_path):
     """It is no longer the decision, but it stays in the output."""
     tbl = _tbl(tmp_path, [("g", "A", "3.2e-40", "800.0")])
     assert _parse_hmmsearch_tblout(tbl, CFG.hmmer_evalue, CFG)["g"].evalue == 3.2e-40
+
+
+# ---------------------------------------------------------------------------
+# Coverage gate, and: an UNRESOLVED call must not be placed
+# ---------------------------------------------------------------------------
+# The rescue read --tblout, which carries full-sequence scores and no domain
+# envelopes, so it could not see coverage at all. The per-round tier refuses on
+# profile_min_coverage / profile_min_query_coverage; the rescue accepted the
+# same gene blind. And a bits tie stayed placed even after being graded
+# UNRESOLVED, because a stable sort puts the first-emitted row first - which is
+# the file-order defect all over again.
+
+from steps.hmmer_rescue import _group_by_family, _parse_rescue_domtblout
+
+
+def _dom(tmp_path, rows):
+    """rows: (gene, seq_len, family, hmm_len, evalue, bits, hf, ht, af, at)."""
+    path = tmp_path / "hits.domtblout"
+    with open(path, "w") as fh:
+        fh.write("# target tlen query qlen ...\n")
+        for g, sl, fam, hl, ev, bits, hf, ht, af, at in rows:
+            fh.write(" ".join(str(x) for x in [
+                g, "-", sl, fam, "-", hl, ev, bits, 0.0,
+                1, 1, 0.0, 0.0, bits, 0.0, hf, ht, af, at, af, at, 1.0, "-"]) + "\n")
+    return path
+
+
+def test_a_hit_covering_almost_none_of_the_profile_is_refused(tmp_path):
+    """A 40-residue match to a 1000-residue profile is not family membership.
+
+    The query here is 40 aa and fully covered, so the QUERY gate cannot refuse
+    it — only the profile gate can. Written this way on purpose: an earlier
+    version used a 900-aa query, which failed both gates, so disabling the
+    profile check left the test passing for the wrong reason.
+    """
+    dom = _dom(tmp_path, [("g", 40, "F1", 1000, "1e-40", 300.0, 1, 40, 1, 40)])
+    hit = _parse_rescue_domtblout(dom, CFG.hmmer_evalue, CFG)["g"]
+    assert hit.grade == "UNRESOLVED"
+    assert "profile coverage" in hit.reason.lower()
+
+
+def test_a_hit_covering_the_profile_but_not_the_query_is_refused(tmp_path):
+    """A short conserved domain inside a long protein: the profile is covered,
+    the query barely is, and calling that gene a family member is a stretch."""
+    dom = _dom(tmp_path, [("g", 2000, "F1", 100, "1e-40", 300.0, 1, 100, 1, 100)])
+    hit = _parse_rescue_domtblout(dom, CFG.hmmer_evalue, CFG)["g"]
+    assert hit.grade == "UNRESOLVED"
+    assert "query coverage" in hit.reason.lower()
+
+
+def test_full_coverage_with_a_clear_margin_is_high(tmp_path):
+    dom = _dom(tmp_path, [
+        ("g", 1000, "F1", 1000, "1e-40", 900.0, 1, 950, 1, 950),
+        ("g", 1000, "F2", 1000, "1e-20", 200.0, 1, 950, 1, 950)])
+    hit = _parse_rescue_domtblout(dom, CFG.hmmer_evalue, CFG)["g"]
+    assert hit.grade == "HIGH"
+
+
+def test_split_domains_are_merged_before_measuring_coverage(tmp_path):
+    """Two half-profile domains cover the profile; counting them separately
+    would fail a gene that actually matches end to end."""
+    dom = _dom(tmp_path, [
+        ("g", 1000, "F1", 1000, "1e-40", 900.0, 1, 500, 1, 500),
+        ("g", 1000, "F1", 1000, "1e-40", 900.0, 501, 980, 501, 980)])
+    assert _parse_rescue_domtblout(dom, CFG.hmmer_evalue, CFG)["g"].grade == "HIGH"
+
+
+def test_an_unresolved_call_is_never_placed(tmp_path):
+    """Grading a tie and then placing it anyway leaves emission order deciding."""
+    from steps.hmmer_rescue import RescueHit
+    grouped = _group_by_family({
+        "keep": RescueHit("F1", 900.0, 1e-40, 700.0, "HIGH", ""),
+        "thin": RescueHit("F1", 900.0, 1e-40, 5.0, "PROVISIONAL", ""),
+        "tied": RescueHit("F2", 500.0, 0.0, 0.0, "UNRESOLVED", "tie"),
+    })
+    assert grouped == {"F1": {"keep", "thin"}}

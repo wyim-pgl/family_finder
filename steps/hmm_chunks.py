@@ -30,6 +30,7 @@ logger = logging.getLogger("family_finder")
 
 HMMER_OK_MARKER = "# [ok]"
 CHUNK_GLOB = "chunk_*.tblout"
+DOM_CHUNK_GLOB = "chunk_*.domtblout"
 
 
 def split_hmm_file(hmm_path: Path, out_dir: Path, chunk_size: int) -> List[Path]:
@@ -93,7 +94,8 @@ mkdir -p "$OUT_DIR"
 run_one() {{
   local i
   i=$(printf '%04d' "$1")
-  "$HMMSEARCH" --tblout "$OUT_DIR/chunk_$i.tblout" --noali \\
+  "$HMMSEARCH" --tblout "$OUT_DIR/chunk_$i.tblout" \\
+    --domtblout "$OUT_DIR/chunk_$i.domtblout" --noali \\
       -E "$EVALUE" --cpu "$THREADS" \\
       "$CHUNK_DIR/chunk_$i.hmm" "$QUERY" > /dev/null
 }}
@@ -161,7 +163,8 @@ def write_runner_script(
 
 
 def merge_tblouts(tblout_dir: Path, out_path: Path,
-                  expected: Optional[int] = None) -> int:
+                  expected: Optional[int] = None,
+                  glob: str = CHUNK_GLOB) -> int:
     """Concatenate chunk tblouts, refusing to merge an incomplete set.
 
     Every chunk must carry HMMER's terminating `# [ok]`; a task killed by a
@@ -169,7 +172,7 @@ def merge_tblouts(tblout_dir: Path, out_path: Path,
     merging that silently would under-report rescued genes.
     """
     tblout_dir = Path(tblout_dir)
-    parts = sorted(tblout_dir.glob(CHUNK_GLOB))
+    parts = sorted(tblout_dir.glob(glob))
 
     if expected is not None and len(parts) != expected:
         raise RuntimeError(

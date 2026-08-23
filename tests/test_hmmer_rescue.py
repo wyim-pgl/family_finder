@@ -92,10 +92,19 @@ def families():
 
 
 def tblout(rows):
-    """A HMMER3 --tblout body from (gene, family, evalue) rows."""
+    """A HMMER3 --tblout body from (gene, family, evalue[, bits]) rows.
+
+    Bit scores matter now: the rescue decides on them, not on the E-value
+    (issue #45), and rows left at the same score are a genuine tie the code is
+    required to refuse rather than break by emission order.
+    """
     head = ("#                              --- full sequence ----\n"
             "# target name  accession  query name  accession  E-value\n")
-    body = "".join(f"{g} - {f} - {e} 120.0 3.4 1 1\n" for g, f, e in rows)
+    body = ""
+    for row in rows:
+        g, f, e = row[:3]
+        bits = row[3] if len(row) > 3 else 120.0
+        body += f"{g} - {f} - {e} {bits} 3.4 1 1\n"
     return head + body + "#\n# [ok]\n"
 
 
@@ -213,8 +222,8 @@ def test_places_genes_into_their_best_scoring_family(
         tmp_path, monkeypatch, realigned):
     # Arrange: Aaa_u1 hits two families, Bbb_u2's only hit is above the cutoff
     install(monkeypatch, FakeSubprocess(tblout_body=tblout([
-        ("Aaa_u1", "R1_OG0000001", "1.2e-40"),
-        ("Aaa_u1", "R1_OG0000002", "3.0e-12"),
+        ("Aaa_u1", "R1_OG0000001", "1.2e-40", 900.0),
+        ("Aaa_u1", "R1_OG0000002", "3.0e-12", 120.0),
         ("Bbb_u2", "R1_OG0000002", "5.0e-3"),
         ("Ccc_u3", "R1_OG0000001", "7.7e-08"),
     ])))
@@ -228,7 +237,7 @@ def test_places_genes_into_their_best_scoring_family(
     # Assert
     assert out is not fams
     assert out["R1_OG0000001"] == {"Aaa_g1", "Bbb_g2", "Aaa_u1", "Ccc_u3"}
-    assert out["R1_OG0000002"] == {"Aaa_g3", "Bbb_g4"}    # 3.0e-12 lost to 1.2e-40
+    assert out["R1_OG0000002"] == {"Aaa_g3", "Bbb_g4"}    # 120 bits lost to 900
     assert "Bbb_u2" not in {g for m in out.values() for g in m}
 
 

@@ -23,7 +23,8 @@ from utils.seqio import write_fasta
 # Prevent MAFFT_BINARIES version conflict in conda/micromamba environments
 os.environ.pop("MAFFT_BINARIES", None)
 
-from steps.hmm_chunks import merge_tblouts, split_hmm_file, write_runner_script
+from steps.hmm_chunks import (DOM_CHUNK_GLOB, merge_tblouts, split_hmm_file,
+                              write_runner_script)
 
 logger = logging.getLogger("family_finder")
 
@@ -69,6 +70,7 @@ def _run_hmmsearch(
     cmd = [
         config.hmmsearch_bin,
         "--tblout", str(outpath),
+        "--domtblout", str(outpath.with_suffix(".domtblout")),
         "--noali",
         "-E", str(config.hmmer_evalue),
         "--cpu", str(min(config.n_workers, 8)),
@@ -152,6 +154,64 @@ def _grade_hit(best_bits: float, second_bits: Optional[float],
         f"margin {margin:.1f} bits is below the required {required:.1f} — the "
         f"per-round tier would refuse this assignment"
     )
+
+
+def _parse_rescue_domtblout(
+    dom_path: Path, evalue_cutoff: float, config: Config
+) -> Dict[str, RescueHit]:
+    """Grade rescue assignments from --domtblout, with a coverage gate.
+
+    Issue #45. The rescue read --tblout, which carries full-sequence scores and
+    no domain envelopes, so it could not measure coverage at all: a forty-residue
+    match to a thousand-residue profile scored, passed the E-value cutoff and
+    became family membership. The per-round tier refuses exactly that case on
+    `profile_min_coverage` / `profile_min_query_coverage`, and the two tiers
+    disagreeing about what counts as a member is the inconsistency this issue
+    is about.
+
+    Domain envelopes are merged before measuring, so a profile matched in two
+    halves is not penalised for being split. Both directions are checked - a
+    short conserved domain inside a long protein covers the profile while
+    covering almost none of the query, and that is not membership either.
+
+    Parsing is `steps.profile_assign.parse_domtblout`, deliberately: one parser,
+    one definition of coverage across both tiers.
+    """
+    from steps.profile_assign import parse_domtblout
+
+    per_gene = parse_domtblout(dom_path)
+    hits: Dict[str, RescueHit] = {}
+    for gene_id, profile_hits in per_gene.items():
+        candidates = [h for h in profile_hits if h.full_evalue <= evalue_cutoff]
+        if not candidates:
+            continue
+        candidates.sort(key=lambda h: -h.full_bits)
+        best = candidates[0]
+        second_bits = candidates[1].full_bits if len(candidates) > 1 else None
+        grade, reason = _grade_hit(best.full_bits, second_bits, config)
+
+        if best.profile_cov < config.profile_min_coverage:
+            grade, reason = "UNRESOLVED", (
+                f"profile coverage {best.profile_cov:.2f} is below "
+                f"{config.profile_min_coverage:.2f} — the match is too partial "
+                f"to call membership"
+            )
+        elif best.query_cov < config.profile_min_query_coverage:
+            grade, reason = "UNRESOLVED", (
+                f"query coverage {best.query_cov:.2f} is below "
+                f"{config.profile_min_query_coverage:.2f} — the profile matches "
+                f"a small part of this protein"
+            )
+
+        hits[gene_id] = RescueHit(
+            family=best.family_id,
+            bits=best.full_bits,
+            evalue=best.full_evalue,
+            margin=None if second_bits is None else best.full_bits - second_bits,
+            grade=grade,
+            reason=reason,
+        )
+    return hits
 
 
 def _parse_hmmsearch_tblout(
@@ -311,6 +371,21 @@ def _search_unplaced(
     else:
         _run_hmmsearch(combined_hmm, unplaced_fasta, tblout, config)
 
+    # Prefer --domtblout: it is the only output carrying domain envelopes, and
+    # without them coverage cannot be checked at all (issue #45). Falling back
+    # is allowed for a rescue directory written before this existed, but it is
+    # said out loud rather than degrading quietly.
+    dom = tblout.with_suffix(".domtblout")
+    if config.hmmer_chunk_size:
+        dom_parts = sorted((rescue_dir / "chunks").glob(DOM_CHUNK_GLOB))
+        if dom_parts:
+            merge_tblouts(rescue_dir / "chunks", dom,
+                          expected=len(dom_parts), glob=DOM_CHUNK_GLOB)
+    if dom.exists():
+        return _parse_rescue_domtblout(dom, config.hmmer_evalue, config)
+    logger.warning(
+        "no --domtblout beside %s: grading on bit scores alone, WITHOUT the "
+        "coverage gate the per-round tier applies", tblout)
     return _parse_hmmsearch_tblout(tblout, config.hmmer_evalue, config)
 
 
@@ -320,6 +395,12 @@ def _group_by_family(
     """Invert gene -> RescueHit into family -> {genes}."""
     rescued_by_family: Dict[str, Set[str]] = {}
     for gene_id, hit in hits.items():
+        # UNRESOLVED means the evidence does not prefer this family: a tie in
+        # bits, or coverage too thin to call membership. Placing it anyway
+        # would let emission order decide after all, which is the whole defect.
+        if hit.grade == "UNRESOLVED":
+            logger.debug(f"  Not placed {gene_id}: {hit.reason}")
+            continue
         rescued_by_family.setdefault(hit.family, set()).add(gene_id)
         logger.debug(f"  Rescued {gene_id} → {hit.family} "
                      f"({hit.bits:.1f} bits, {hit.grade})")
