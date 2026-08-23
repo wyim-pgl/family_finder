@@ -248,3 +248,81 @@ def test_the_written_table_keeps_the_warning_column(tmp_path):
     for column in ("metric", "sequence_controlled", "coherent_controlled",
                    "warning"):
         assert column in header
+
+
+# --- anchor transferability: the grade has to reach the TSV ----------------
+
+_TREE = "((((P1,q1)100/100,q2)100/76,((P2,r1)100/100,r2)100/99)90/90,out);"
+
+
+def _anchor_args(tmp_path, tree=_TREE, **kw):
+    (tmp_path / "tree.nwk").write_text(tree)
+    (tmp_path / "anchors.tsv").write_text("P1\tppc-1E1\nP2\tppc-1E2\n")
+    base = dict(family_tree=str(tmp_path / "tree.nwk"),
+                anchors=str(tmp_path / "anchors.tsv"),
+                anchor_min_support=None, query_prefix=None,
+                cross_tree=None, tree_name="this tree")
+    base.update(kw)
+    return types.SimpleNamespace(**base)
+
+
+def test_no_tree_means_no_transferability_table(tmp_path):
+    from subfamily_report import build_transferability
+
+    args = _anchor_args(tmp_path, family_tree=None)
+    assert build_transferability(args) == []
+
+
+def test_transferability_rows_carry_the_grade(tmp_path):
+    from subfamily_report import build_transferability
+
+    by = {r["label"]: r for r in build_transferability(_anchor_args(tmp_path))}
+
+    assert by["ppc-1E1"]["grade"] == "PROVISIONAL"
+    assert by["ppc-1E1"]["support"] == "100/76"
+    assert "76" in by["ppc-1E1"]["grade_reason"]
+    assert by["ppc-1E1"]["cross_tree_evaluated"] == "False"
+
+
+def test_cross_tree_datasets_are_read_from_their_own_trees(tmp_path):
+    """--cross-tree NAME=tree runs the same clade rule on an independent
+    dataset; agreement is the membership coming back identical."""
+    from subfamily_report import build_transferability
+
+    other = tmp_path / "aa.nwk"
+    other.write_text("((((P1,q1)100/100,q2)100/100,"
+                     "((P2,r1)100/100,r2)100/100)90/90,out);")
+    args = _anchor_args(tmp_path, tree_name="codon123",
+                        cross_tree=[f"aa102={other}"])
+
+    by = {r["label"]: r for r in build_transferability(args)}
+
+    assert by["ppc-1E2"]["grade"] == "HIGH"
+    assert by["ppc-1E2"]["consistent_datasets"] == "codon123;aa102"
+    assert by["ppc-1E1"]["grade"] == "PROVISIONAL"    # UFboot 76 in this tree
+
+
+def test_a_disagreeing_cross_tree_is_named_not_hidden(tmp_path):
+    from subfamily_report import build_transferability
+
+    other = tmp_path / "aa.nwk"
+    other.write_text("(((P1,q1)100/100,(q2,(P2,r1)100/100)100/100)90/90,out);")
+    args = _anchor_args(tmp_path, cross_tree=[f"aa102={other}"])
+
+    by = {r["label"]: r for r in build_transferability(args)}
+
+    assert by["ppc-1E2"]["grade"] == "UNRESOLVED"
+    assert by["ppc-1E2"]["inconsistent_datasets"] == "aa102"
+
+
+def test_the_written_table_keeps_the_grade_columns(tmp_path):
+    from subfamily_report import build_transferability, write_tsv
+
+    out = tmp_path / "anchor_transferability.tsv"
+    write_tsv(build_transferability(_anchor_args(tmp_path)), out)
+
+    header = out.read_text().splitlines()[0].split("\t")
+    for column in ("grade", "grade_reason", "sh_alrt", "ufboot",
+                   "n_consistent_datasets", "consistent_datasets",
+                   "inconsistent_datasets", "transferable"):
+        assert column in header

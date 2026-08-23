@@ -20,6 +20,14 @@ splitter) and writes three TSVs into --outdir:
                             alone drives the legacy rank-purity verdict.
   structure_coherence.tsv   (with --pairs) foldseek all-vs-all within- vs
                             between-subfamily coherence
+  anchor_transferability.tsv (with --family-tree and --anchors) whether the
+                            reference subfamily names designate anything in
+                            the query species, and how well established each
+                            assignment is: HIGH / PROVISIONAL / UNRESOLVED
+                            from the weaker of SH-aLRT/UFBoot plus membership
+                            recovered from the independent datasets given with
+                            --cross-tree (with none, that condition reads NOT
+                            EVALUATED and nothing can grade HIGH)
 
 With --focal-subfamily plus the selection-evidence inputs (--relax-json,
 --meme-json/--meme-region, --absrel-json, --expression-share,
@@ -44,6 +52,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from steps.subfamily import (  # noqa: E402
+    anchor_transferability,
     load_taxonomy,
     parse_pair_identities,
     parse_pairwise_scores,
@@ -228,6 +237,60 @@ def build_structure_coherence(args, groups: dict):
     return rows, confounding
 
 
+def read_anchors(path: Path) -> dict:
+    """TSV gene_id<TAB>subfamily_label — reference genes that name groups."""
+    anchors = {}
+    for line in Path(path).read_text().splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        gene, label = line.rstrip("\n").split("\t")[:2]
+        anchors[gene] = label
+    return anchors
+
+
+def _cross_tree_memberships(specs, anchors, query_prefixes) -> dict:
+    """`NAME=tree.nwk` -> {NAME: {label: members}}.
+
+    The same clade rule is run on each independent dataset, so "consistent"
+    means the membership was RECOVERED there, not asserted by hand.
+    """
+    out: dict = {}
+    for spec in specs or []:
+        name, _, path = spec.partition("=")
+        if not path:
+            raise ValueError(f"--cross-tree wants NAME=path, got {spec!r}")
+        rows = anchor_transferability(Path(path).read_text(), anchors,
+                                      query_prefixes=query_prefixes)
+        out[name] = {r["label"]: r["members"] for r in rows if r["label"]}
+    return out
+
+
+def build_transferability(args) -> list:
+    """anchor_transferability rows, flattened for the TSV.
+
+    Empty when no --family-tree/--anchors were given: the question was not
+    asked, which is not the same as every name being fine.
+    """
+    if not (getattr(args, "family_tree", None)
+            and getattr(args, "anchors", None)):
+        return []
+    anchors = read_anchors(Path(args.anchors))
+    prefixes = (args.query_prefix.split(",") if args.query_prefix else None)
+    rows = anchor_transferability(
+        Path(args.family_tree).read_text(), anchors,
+        query_prefixes=prefixes, min_support=args.anchor_min_support,
+        cross_tree_members=_cross_tree_memberships(
+            args.cross_tree, anchors, prefixes),
+        tree_name=args.tree_name,
+    )
+    flat = []
+    for r in rows:
+        flat.append({k: (";".join(str(x) for x in v) if isinstance(v, list)
+                         else "" if v is None else str(v))
+                     for k, v in r.items()})
+    return flat
+
+
 def write_subfunctionalization(args, verdict: dict, evidence: dict,
                                outdir: Path) -> None:
     """subfunctionalization.md (narrative) + .tsv (machine-readable)."""
@@ -288,6 +351,29 @@ def main():
                          "(SwissProt-backed anchors and the like). The most "
                          "complete one becomes the coordinate reference, so "
                          "positions can be compared with published ones.")
+    # --- can the reference names be transferred, and how well established? ---
+    ap.add_argument("--family-tree", default=None,
+                    help="Family/clan gene tree (Newick, IQ-TREE "
+                         "SH-aLRT/UFBoot node labels) — with --anchors, "
+                         "writes anchor_transferability.tsv")
+    ap.add_argument("--anchors", default=None,
+                    help="TSV: reference_gene_id<TAB>subfamily_label")
+    ap.add_argument("--anchor-min-support", type=float, default=None,
+                    help="Support bar below which a clade is not called "
+                         "transferable at all (the grade is reported "
+                         "regardless, on its own thresholds)")
+    ap.add_argument("--query-prefix", default=None,
+                    help="Comma-separated species prefixes that count as "
+                         "query genes (default: every non-anchor leaf)")
+    ap.add_argument("--cross-tree", action="append", default=None,
+                    metavar="NAME=TREE",
+                    help="Independent dataset to test membership against "
+                         "(amino acid / codon 1+2 / codon 1+2+3), repeatable. "
+                         "Without any, cross-tree consistency is reported as "
+                         "NOT EVALUATED and no assignment can grade HIGH")
+    ap.add_argument("--tree-name", default="this tree",
+                    help="Name of the dataset --family-tree came from, used "
+                         "in the consistency report")
     ap.add_argument("--min-group", type=int, default=5)
     ap.add_argument("--max-unmatched", type=float, default=None,
                     help="Refuse when more than this fraction of --groups "
@@ -406,6 +492,16 @@ def main():
                     print(f"    {r['subfamily']}: {r['reason']}")
         else:
             print("  " + UNCONTROLLED_WARNING)
+
+    transfer = build_transferability(args)
+    if transfer:
+        write_tsv(transfer, outdir / "anchor_transferability.tsv")
+        print(f"anchor_transferability.tsv: {len(transfer)} rows")
+        for r in transfer:
+            if not r["label"]:
+                continue
+            print(f"  {r['label']}: {r['grade']} (support {r['support']}, "
+                  f"{r['clade_size']} members) — {r['grade_reason']}")
 
     if args.focal_subfamily:
         evidence = collect_selection_evidence(args)

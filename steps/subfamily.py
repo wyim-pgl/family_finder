@@ -1239,11 +1239,135 @@ def _min_support(raw: Optional[str]) -> Optional[float]:
     return min(vals) if vals else None
 
 
+# --- how confident is one subfamily assignment? ----------------------------
+#
+# Conventions ADOPTED HERE, not derived from these data. SH-aLRT >= 80 and
+# UFboot >= 95 are the bars IQ-TREE's own manual recommends for calling a
+# clade well supported; UFboot >= 70 is the usual "worth reporting, not
+# established" band. Two independent datasets recovering the same membership
+# is our own minimum, taken from the #40 rebuild where amino acid, codon 1+2
+# and codon 1+2+3 were run separately. Nothing below is a measured property
+# of the PEPC clan; change the numbers here and say so when you do.
+GRADE_MIN_SH_ALRT = 80
+GRADE_HIGH_MIN_UFBOOT = 95
+GRADE_PROVISIONAL_MIN_UFBOOT = 70
+GRADE_MIN_CONSISTENT_DATASETS = 2
+
+GRADE_HIGH = "HIGH"
+GRADE_PROVISIONAL = "PROVISIONAL"
+GRADE_UNRESOLVED = "UNRESOLVED"
+
+
+def _support_pair(
+        raw: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
+    """Node label -> (SH-aLRT, UFboot).
+
+    IQ-TREE writes "SH-aLRT/UFBoot" ("96.2/94") with `-alrt -bb`, and
+    "SH-aLRT/aBayes/UFBoot" when `-abayes` is on too, so the first and last
+    numbers are the two we grade on. A single number is not self-describing:
+    it is held to BOTH bars rather than assumed to be the lenient one.
+    """
+    if not raw:
+        return None, None
+    vals = []
+    for part in str(raw).split("/"):
+        try:
+            vals.append(float(part))
+        except ValueError:
+            continue
+    if not vals:
+        return None, None
+    return vals[0], vals[-1]
+
+
+def grade_assignment(sh_alrt: Optional[float], ufboot: Optional[float],
+                     n_consistent: Optional[int] = None,
+                     consistent: Optional[List[str]] = None,
+                     inconsistent: Optional[List[str]] = None
+                     ) -> Tuple[str, str]:
+    """(grade, reason) for one subfamily assignment. See the constants above.
+
+    The WEAKER support decides. Each of the two supports is held to its own
+    bar and the one that fails is named in the reason — a strong SH-aLRT
+    never buys a weak UFboot through, and the two are never averaged
+    (mean(100, 90) = 95 would clear the HIGH bar that neither 90 nor the pair
+    deserves).
+
+    Cross-tree consistency is EVIDENCE. `n_consistent=None` means no
+    independent dataset was supplied, which is not agreement and not
+    disagreement: it caps the grade at PROVISIONAL and says in the reason
+    that the condition was never evaluated. Only a consistency that was
+    measured and came out short reads as a failure.
+    """
+    named = ""
+    if inconsistent:
+        named = " — " + ", ".join(inconsistent) + " recovered other members"
+    if sh_alrt is None or ufboot is None:
+        return GRADE_UNRESOLVED, ("no support value on the clade — nothing to "
+                                  "grade the assignment with")
+    if sh_alrt < GRADE_MIN_SH_ALRT:
+        return GRADE_UNRESOLVED, (
+            f"SH-aLRT {sh_alrt:g} is below {GRADE_MIN_SH_ALRT:g} "
+            f"(UFboot {ufboot:g}) — the weaker support decides")
+    if ufboot < GRADE_PROVISIONAL_MIN_UFBOOT:
+        return GRADE_UNRESOLVED, (
+            f"UFboot {ufboot:g} is below {GRADE_PROVISIONAL_MIN_UFBOOT:g} "
+            f"(SH-aLRT {sh_alrt:g}) — the weaker support decides")
+    if (n_consistent is not None
+            and n_consistent < GRADE_MIN_CONSISTENT_DATASETS):
+        return GRADE_UNRESOLVED, (
+            f"cross-tree consistency was evaluated and FAILED: {n_consistent} "
+            f"dataset(s) recovered this membership, need "
+            f"{GRADE_MIN_CONSISTENT_DATASETS}" + named)
+    if ufboot >= GRADE_HIGH_MIN_UFBOOT and n_consistent is not None:
+        return GRADE_HIGH, (
+            f"SH-aLRT {sh_alrt:g} and UFboot {ufboot:g} both clear "
+            f"{GRADE_MIN_SH_ALRT:g}/{GRADE_HIGH_MIN_UFBOOT:g}, and "
+            f"{n_consistent} datasets recover the same membership"
+            + (" (" + ", ".join(consistent) + ")" if consistent else ""))
+    caveats = []
+    if ufboot < GRADE_HIGH_MIN_UFBOOT:
+        caveats.append(
+            f"UFboot {ufboot:g} is below {GRADE_HIGH_MIN_UFBOOT:g} "
+            f"(SH-aLRT {sh_alrt:g}) — the weaker support decides")
+    if n_consistent is None:
+        caveats.append(
+            "cross-tree consistency was NOT evaluated — no independent "
+            "dataset was supplied, so the same membership has never been "
+            "recovered twice. HIGH is unreachable without that check")
+    return GRADE_PROVISIONAL, "; ".join(caveats)
+
+
+def _cross_tree_agreement(
+        label: str, clade: set, tree_name: str,
+        cross_tree_members: Optional[Dict[str, Dict[str, object]]]):
+    """(n_consistent, agreeing, disagreeing) for one label.
+
+    Agreement is exact membership equality: the same leaves, recovered from a
+    dataset that was not this one. The tree being analysed counts as the
+    first dataset, so one agreeing partner is enough to reach
+    GRADE_MIN_CONSISTENT_DATASETS. A dataset that does not carry the label at
+    all did not recover the membership either, and is listed as disagreeing.
+    """
+    if not cross_tree_members:
+        return None, [], []
+    agree, disagree = [tree_name], []
+    for name in cross_tree_members:      # caller's order, not ours
+        other = cross_tree_members[name].get(label)
+        if other is not None and set(other) == clade:
+            agree.append(name)
+        else:
+            disagree.append(name)
+    return len(agree), agree, disagree
+
+
 def anchor_transferability(
     newick: str,
     anchor_labels: Dict[str, str],
     query_prefixes: Optional[List[str]] = None,
     min_support: Optional[float] = None,
+    cross_tree_members: Optional[Dict[str, Dict[str, object]]] = None,
+    tree_name: str = "this tree",
 ) -> List[dict]:
     """Test whether reference subfamily labels designate anything in the query.
 
@@ -1261,6 +1385,15 @@ def anchor_transferability(
 
     Returns one row per label (plus rows with ``label=None`` for anchor-free
     clades, the "lineage-specific expansion" case the paper reports by hand).
+
+    Every row also carries a `grade` — HIGH / PROVISIONAL / UNRESOLVED, see
+    `grade_assignment` — because `transferable` alone cannot tell a clade at
+    100/98 from one at 100/76 and the manuscript has to say which it has.
+    `cross_tree_members` is the consistency evidence: ``{dataset name: {label:
+    members}}`` from INDEPENDENT datasets (amino acid, codon 1+2, codon
+    1+2+3). Supplying nothing leaves that condition unevaluated rather than
+    satisfied, and the grade is capped at PROVISIONAL with that said in
+    `grade_reason`.
     """
     from utils.newick import parse_newick
 
@@ -1373,14 +1506,35 @@ def anchor_transferability(
             verdict = "no query gene in the anchor's clade — nothing to name"
         else:
             verdict = f"transferable — {n_query} query genes in the labelled clade"
+
+        # The grade is about how well established the assignment is, so a
+        # label with no assignment at all — blocked by a rival, or naming an
+        # empty query set — is UNRESOLVED whatever the node support says.
+        sh_alrt, ufboot = _support_pair(raw_support)
+        n_consistent, agree, disagree = _cross_tree_agreement(
+            label, clade, tree_name, cross_tree_members)
+        if others or dup_with or n_query == 0:
+            grade, grade_reason = GRADE_UNRESOLVED, (
+                "no assignment to grade — " + verdict)
+        else:
+            grade, grade_reason = grade_assignment(
+                sh_alrt, ufboot, n_consistent, agree, disagree)
         rows.append({
             "label": label,
             "n_anchors": len(own),
             "clade_size": len(clade),
             "n_query_in_clade": n_query,
             "support": raw_support,
+            "sh_alrt": sh_alrt,
+            "ufboot": ufboot,
             "blocked_by": sorted(set(others) | set(dup_with)),
             "transferable": transferable,
+            "grade": grade,
+            "grade_reason": grade_reason,
+            "cross_tree_evaluated": n_consistent is not None,
+            "n_consistent_datasets": n_consistent,
+            "consistent_datasets": agree,
+            "inconsistent_datasets": disagree,
             "verdict": verdict,
             "members": sorted(clade),
         })
@@ -1405,8 +1559,17 @@ def anchor_transferability(
             "clade_size": len(clade),
             "n_query_in_clade": n_query,
             "support": None,
+            "sh_alrt": None,
+            "ufboot": None,
             "blocked_by": [],
             "transferable": False,
+            "grade": GRADE_UNRESOLVED,
+            "grade_reason": ("no assignment to grade — no reference name "
+                             "applies to this clade"),
+            "cross_tree_evaluated": False,
+            "n_consistent_datasets": None,
+            "consistent_datasets": [],
+            "inconsistent_datasets": [],
             "verdict": ("query-only clade — lineage-specific expansion, no "
                         "reference name applies"),
             "members": sorted(clade),

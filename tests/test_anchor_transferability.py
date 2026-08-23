@@ -139,3 +139,170 @@ def test_slash_separated_support_uses_the_weaker_half():
           for r in anchor_transferability(tree, {"P1": "Ppc1", "P2": "Ppc2"},
                                           min_support=80)}
     assert by["Ppc1"]["transferable"] is False    # 73 < 80
+
+
+# --- the grade: a boolean cannot say 100/76 apart from 100/98 ---------------
+
+# The two-anchor shape used below: Ppc1's subfamily is (P1,q1),q2 and Ppc2's is
+# (P2,r1),r2, so the support written on the two inner-most-but-one nodes is the
+# support of each subfamily.
+def _graded(sh_uf_1, sh_uf_2="100/99", **kw):
+    tree = (f"((((P1,q1)100/100,q2){sh_uf_1},"
+            f"((P2,r1)100/100,r2){sh_uf_2})90/90,out);")
+    return {r["label"]: r
+            for r in anchor_transferability(
+                tree, {"P1": "Ppc1", "P2": "Ppc2"}, **kw)}
+
+
+def _agreeing(*names):
+    """Cross-tree evidence in which every dataset recovers the same members."""
+    members = {"Ppc1": ["P1", "q1", "q2"], "Ppc2": ["P2", "r1", "r2"]}
+    return {n: members for n in names}
+
+
+def test_high_needs_both_supports_and_recovered_membership():
+    by = _graded("100/98", cross_tree_members=_agreeing("codon12", "aa"))
+    assert by["Ppc1"]["grade"] == "HIGH"
+    assert by["Ppc1"]["n_consistent_datasets"] == 3
+
+
+def test_the_weaker_support_gates_the_grade():
+    """100/76 is not the same claim as 100/98 — UFboot decides, not SH-aLRT."""
+    by = _graded("100/76", cross_tree_members=_agreeing("codon12", "aa"))
+    assert by["Ppc1"]["grade"] == "PROVISIONAL"
+    assert "76" in by["Ppc1"]["grade_reason"]
+
+
+def test_the_average_of_the_two_supports_must_not_decide():
+    """mean(100, 90) = 95 would clear the HIGH bar; the weaker one does not."""
+    by = _graded("100/90", cross_tree_members=_agreeing("codon12", "aa"))
+    assert by["Ppc1"]["grade"] == "PROVISIONAL"
+
+
+def test_sh_alrt_below_its_own_bar_is_unresolved():
+    by = _graded("70/99", cross_tree_members=_agreeing("codon12", "aa"))
+    assert by["Ppc1"]["grade"] == "UNRESOLVED"
+    assert "SH-aLRT" in by["Ppc1"]["grade_reason"]
+
+
+def test_ufboot_below_the_provisional_bar_is_unresolved():
+    by = _graded("100/60", cross_tree_members=_agreeing("codon12", "aa"))
+    assert by["Ppc1"]["grade"] == "UNRESOLVED"
+
+
+def test_unevaluated_cross_tree_consistency_cannot_reach_high():
+    """No independent dataset was supplied. That is not agreement, and the
+    reason has to say so — 'we did not check' is not 'it checked out'."""
+    by = _graded("100/98")
+    assert by["Ppc1"]["grade"] == "PROVISIONAL"
+    assert by["Ppc1"]["cross_tree_evaluated"] is False
+    assert by["Ppc1"]["n_consistent_datasets"] is None
+    reason = by["Ppc1"]["grade_reason"].lower()
+    assert "not evaluated" in reason
+    assert "disagree" not in reason and "failed" not in reason
+
+
+def test_cross_tree_disagreement_is_a_measured_failure():
+    """A dataset that recovered different members is evidence AGAINST, and is
+    reported differently from nobody having looked."""
+    other = {"codon12": {"Ppc1": ["P1", "q1"], "Ppc2": ["P2", "r1", "r2"]}}
+    by = _graded("100/98", cross_tree_members=other)
+    assert by["Ppc1"]["grade"] == "UNRESOLVED"
+    assert by["Ppc1"]["cross_tree_evaluated"] is True
+    assert by["Ppc1"]["inconsistent_datasets"] == ["codon12"]
+    assert "codon12" in by["Ppc1"]["grade_reason"]
+    assert by["Ppc2"]["grade"] == "HIGH"          # this one did agree
+
+
+def test_the_agreeing_datasets_are_named():
+    by = _graded("100/98", tree_name="codon123",
+                 cross_tree_members=_agreeing("codon12", "aa102"))
+    assert by["Ppc1"]["consistent_datasets"] == ["codon123", "codon12", "aa102"]
+
+
+def test_a_missing_label_in_another_dataset_is_not_agreement():
+    by = _graded("100/98",
+                 cross_tree_members={"aa": {"Ppc2": ["P2", "r1", "r2"]}})
+    assert by["Ppc1"]["grade"] == "UNRESOLVED"
+    assert by["Ppc1"]["inconsistent_datasets"] == ["aa"]
+
+
+def test_an_unsupported_clade_cannot_be_graded():
+    tree = "((((P1,q1),q2),((P2,r1)99/99,r2)98/98)90/90,out);"
+    by = {r["label"]: r
+          for r in anchor_transferability(tree, {"P1": "Ppc1", "P2": "Ppc2"})}
+    assert by["Ppc1"]["grade"] == "UNRESOLVED"
+    assert "no support" in by["Ppc1"]["grade_reason"].lower()
+
+
+def test_a_blocked_label_is_never_graded_above_unresolved():
+    """Reference-lineage-specific duplication: there is no assignment to grade,
+    however strong the node holding the two anchors is."""
+    tree = ("((((A1,x1)100/100,(A3,x2)100/100)100/100,"
+            "(q1,q2)100/100)100/100,out);")
+    by = {r["label"]: r for r in anchor_transferability(
+        tree, {"A1": "PPC1", "A3": "PPC3"}, query_prefixes=["q"],
+        cross_tree_members={"aa": {"PPC1": ["A1", "x1"],
+                                   "PPC3": ["A3", "x2"]}})}
+    assert by["PPC1"]["blocked_by"] == ["PPC3"]       # and its clade is 100/100
+    assert by["PPC1"]["grade"] == "UNRESOLVED"
+
+
+def test_query_only_clades_carry_a_grade_column_too():
+    tree = "(((A_S1,q1),(q2,q3)),out);"
+    rows = anchor_transferability(tree, {"A_S1": "S1"})
+    assert all(r["grade"] == "UNRESOLVED" for r in rows if r["label"] is None)
+
+
+def test_the_grade_does_not_change_the_existing_boolean():
+    """Callers that only read `transferable` must see what they saw before."""
+    by = _graded("100/76")
+    assert by["Ppc1"]["transferable"] is True     # unchanged, no min_support
+    assert by["Ppc1"]["grade"] == "PROVISIONAL"
+
+
+def test_the_thresholds_are_named_constants():
+    from steps.subfamily import (GRADE_HIGH_MIN_UFBOOT, GRADE_MIN_SH_ALRT,
+                                 GRADE_MIN_CONSISTENT_DATASETS,
+                                 GRADE_PROVISIONAL_MIN_UFBOOT)
+    assert (GRADE_MIN_SH_ALRT, GRADE_HIGH_MIN_UFBOOT,
+            GRADE_PROVISIONAL_MIN_UFBOOT, GRADE_MIN_CONSISTENT_DATASETS) \
+        == (80, 95, 70, 2)
+
+
+# --- known answer on the real corrected PEPC tree --------------------------
+
+REAL_TREE = (Path(__file__).resolve().parent / "data"
+             / "clan_corrected_tree.treefile")
+
+
+def test_corrected_pepc_subfamilies_are_both_provisional():
+    """`mM_repair/clan_corrected_tree.treefile`, the tree #40 was decided on.
+
+    ppc-1E1 is 95/91 and ppc-1E2 is 100/76: one of them looks far stronger
+    than the other and neither reaches UFboot 95, so both are PROVISIONAL.
+    This is the outcome to preserve — the bar is not to be moved until
+    ppc-1E1 clears it.
+    """
+    rows = anchor_transferability(
+        REAL_TREE.read_text(),
+        {"Mcry_Mcr8G11630": "ppc-1E1", "Mcry_Mcr7G08600": "ppc-1E2"},
+    )
+    by = {r["label"]: r for r in rows if r["label"]}
+    assert by["ppc-1E1"]["support"] == "95/91"
+    assert by["ppc-1E2"]["support"] == "100/76"
+    assert by["ppc-1E1"]["grade"] == "PROVISIONAL"
+    assert by["ppc-1E2"]["grade"] == "PROVISIONAL"
+    # and the grade is not the boolean in disguise
+    assert by["ppc-1E1"]["transferable"] is True
+    assert by["ppc-1E2"]["transferable"] is True
+    # nothing here was checked against a second dataset, and the reason says
+    # so rather than counting the missing check as agreement
+    assert by["ppc-1E1"]["cross_tree_evaluated"] is False
+    assert "not evaluated" in by["ppc-1E1"]["grade_reason"].lower()
+    # ...and had all three #40 datasets agreed, these supports would still not
+    # reach HIGH. That is what the bar being 95 means.
+    from steps.subfamily import grade_assignment
+    for label in ("ppc-1E1", "ppc-1E2"):
+        assert grade_assignment(by[label]["sh_alrt"], by[label]["ufboot"],
+                                3)[0] == "PROVISIONAL"
