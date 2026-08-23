@@ -23,6 +23,7 @@ from utils.species import (
     validate_species_tree,
 )
 from utils.checkpoint import save_checkpoint, find_latest_checkpoint
+from utils.manifest import start_manifest, finish_manifest
 from utils.parallel import parallel_map
 
 logger = logging.getLogger("family_finder")
@@ -294,6 +295,7 @@ def run(
     outdir: str,
     config: Config,
     resume: bool = False,
+    allow_config_change: bool = False,
 ):
     """Run the iterative gene family construction pipeline.
 
@@ -304,9 +306,19 @@ def run(
         outdir: Output directory.
         config: Pipeline configuration.
         resume: Whether to resume from checkpoint.
+        allow_config_change: Resume even though the configuration differs from
+            the one on record. Records the change in the run manifest.
     """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+
+    # Record what is producing this output directory, and refuse a resume
+    # under a configuration other than the one that produced the existing
+    # rounds. First thing in the run: a mismatch must cost nothing.
+    start_manifest(
+        outdir, config, species_tree_path, protein_dir, cds_dir,
+        resume=resume, allow_config_change=allow_config_change,
+    )
 
     # Load species tree and compute expected distances
     logger.info(f"Loading species tree from {species_tree_path}")
@@ -635,6 +647,7 @@ def run(
         write_pseudogene_bed(evidence, pseudo_dir / "pseudogene_candidates.bed")
         write_chromosomal_distribution(evidence, full_prot, pseudo_dir / "chromosomal_distribution.tsv", sp_filter, config.species_delimiter)
 
+    finish_manifest(outdir, "completed")
     logger.info(f"Pipeline complete: {len(all_confirmed_families)} total families across {round_num} rounds")
 
 

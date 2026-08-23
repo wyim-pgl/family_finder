@@ -58,6 +58,11 @@ def parse_args():
         help="Resume from the latest checkpoint",
     )
     parser.add_argument(
+        "--allow-config-change", action="store_true",
+        help="Resume even though the configuration differs from the one that "
+             "produced the output directory (recorded in run_manifest.json)",
+    )
+    parser.add_argument(
         "--max-rounds", type=int, default=None,
         help="Maximum number of iterative rounds (default: 10)",
     )
@@ -147,15 +152,26 @@ def main():
     logger.info(f"Workers: {config.n_workers}")
     logger.info(f"Tree builder: {config.tree_builder}")
 
-    # Run pipeline
-    pipeline.run(
-        protein_dir=args.protein_dir,
-        cds_dir=args.cds_dir,
-        species_tree_path=args.species_tree,
-        outdir=args.outdir,
-        config=config,
-        resume=args.resume,
-    )
+    # Run pipeline. A refused resume is a clean exit, not a traceback: the
+    # message already names the settings that differ. Any other failure moves
+    # the run manifest to 'failed' so the output directory says so.
+    from utils.manifest import ConfigMismatchError, finish_manifest
+    try:
+        pipeline.run(
+            protein_dir=args.protein_dir,
+            cds_dir=args.cds_dir,
+            species_tree_path=args.species_tree,
+            outdir=args.outdir,
+            config=config,
+            resume=args.resume,
+            allow_config_change=args.allow_config_change,
+        )
+    except ConfigMismatchError as e:
+        logger.error(str(e))
+        sys.exit(2)
+    except BaseException as e:
+        finish_manifest(args.outdir, "failed", error=f"{type(e).__name__}: {e}")
+        raise
 
     # Run codeml if requested
     if config.run_codeml:
