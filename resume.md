@@ -316,6 +316,8 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 
 ### 🔴 조용한 실패 — 에러 없이 그럴듯한 틀린 결과를 내는 것들 (8차 라운드에서 전부 실측)
 | 증상 | 진짜 원인 | 판정법 |
+| 🔴 **`find ~/scratch ...` 가 조용히 아무것도 안 찾는다** | **`~/scratch` 는 심볼릭 링크**(`→ /data/gpfs/assoc/pgl`)이고 `find` 는 **시작 경로가 링크면 내려가지 않는다.** 출력 없이 exit 0. 이것 때문에 "정본 branch-site 산출물이 두 호스트 어디에도 없다"는 **틀린 결론을 이슈에 게시**했다 — 실제로는 `~/scratch/bin/family_finder/pepc_pilot/seltest_fast/` 에 전부 있었다 | `find -L ~/scratch` 또는 `find ~/scratch/` (후행 슬래시), 또는 **실제 디렉터리에서 시작**. ⚠️ 링크를 지나 시작한 검색(`~/scratch/data/...`)은 정상 동작하므로 **다른 검색이 되는 걸 보고 믿으면 안 된다** |
+| **코돈 정렬의 58%가 없다** | `mM_repair/p2n.sbatch` 가 pal2nal을 **`-nogap`** 으로 돌려 gap 포함 코돈 컬럼을 전부 버렸다. `codon95.codon.aln` = **599 코돈**(gap 문자 0), 원래 1,428. `cleandata=1` 함정과 결과가 같고 원인만 다르다 | 코돈 정렬은 **컬럼 수를 단백질 정렬과 대조**할 것. 선택압 검정·BEB 좌표에 치명적이다 |
 | **`ldd` 로 CUDA 유무를 판정** | CUDA가 정적 링크라 **CUDA 빌드에서도 `ldd \| grep cuda` 는 0건**이다. 이 근거로 "CUDA 없음"을 판정했다가 상류에 오보를 올릴 뻔했다 | `strings <bin> \| grep -c cudaMalloc` (CUDA 39 / CPU 0) 또는 실행 |
 | **주석 프로그램이 서브패밀리로 오독됨** | PEPC 인트론 이탈률이 Helixer 0.52 / EVM 0.39 / AUGUSTUS·UNR 0.00 — 서브패밀리가 아니라 **주석 세대**를 따라간다. 통제 없이 쓰면 주석 차이가 생물학으로 읽힌다 | `steps/gene_structure.py` 가 프로그램 미상이면 인트론 수치를 **아예 출력하지 않는다** |
 | **발현 매트릭스를 파일명으로 지목** | SF3 74%는 `results/rnaseq/RSEM_TPM.tsv` 가 아니라 **29,405 diel 재분석**(`revision/rnaseq_29405/clustering/RSEM_TPM.average.tsv`) 값이다. 전자로는 82.8%가 나온다. `OcoChr03G21430` 이 한쪽 709.6 TPM / 다른 쪽 0.0 | 매트릭스 경로는 **CLI 입력**으로 두고 결과에 어느 매트릭스인지 남길 것 |
