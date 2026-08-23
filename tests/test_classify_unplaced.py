@@ -125,3 +125,254 @@ def test_rollup_reports_zero_for_verdicts_that_never_occurred():
 
     assert rolled == {"splinter_or_graph_cut": 0, "lineage_specific": 0,
                       "true_orphan": 3, "pruned": 0}
+
+
+# ----------------------------------------------------- CDS integrity ----
+#
+# Issue #36: a short model with a broken CDS and no cross-species hit is all
+# three things at once. Integrity is measured per gene so that "true orphan"
+# can be told apart from "the model itself is not a gene".
+
+def _cds(*codons):
+    return "".join(codons)
+
+
+def test_a_cds_with_start_stop_frame_and_no_internal_stop_is_complete():
+    integrity = cu.assess_cds(_cds("ATG", "GCT", "TAA"))
+
+    assert integrity.has_start and integrity.has_stop
+    assert integrity.in_frame and integrity.no_internal_stop
+    assert integrity.complete
+
+
+def test_a_cds_without_a_start_codon_is_incomplete():
+    integrity = cu.assess_cds(_cds("GCT", "GCT", "TAA"))
+
+    assert not integrity.has_start
+    assert not integrity.complete
+
+
+def test_a_cds_without_a_terminal_stop_codon_is_incomplete():
+    integrity = cu.assess_cds(_cds("ATG", "GCT", "GCT"))
+
+    assert not integrity.has_stop
+    assert not integrity.complete
+
+
+def test_a_cds_whose_length_is_not_divisible_by_three_is_out_of_frame():
+    integrity = cu.assess_cds(_cds("ATG", "GCT", "TAA") + "G")
+
+    assert not integrity.in_frame
+    assert not integrity.complete
+
+
+def test_an_internal_stop_codon_makes_the_cds_incomplete():
+    integrity = cu.assess_cds(_cds("ATG", "TGA", "GCT", "TAA"))
+
+    assert not integrity.no_internal_stop
+    assert not integrity.complete
+
+
+def test_the_terminal_stop_is_not_counted_as_an_internal_stop():
+    integrity = cu.assess_cds(_cds("ATG", "GCT", "TGA"))
+
+    assert integrity.no_internal_stop
+    assert integrity.complete
+
+
+def test_all_three_stop_codons_are_recognised():
+    for stop in ("TAA", "TAG", "TGA"):
+        assert cu.assess_cds(_cds("ATG", "GCT", stop)).complete, stop
+
+
+def test_case_and_whitespace_do_not_change_the_verdict():
+    assert cu.assess_cds("atg gct taa\n").complete
+
+
+def test_an_absent_cds_is_neither_complete_nor_reported_as_broken():
+    integrity = cu.assess_cds(None)
+
+    assert not integrity.present
+    assert not integrity.complete
+    assert integrity.label == "absent"
+
+
+def test_integrity_labels_separate_absent_from_incomplete():
+    assert cu.assess_cds(_cds("ATG", "GCT", "TAA")).label == "complete"
+    assert cu.assess_cds(_cds("GCT", "GCT", "TAA")).label == "incomplete"
+
+
+# ------------------------------------------------------------- flags ----
+
+COMPLETE = _cds("ATG", "GCT", "TAA")
+BROKEN = _cds("ATG", "TGA", "GCT", "TAA")
+
+
+def test_a_protein_below_the_floor_is_flagged_short():
+    flags = cu.flags_for(60, cu.assess_cds(COMPLETE), floor=100)
+
+    assert flags == ("SHORT_PROTEIN",)
+
+
+def test_the_floor_is_inclusive_so_a_gene_at_the_floor_is_not_short():
+    assert cu.flags_for(100, cu.assess_cds(COMPLETE), floor=100) == ()
+
+
+def test_a_broken_cds_is_flagged_invalid():
+    assert cu.flags_for(300, cu.assess_cds(BROKEN), floor=100) == ("INVALID_CDS",)
+
+
+def test_a_missing_cds_is_flagged_separately_from_a_broken_one():
+    # not knowing is not the same as knowing it is broken
+    assert cu.flags_for(300, cu.assess_cds(None), floor=100) == ("NO_CDS",)
+
+
+def test_one_gene_can_carry_several_flags_at_once():
+    flags = cu.flags_for(60, cu.assess_cds(BROKEN), floor=100)
+
+    assert set(flags) == {"SHORT_PROTEIN", "INVALID_CDS"}
+
+
+def test_a_long_gene_with_a_complete_cds_carries_no_flags():
+    assert cu.flags_for(300, cu.assess_cds(COMPLETE), floor=100) == ()
+
+
+def test_comparable_requires_both_the_length_floor_and_a_complete_cds():
+    assert cu.is_comparable(300, cu.assess_cds(COMPLETE).complete, floor=100)
+    assert not cu.is_comparable(60, cu.assess_cds(COMPLETE).complete, floor=100)
+    assert not cu.is_comparable(300, cu.assess_cds(BROKEN).complete, floor=100)
+    assert not cu.is_comparable(300, cu.assess_cds(None).complete, floor=100)
+
+
+# ------------------------------------- primary reason plus flags rows ----
+
+def _rows(genes, observations=None, with_hit=(), lengths=None, cds=None):
+    return cu.classify_all(
+        genes,
+        observations or {},
+        set(with_hit),
+        lengths or {g: 300 for g in genes},
+        cds if cds is not None else {g: COMPLETE for g in genes},
+    )
+
+
+def test_every_unplaced_gene_comes_out_with_a_primary_reason():
+    genes = {"Mcry_a", "Mcry_b", "Mcry_c", "Mcry_d"}
+    rows = _rows(genes,
+                 observations={"Mcry_a": [cu.Observation(6, 3)],
+                               "Mcry_b": [cu.Observation(3, 1)],
+                               "Mcry_c": [cu.Observation(5, 0)]},
+                 with_hit={"Mcry_d"})
+
+    assert cu.genes_without_a_reason(rows, genes) == set()
+    assert {r.gene for r in rows} == genes
+    assert all(r.primary_reason in cu.VERDICTS for r in rows)
+
+
+def test_a_gene_missing_from_the_rows_is_reported_not_silently_dropped():
+    rows = _rows({"Mcry_a"})
+
+    assert cu.genes_without_a_reason(rows, {"Mcry_a", "Mcry_b"}) == {"Mcry_b"}
+
+
+def test_flags_are_additive_and_never_change_the_primary_reason():
+    """The known answer in resume.md 1.5 is a verdict distribution. Flags must
+    not move it, so the same observations must classify identically whether
+    the models are pristine or wrecked."""
+    genes = {"Mcry_a", "Mcry_b", "Mcry_c", "Mcry_d"}
+    observations = {"Mcry_a": [cu.Observation(6, 3)],
+                    "Mcry_b": [cu.Observation(3, 1)],
+                    "Mcry_c": [cu.Observation(5, 0)]}
+
+    pristine = _rows(genes, observations, with_hit={"Mcry_d"})
+    wrecked = _rows(genes, observations, with_hit={"Mcry_d"},
+                    lengths={g: 30 for g in genes},
+                    cds={g: BROKEN for g in genes})
+
+    assert ({r.gene: r.primary_reason for r in pristine}
+            == {r.gene: r.primary_reason for r in wrecked})
+    assert all(r.flags == () for r in pristine)
+    assert all(set(r.flags) == {"SHORT_PROTEIN", "INVALID_CDS"} for r in wrecked)
+
+
+def test_a_row_carries_the_evidence_behind_its_reason_and_its_flags():
+    rows = _rows({"Mcry_a"}, {"Mcry_a": [cu.Observation(6, 3), cu.Observation(2, 1)]},
+                 lengths={"Mcry_a": 250})
+
+    row = rows[0]
+    assert row.primary_reason == "PRUNED"
+    assert (row.max_og_size, row.max_other_species, row.n_rounds_seen) == (6, 3, 2)
+    assert row.protein_length == 250
+    assert row.cds_status == "complete"
+    assert row.comparable
+
+
+def test_a_gene_with_no_cds_record_is_not_counted_as_comparable():
+    rows = _rows({"Mcry_a"}, cds={})
+
+    assert rows[0].flags == ("NO_CDS",)
+    assert not rows[0].comparable
+
+
+# --------------------------------------------------------- CLI output ----
+
+def _make_run(tmp_path, proteins, cds):
+    """proteins/cds: {gene: sequence}. One round, no WorkingDirectory."""
+    (tmp_path / "unplaced_proteins.fa").write_text(
+        "".join(f">{g}\n{s}\n" for g, s in proteins.items()))
+    if cds is not None:
+        (tmp_path / "unplaced_cds.fa").write_text(
+            "".join(f">{g}\n{s}\n" for g, s in cds.items()))
+    og = tmp_path / "round_01" / "orthofinder" / "Results_x" / "Orthogroups"
+    og.mkdir(parents=True)
+    (og / "Orthogroups.tsv").write_text(
+        "Orthogroup\tCgig\tMcry\n"
+        "OG0000001\tCgig_a, Cgig_b, Cgig_c\tMcry_pruned\n"
+        "OG0000002\tCgig_d\tMcry_splinter\n"
+    )
+    return tmp_path
+
+
+def _run_cli(tmp_path, *extra):
+    run = _make_run(tmp_path, {
+        "Mcry_pruned": "M" * 300,
+        "Mcry_splinter": "M" * 300,
+        "Mcry_short": "M" * 60,
+        "Mcry_nocds": "M" * 300,
+    }, {
+        "Mcry_pruned": COMPLETE,
+        "Mcry_splinter": BROKEN,
+        "Mcry_short": COMPLETE,
+    })
+    out = run / "genes.tsv"
+    cu.main(["--run-dir", str(run), "--species", "Mcry", "--out", str(out), *extra])
+    rows = [line.split("\t") for line in
+            out.read_text().rstrip("\n").split("\n")[1:]]
+    return {r[0]: r for r in rows}
+
+
+def test_cli_writes_a_primary_reason_and_flags_per_gene(tmp_path, capsys):
+    rows = _run_cli(tmp_path)
+    header_free = capsys.readouterr().out
+
+    assert rows["Mcry_pruned"][1] == "PRUNED" and rows["Mcry_pruned"][2] == "-"
+    assert rows["Mcry_splinter"][1] == "SPLINTER"
+    assert rows["Mcry_splinter"][2] == "INVALID_CDS"
+    assert rows["Mcry_short"][2] == "SHORT_PROTEIN"
+    assert rows["Mcry_nocds"][2] == "NO_CDS"
+    assert "no primary reason: 0 (0.0%)" in header_free
+
+
+def test_cli_reports_the_comparable_subset_and_the_flag_counts(tmp_path, capsys):
+    _run_cli(tmp_path)
+    out = capsys.readouterr().out
+
+    assert "comparable subset (>= 100 aa AND complete CDS)" in out
+    assert "1 of 4" in out           # only Mcry_pruned is long and clean
+    assert "SHORT_PROTEIN" in out and "INVALID_CDS" in out
+
+
+def test_cli_floor_is_configurable(tmp_path):
+    rows = _run_cli(tmp_path, "--floor", "50")
+
+    assert rows["Mcry_short"][2] == "-"      # 60 aa clears a 50 aa floor

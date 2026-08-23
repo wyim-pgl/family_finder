@@ -212,3 +212,157 @@ def test_without_a_pep_dir_the_tool_still_runs_and_says_why_it_cannot_stratify(t
 
     assert "HEADLINE" in out
     assert "--pep-dir" in out
+
+
+# ---------------------------------------------------------------------------
+# Comparable unplaced rate (issue #36)
+#
+# Length is only half the confound. A model whose CDS is not a clean ORF fails
+# to cluster for reasons that have nothing to do with the pipeline, and the
+# species differ in how many of those they carry. The comparable rate is the
+# one that may be quoted across species: >= floor aa AND complete CDS.
+# ---------------------------------------------------------------------------
+
+COMPLETE_CDS = "ATGGCTTAA"
+BROKEN_CDS = "ATGTGAGCTTAA"      # internal stop
+
+
+def _make_cds_dir(tmp_path, cds_by_species):
+    """cds_by_species: {species: {gene: cds_sequence}}"""
+    cds = tmp_path / "cds"
+    cds.mkdir(exist_ok=True)
+    for sp, genes in cds_by_species.items():
+        (cds / f"{sp}.cds.fa").write_text(
+            "".join(f">{g}\n{s}\n" for g, s in genes.items()))
+    return cds
+
+
+def _run_comparable(run_dir, pep_dir, cds_dir, *extra):
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "measure_v2.py"), str(run_dir),
+         "--pep-dir", str(pep_dir), "--cds-dir", str(cds_dir), *extra],
+        capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    return r.stdout
+
+
+def _section(out, marker):
+    lines = out.splitlines()
+    start = next(i for i, l in enumerate(lines) if marker in l)
+    end = next((i for i in range(start + 1, len(lines))
+                if lines[i].startswith("===")), len(lines))
+    return "\n".join(lines[start:end])
+
+
+def test_comparable_rate_drops_short_and_broken_models_from_the_denominator(tmp_path):
+    # Arrange: 4 Mcry genes — one short, one broken CDS, two comparable
+    pep = _make_pep_dir(tmp_path, {"Mcry": {
+        "Mcry_ok1": 300, "Mcry_ok2": 300, "Mcry_short": 60, "Mcry_broken": 300,
+    }})
+    cds = _make_cds_dir(tmp_path, {"Mcry": {
+        "Mcry_ok1": COMPLETE_CDS, "Mcry_ok2": COMPLETE_CDS,
+        "Mcry_short": COMPLETE_CDS, "Mcry_broken": BROKEN_CDS,
+    }})
+    run = _make_run(tmp_path, [["Mcry_ok1"]],
+                    ["Mcry_ok2", "Mcry_short", "Mcry_broken"])
+
+    # Act
+    out = _run_comparable(run, pep, cds)
+
+    # Assert: 1 of 2 comparable genes is unplaced, not 3 of 4
+    row = _row(_section(out, "comparable unplaced rate"), "Mcry")
+    assert row[1] == "4" and row[2] == "2" and row[3] == "1"
+    assert "50.0%" in row[4]
+    assert "75.0%" in row[5]      # the raw rate, side by side
+
+
+def test_a_gene_with_no_cds_record_is_not_counted_as_comparable(tmp_path):
+    pep = _make_pep_dir(tmp_path, {"Mcry": {"Mcry_a": 300, "Mcry_b": 300}})
+    cds = _make_cds_dir(tmp_path, {"Mcry": {"Mcry_a": COMPLETE_CDS}})
+    run = _make_run(tmp_path, [["Mcry_a"]], ["Mcry_b"])
+
+    out = _run_comparable(run, pep, cds)
+
+    row = _row(_section(out, "comparable unplaced rate"), "Mcry")
+    assert row[2] == "1"
+
+
+def test_the_raw_rate_is_labelled_as_not_a_cross_species_comparison(tmp_path):
+    pep = _make_pep_dir(tmp_path, {"Mcry": {"Mcry_a": 300}})
+    cds = _make_cds_dir(tmp_path, {"Mcry": {"Mcry_a": COMPLETE_CDS}})
+    run = _make_run(tmp_path, [["Mcry_a"]], [])
+
+    out = _run_comparable(run, pep, cds)
+
+    assert "RAW RATE" in out
+    assert "comparable_unplaced_rate" in out
+
+
+def test_the_confound_warning_names_the_rate_to_quote_instead(tmp_path):
+    pep = _make_pep_dir(tmp_path, {
+        "Mcry": {"Mcry_a": 3, "Mcry_b": 300},
+        "Cgig": {"Cgig_a": 151, "Cgig_b": 400},
+    })
+    cds = _make_cds_dir(tmp_path, {
+        "Mcry": {"Mcry_a": COMPLETE_CDS, "Mcry_b": COMPLETE_CDS},
+        "Cgig": {"Cgig_a": COMPLETE_CDS, "Cgig_b": COMPLETE_CDS},
+    })
+    run = _make_run(tmp_path, [["Mcry_b", "Cgig_b"]], ["Mcry_a", "Cgig_a"])
+
+    out = _run_comparable(run, pep, cds)
+
+    confound = [l for l in out.splitlines() if "CONFOUND" in l]
+    assert confound
+    assert any("comparable_unplaced_rate" in l for l in confound)
+
+
+def test_differing_cds_integrity_between_species_is_itself_a_confound(tmp_path):
+    # same length policy, but one annotation is full of broken models
+    pep = _make_pep_dir(tmp_path, {
+        "Mcry": {f"Mcry_{i}": 300 for i in range(4)},
+        "Cgig": {f"Cgig_{i}": 300 for i in range(4)},
+    })
+    cds = _make_cds_dir(tmp_path, {
+        "Mcry": {f"Mcry_{i}": (BROKEN_CDS if i < 3 else COMPLETE_CDS)
+                 for i in range(4)},
+        "Cgig": {f"Cgig_{i}": COMPLETE_CDS for i in range(4)},
+    })
+    run = _make_run(tmp_path, [["Mcry_0", "Cgig_0"]], ["Mcry_1", "Cgig_1"])
+
+    out = _run_comparable(run, pep, cds)
+
+    assert any("CONFOUND" in l and "CDS" in l for l in out.splitlines())
+
+
+def test_without_a_cds_dir_the_comparable_rate_is_reported_as_unavailable(tmp_path):
+    pep = _make_pep_dir(tmp_path, {"Mcry": {"Mcry_a": 300}})
+    run = _make_run(tmp_path, [["Mcry_a"]], [])
+
+    out = _run_stratified(run, pep)
+
+    assert "--cds-dir" in out
+    assert "comparable unplaced rate" not in out
+
+
+def test_the_comparable_rate_uses_the_configured_floor(tmp_path):
+    pep = _make_pep_dir(tmp_path, {"Mcry": {"Mcry_a": 150, "Mcry_b": 300}})
+    cds = _make_cds_dir(tmp_path, {
+        "Mcry": {"Mcry_a": COMPLETE_CDS, "Mcry_b": COMPLETE_CDS}})
+    run = _make_run(tmp_path, [["Mcry_b"]], ["Mcry_a"])
+
+    out = _run_comparable(run, pep, cds, "--floor", "200")
+
+    row = _row(_section(out, "comparable unplaced rate"), "Mcry")
+    assert row[2] == "1" and row[3] == "0"
+
+
+def test_the_headline_reports_the_comparable_mcry_rate_as_well_as_the_raw_one(tmp_path):
+    pep = _make_pep_dir(tmp_path, {"Mcry": {"Mcry_a": 300, "Mcry_b": 60}})
+    cds = _make_cds_dir(tmp_path, {
+        "Mcry": {"Mcry_a": COMPLETE_CDS, "Mcry_b": COMPLETE_CDS}})
+    run = _make_run(tmp_path, [["Mcry_a"]], ["Mcry_b"])
+
+    out = _run_comparable(run, pep, cds)
+
+    assert "HEADLINE" in out and "14.9%" in out
+    assert "COMPARABLE Mcry" in out
