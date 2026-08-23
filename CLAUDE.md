@@ -43,7 +43,14 @@ module. Each round: split pool by species → OrthoFinder → per-OG processing 
 confirmed families and outliers → gene-conservation audit (leaked genes are forced back
 into the pool) → optional profile assignment → outliers become next round's pool.
 Resume reads per-round `round_NN/confirmed_families.tsv` and the newest **completed**
-checkpoint — `summary.tsv` is only written at the very end.
+checkpoint — `summary.tsv` is only written at the very end. Because those per-round
+outputs carry no record of the configuration that produced them, `utils/manifest.py`
+writes a run manifest at startup and **refuses to resume when the config hash
+differs**, naming the settings that changed; the hash covers every `Config` field
+except resource knobs and tool paths, plus the species tree's contents and the input
+FASTA checksums. `--allow-config-change` overrides it and records that it was used.
+An output directory with no manifest (anything produced before this landed) warns and
+proceeds, flagged `unverified_resume`.
 
 **Assignment tiers** (a gene can be placed by any of):
 1. OrthoFinder DIAMOND+MCL clustering, every round (`steps/orthofinder.py`)
