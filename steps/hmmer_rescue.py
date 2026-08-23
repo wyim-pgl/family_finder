@@ -8,13 +8,14 @@ cannot detect distant homologs. This module:
   4. Re-aligns and re-builds trees for families that gained new members.
 """
 
+from dataclasses import dataclass
 import logging
 import os
 import shutil
 import subprocess
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from config import Config
 from utils.seqio import write_fasta
@@ -113,15 +114,64 @@ def _run_hmmsearch_chunked(
     merge_tblouts(out_dir, tblout, expected=len(chunks))
 
 
-def _parse_hmmsearch_tblout(
-    tblout_path: Path, evalue_cutoff: float
-) -> Dict[str, Tuple[str, float]]:
-    """Parse hmmsearch --tblout output.
+@dataclass(frozen=True)
+class RescueHit:
+    """One gene's rescue assignment, with the evidence that decided it."""
+    family: str
+    bits: float
+    evalue: float
+    margin: Optional[float]   # best - second best, None when only one family hit
+    grade: str                # HIGH / PROVISIONAL / UNRESOLVED
+    reason: str
 
-    Returns dict of gene_id -> (best_family_id, evalue) for genes passing cutoff.
-    Only keeps the best hit (lowest E-value) per gene.
+
+def _grade_hit(best_bits: float, second_bits: Optional[float],
+               config: Config) -> Tuple[str, str]:
+    """Grade an assignment from the best-vs-second bit-score margin.
+
+    Same rule the per-round tier applies (steps/profile_assign.py): the margin
+    must clear max(profile_margin_bits, profile_margin_frac x best). A fixed
+    bit margin alone is meaningless across scales - ten bits separates two weak
+    profiles and is noise between two that score ten thousand.
     """
-    best_hits: Dict[str, Tuple[str, float]] = {}
+    if second_bits is None:
+        return "HIGH", "only one family profile hit this gene"
+    margin = best_bits - second_bits
+    if margin <= 0:
+        return "UNRESOLVED", (
+            f"tie: the two best families score the same ({best_bits:.1f} bits). "
+            f"Nothing in the evidence prefers either, and emission order must "
+            f"not decide."
+        )
+    required = max(config.profile_margin_bits,
+                   config.profile_margin_frac * best_bits)
+    if margin >= required:
+        return "HIGH", (f"margin {margin:.1f} bits clears the required "
+                        f"{required:.1f}")
+    return "PROVISIONAL", (
+        f"margin {margin:.1f} bits is below the required {required:.1f} — the "
+        f"per-round tier would refuse this assignment"
+    )
+
+
+def _parse_hmmsearch_tblout(
+    tblout_path: Path, evalue_cutoff: float, config: Config
+) -> Dict[str, RescueHit]:
+    """Parse hmmsearch --tblout into one graded assignment per gene.
+
+    **The decision is the bit score, never the E-value** (issue #45). HMMER
+    prints E-values at two significant figures and underflows small ones to
+    zero, so equal E-values are common: 1,036 of 29,943 rescued genes in the
+    five-species run tied at the best E-value, 1,030 of them at zero. The old
+    code kept the first such hit, and first meant tblout order, which is
+    `sorted(glob("*.hmm"))` order - where `R10_*` precedes `R1_*` because
+    '0' < '_'. Bit scores separated 1,035 of those 1,036, and disagreed with
+    the E-value winner outright for 24 genes.
+
+    The E-value is still the pre-filter (hmmsearch's own -E) and is still
+    reported; it is simply not what picks the family.
+    """
+    per_gene: Dict[str, List[Tuple[float, str, float]]] = {}
 
     # HMMER3 --tblout columns (whitespace-delimited):
     # 0: target name, 1: target accession, 2: query name (HMM),
@@ -131,19 +181,34 @@ def _parse_hmmsearch_tblout(
             if line.startswith("#"):
                 continue
             fields = line.split()
-            if len(fields) < 5:
+            if len(fields) < 6:
                 continue
-            gene_id = fields[0]       # target name (unplaced gene)
-            family_id = fields[2]     # query name (HMM profile = family_id)
-            evalue = float(fields[4]) # full-sequence E-value
+            gene_id = fields[0]        # target name (unplaced gene)
+            family_id = fields[2]      # query name (HMM profile = family_id)
+            evalue = float(fields[4])  # full-sequence E-value
+            bits = float(fields[5])    # full-sequence score
 
             if evalue > evalue_cutoff:
                 continue
+            per_gene.setdefault(gene_id, []).append((bits, family_id, evalue))
 
-            if gene_id not in best_hits or evalue < best_hits[gene_id][1]:
-                best_hits[gene_id] = (family_id, evalue)
-
-    return best_hits
+    hits: Dict[str, RescueHit] = {}
+    for gene_id, rows in per_gene.items():
+        # Sort by bits only. Family id is NOT a tiebreaker - letting it decide
+        # is the defect this function exists to remove.
+        rows.sort(key=lambda r: -r[0])
+        best_bits, best_family, best_evalue = rows[0]
+        second_bits = rows[1][0] if len(rows) > 1 else None
+        grade, reason = _grade_hit(best_bits, second_bits, config)
+        hits[gene_id] = RescueHit(
+            family=best_family,
+            bits=best_bits,
+            evalue=best_evalue,
+            margin=None if second_bits is None else best_bits - second_bits,
+            grade=grade,
+            reason=reason,
+        )
+    return hits
 
 
 def _collect_hmm_work_items(
@@ -246,17 +311,18 @@ def _search_unplaced(
     else:
         _run_hmmsearch(combined_hmm, unplaced_fasta, tblout, config)
 
-    return _parse_hmmsearch_tblout(tblout, config.hmmer_evalue)
+    return _parse_hmmsearch_tblout(tblout, config.hmmer_evalue, config)
 
 
 def _group_by_family(
-    hits: Dict[str, Tuple[str, float]]
+    hits: Dict[str, RescueHit]
 ) -> Dict[str, Set[str]]:
-    """Invert gene -> (family, E) into family -> {genes}."""
+    """Invert gene -> RescueHit into family -> {genes}."""
     rescued_by_family: Dict[str, Set[str]] = {}
-    for gene_id, (family_id, evalue) in hits.items():
-        rescued_by_family.setdefault(family_id, set()).add(gene_id)
-        logger.debug(f"  Rescued {gene_id} → {family_id} (E={evalue:.1e})")
+    for gene_id, hit in hits.items():
+        rescued_by_family.setdefault(hit.family, set()).add(gene_id)
+        logger.debug(f"  Rescued {gene_id} → {hit.family} "
+                     f"({hit.bits:.1f} bits, {hit.grade})")
     return rescued_by_family
 
 
@@ -414,7 +480,9 @@ def _write_rescue_summary(
     """Write TSV summary of rescued genes."""
     summary_path = rescue_dir / "rescue_summary.tsv"
     with open(summary_path, "w") as f:
-        f.write("gene_id\tfamily_id\tevalue\n")
-        for gene_id, (family_id, evalue) in sorted(hits.items()):
-            f.write(f"{gene_id}\t{family_id}\t{evalue:.2e}\n")
+        f.write("gene_id\tfamily_id\tbits\tmargin\tgrade\tevalue\treason\n")
+        for gene_id, hit in sorted(hits.items()):
+            margin = "" if hit.margin is None else f"{hit.margin:.1f}"
+            f.write(f"{gene_id}\t{hit.family}\t{hit.bits:.1f}\t{margin}\t"
+                    f"{hit.grade}\t{hit.evalue:.2e}\t{hit.reason}\n")
     logger.info(f"Rescue summary: {summary_path}")

@@ -168,8 +168,9 @@ def test_merge_output_parses_with_the_existing_reader(tmp_path):
         )
     out = tmp_path / "merged.tblout"
     merge_tblouts(tmp_path, out)
+    from config import Config
     from steps.hmmer_rescue import _parse_hmmsearch_tblout
-    hits = _parse_hmmsearch_tblout(out, 1e-5)
+    hits = _parse_hmmsearch_tblout(out, 1e-5, Config())
     assert set(hits) == {"gene0", "gene1"}
 
 

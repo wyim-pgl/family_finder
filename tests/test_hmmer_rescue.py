@@ -275,7 +275,7 @@ def test_hit_against_an_unknown_family_is_reported_but_not_placed(
     assert "R9_OG9999999" not in out
     assert [f for f, _ in realigned] == ["R1_OG0000001"]
     summary = (outdir / "hmmer_rescue" / "rescue_summary.tsv").read_text()
-    assert "Aaa_u1\tR9_OG9999999\t1.00e-50\n" in summary
+    assert "Aaa_u1\tR9_OG9999999\t" in summary
 
 
 def test_rescue_summary_is_sorted_by_gene_with_two_digit_exponent_notation(
@@ -290,11 +290,15 @@ def test_rescue_summary_is_sorted_by_gene_with_two_digit_exponent_notation(
                        {k: PROT[k] for k in ("Aaa_u1", "Ccc_u3")},
                        PROT, CDS, outdir, make_config())
 
-    assert (outdir / "hmmer_rescue" / "rescue_summary.tsv").read_text() == (
-        "gene_id\tfamily_id\tevalue\n"
-        "Aaa_u1\tR1_OG0000001\t1.20e-40\n"
-        "Ccc_u3\tR1_OG0000001\t7.70e-08\n"
-    )
+    # The summary carries the evidence that decided each call, not just the
+    # E-value it used to be picked by (issue #45): bits, the best-vs-second
+    # margin, and the grade. This format change is deliberate - the earlier
+    # three-column form recorded a number that was not the decision.
+    lines = (outdir / "hmmer_rescue" / "rescue_summary.tsv").read_text().splitlines()
+    assert lines[0] == "gene_id\tfamily_id\tbits\tmargin\tgrade\tevalue\treason"
+    assert [l.split("\t")[0] for l in lines[1:]] == ["Aaa_u1", "Ccc_u3"]
+    assert all(l.split("\t")[1] == "R1_OG0000001" for l in lines[1:])
+    assert [l.split("\t")[5] for l in lines[1:]] == ["1.20e-40", "7.70e-08"]
 
 
 def test_unplaced_pool_is_written_out_for_the_search(
@@ -409,9 +413,13 @@ def test_an_incomplete_chunk_fails_loudly_rather_than_under_reporting(
 # --- the extracted helpers in isolation ----------------------------------
 
 def test_group_by_family_inverts_the_hit_table():
+    def hit(fam, bits):
+        return hr.RescueHit(family=fam, bits=bits, evalue=1e-40, margin=None,
+                            grade="HIGH", reason="")
+
     grouped = hr._group_by_family({
-        "Aaa_u1": ("F1", 1e-40), "Bbb_u2": ("F1", 1e-20),
-        "Ccc_u3": ("F2", 1e-10)})
+        "Aaa_u1": hit("F1", 900.0), "Bbb_u2": hit("F1", 800.0),
+        "Ccc_u3": hit("F2", 700.0)})
 
     assert grouped == {"F1": {"Aaa_u1", "Bbb_u2"}, "F2": {"Ccc_u3"}}
 
