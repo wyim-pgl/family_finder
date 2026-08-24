@@ -1,9 +1,9 @@
-# 15종 v2 최종 family 결과 — **v2** (2026-08-24)
+# 15종 최종 family 결과 — **v3** (2026-08-24)
 
-> **정본 테이블**: `pronghorn:~/scratch/bin/family_finder/output_15sp_v2/summary.tsv`
-> (23,744 families / 459,398 배정 유전자)
-> v1(`cb2c973`)의 잠정 항목 두 개 — rescue 층, family 경계 — 가 이 판에서 확정/주석화됐다.
-> 남은 미결은 codeml 선택압 하나뿐이다(맨 아래).
+> **정본 테이블: `output_15sp_v2/summary_v3.tsv` — 20,133 families / 459,398 유전자.**
+> v2의 "파편화 주석"이 이 판에서 **트리 검증된 병합**으로 확정됐다: 5,618개 클러스터 전수에
+> 코돈 트리를 세워, 조각이 실제로 뒤섞인 경우만 병합했다. 남은 미결은 codeml 선택압 하나(맨 아래).
+> v2 테이블(`summary.tsv`, 23,744)은 병합 전 상태로 보존된다.
 
 ## 런 정보
 
@@ -43,28 +43,25 @@ raw 상위 3종(Tfru·Ccac·Mcry)은 전부 주석 정책 산물. **"Mcry 문제
 배정 목록: ~/scratch/rescue_dom_15sp/final_assign.json
 ```
 
-## ✅ 주석화 — family 경계의 파편화 (v1의 두 번째 잠정)
+## ✅ 확정 — family 경계 (트리 검증 완료)
 
-전수 병합 스캔(459,398 유전자 × 23,744 프로파일, SLURM 6098723 + 6099002) 산출물 3종이
-`output_15sp_v2/`에 있다. **자동 병합은 하지 않았다** — 전부 트리 검증 전 후보다.
+5,618개 파편화 클러스터 **전수**에 대해 정렬(MAFFT)→코돈 사영(pal2nal)→트리(FastTree)를 세우고,
+`steps/cluster_validate.py`의 규칙으로 판정했다 (**5,618/5,618, 실패 0**):
 
-**1층 — 상호 쌍 (고신뢰 하한):** `merge_candidates_cov0.5.tsv` — **3,614쌍**
-(min-reciprocal ≥0.6 양방향). 전부 검증·병합되면 23,744 → 20,130. 구조상 family당 최대 1쌍.
+- **INTERLEAVED** (조각 9,228개) — 트리가 조각을 뒤섞는다 = 계통 축 파편화 = 한 family.
+  **병합군 2,410개**(family 6,021개)로 묶여 v3에 반영: **23,744 → 20,133 families (−3,611)**
+- **MONOPHYLETIC** (조각 6,833개) — 자기 clade를 이룬다. 같은 family의 서브패밀리인지 이웃
+  family인지 **위상만으로는 못 정하므로 병합하지 않고** 그대로 둔다 (PPC4가 그 사례 —
+  PEPC 클러스터 안에서 단계통이고 5sp에서 별도 family였다)
 
-**2층 — 단방향 이웃 클러스터 (상한, 병합 권고 아님):** `fragmentation_clusters.tsv` —
-frac ≥0.6 단방향 간선 14,842개의 연결 성분 **5,618개, family 16,061개(68%) / 유전자 320,721개** 연루.
-최대 47 families/705 유전자. ⚠️ 단방향 간선은 "최근접 이웃 family에 표가 몰림"이라 **구성상
-과병합**한다 — 진짜 파편화의 상한이지 병합 목록이 아니다. 전부 병합하면 13,301이 되지만
-그 숫자를 인용하지 말 것.
+무결성: 유전자 459,398 전량 보존 · 중복 0 · family 수 = 23,744 − Σ(병합군−1) 단언 통과.
+`merged_from`/`cluster_id` 컬럼이 병합 provenance를 담는다.
 
-**known-answer:** PEPC 6조각 중 **5개가 C0297 하나로 정확히**(119유전자, 외부 혼입 0) 묶인다.
-쌍 규칙(1층)은 PEPC를 **하나도 못 잡았다** — 표가 사슬(0.94→0.94→1.00)을 이뤄 어느 쌍도
-상호성을 못 채운다. 6번째 조각 `R2_OG0000359`(Mcry Ppc1 splinter)는 9멤버 중 4개만 유효
-표를 내 어느 층에도 안 걸린다 — **검출 한계는 splinter의 작고 잡음 많은 쪽에 있다.**
+**known-answer**: PEPC 계통 조각 3개(0000440+0013449+0019668)가 84유전자 한 family로 병합,
+1E2(0008467)·PPC4(0009826)는 미판정 유지 — 파일럿과 전수 결과 일치.
 
-**결론: clan 수준 분석은 `fragmentation_clusters.tsv`의 클러스터 단위로 서열을 모아 시작하고,
-family 경계 자체는 트리 검증 없이 병합하지 않는다.** PEPC 정본은 여전히
-`mM_repair/clan_corrected.faa`(108서열; ppc-1E1 62 [95/91] · ppc-1E2 15 [100/76], 둘 다 PROVISIONAL).
+PEPC 서브패밀리 정본은 여전히 `mM_repair/clan_corrected`(1E1 62 [95/91] · 1E2 15 [100/76],
+둘 다 PROVISIONAL). **서브패밀리는 v3에서도 family 테이블이 아니라 clan 트리에서 나온다.**
 
 ## 미결 — 하나
 
@@ -75,7 +72,9 @@ methods.md에 반영한다. 감도 축(599코돈 -nogap)은 LRT 0.33/p 1.0이었
 ## 산출물 인덱스 (pronghorn)
 
 ```
-output_15sp_v2/summary.tsv                     정본 family 테이블
+output_15sp_v2/summary_v3.tsv                  정본 family 테이블 (v3, 병합 적용)
+output_15sp_v2/summary.tsv                     v2 (병합 전, 보존)
+output_15sp_v2/cluster_verdicts.tsv            클러스터 트리 판정 전수 (5,618)
 output_15sp_v2/merge_candidates_cov{0.5,0.2}.tsv   1층: 상호 쌍
 output_15sp_v2/fragmentation_clusters.tsv      2층: 이웃 클러스터 (C0297 = PEPC)
 output_15sp_v2/vote_edges.tsv                  간선 원자료
