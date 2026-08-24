@@ -614,9 +614,11 @@ ssh pronghorn 'wc -l < ~/scratch/pepc_branchsite_20260823/fast46/alt/rub'
 
 ### 결정·조치가 필요한 것
 
-1. 🔴 **fast46 정체** — RUNNING인데 rub 0이 1시간+. pairwise 표는 2분에 완성됐고 그 뒤 무진행.
-   stdin 프롬프트는 아님(재현 실행 30초 에러 없음). **gapped가 수렴하면 예비는 무용 → `scancel 6099193`.**
-   gapped도 실패하면 `stdbuf -o0`으로 재실행해 버퍼 없이 멈춤 지점을 볼 것
+1. ~~fast46 정체~~ **정정: 정체가 아니었다.** stdbuf 진단이 150초에 lnL0 = -56141.59(반복 시작점)까지
+   도달 — 정상 계산 중이었고 rub 0은 **파일 버퍼링**(np=82, 줄이 길어 flush 지연)이었다. 4차(6099193)는
+   그 오판으로 scancel했고 **5차 재제출됨** (`squeue --name=fast46`로 확인). ⚠️ **교훈: 진행 판정은
+   rub이 아니라 results.txt의 lnL 줄로** — 이 프로젝트가 codeml exit code에 대해 이미 세운 규칙과 같은
+   이유다. gapped가 먼저 수렴하면 예비는 scancel
 2. **캠페인 집계 후**: 판정 분포 확인 → INTERLEAVED 병합군 적용 `summary_v3.tsv` 생성 →
    `results_15sp.md` **v3** 개판. 판정 모듈 `steps/cluster_validate.py`(`a5f44ed`), known-answer는
    C0297에서 통과(계통 조각 3개만 병합, 1E2·PPC4는 MONOPHYLETIC-미판정 = 정답)
