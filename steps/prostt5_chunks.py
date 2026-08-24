@@ -4,8 +4,18 @@ ProstT5 turns a protein sequence into a 3Di structural alphabet without folding
 it, which is how tier-3 reaches the unplaced pool at genome scale. Three
 measured properties of this foldseek build shape the module:
 
-- **CPU only.** `--gpu 1` is accepted by `--help` and ignored by createdb; the
-  log prints `Use GPU 0` and nvidia-smi stays idle wherever the flag is placed.
+- **CPU only, and silently so.** `--gpu 1` is accepted by `--help` and ignored
+  by createdb: the log prints `Use GPU 0`, nvidia-smi stays idle wherever the
+  flag is placed, and the command **exits 0**. Re-measured 2026-08-24 on
+  foldseek commit 18478813 at ~/bin/foldseek-cuda: the binary DOES carry CUDA
+  (`strings | grep -c cudaMalloc` = 39), the card IS visible (`nvidia-smi -L`
+  lists the 4090), and `--gpu 1` before or after the positional arguments
+  changes nothing. So this is not a missing-CUDA build and not a missing
+  device - the flag is accepted and dropped without a word.
+
+  Cost of not noticing: 112 sequences took 8 minutes on CPU, which extrapolates
+  to roughly 23 days for the 459,398-gene panel. The 37.6x figure recorded
+  elsewhere for this binary is NOT what a ProstT5 createdb currently gets.
 - **~4.3 s/sequence at 16 threads** (PEPC, ~950 aa, so near the upper bound).
   Ten thousand sequences is roughly twelve hours.
 - **No internal checkpoint.** A createdb killed at hour eleven leaves nothing.
