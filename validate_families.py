@@ -638,8 +638,17 @@ def _logic_digest() -> str:
 
 def judge_fingerprint(cluster_id: str, fam_ids: Sequence[str],
                       families: Dict[str, List[str]], pep_pool, cds_pool,
-                      cfg) -> str:
-    """Fingerprint inputs, tool settings, and judgement logic for resume."""
+                      cfg, outgroup_families: Sequence[str] = ()) -> str:
+    """Fingerprint inputs, tool settings, and judgement logic for resume.
+
+    The outgroup is part of the input, not a detail. Judging the same cluster
+    with and without one produces different verdict vocabularies entirely -
+    MONOPHYLETIC versus SAME_FAMILY/SEPARATE - so a fingerprint blind to it
+    lets an outgroup pilot silently reuse the no-outgroup answer and report a
+    permanent MONOPHYLETIC as though the outgroup had been supplied. Its
+    member sequences are hashed too: the verdict depends on what the outgroup
+    IS, not on what the family is called.
+    """
     digest = hashlib.sha256()
 
     def add(value) -> None:
@@ -654,6 +663,13 @@ def judge_fingerprint(cluster_id: str, fam_ids: Sequence[str],
     for family_id in sorted(fam_ids):
         add(family_id)
         for gene in sorted(families[family_id]):
+            add(gene)
+            add(pep_pool.get(gene, "<MISSING>"))
+            add(cds_pool.get(gene, "<MISSING>"))
+    add("outgroup")
+    for family_id in sorted(outgroup_families):
+        add(family_id)
+        for gene in sorted(families.get(family_id, ())):
             add(gene)
             add(pep_pool.get(gene, "<MISSING>"))
             add(cds_pool.get(gene, "<MISSING>"))
@@ -939,8 +955,19 @@ def main(argv=None):
         for cid in todo:
             out = verdict_dir / f"{cid}.rows.tsv"
             try:
+                # The outgroup is resolved BEFORE the cache is consulted, so
+                # it can enter the fingerprint. Resolving it afterwards let an
+                # outgroup pilot hit a no-outgroup verdict and report its
+                # permanent MONOPHYLETIC as though the outgroup had been used.
+                og = resolve_outgroup(clusters[cid], vote_edges,
+                                      args.outgroup_from_edges,
+                                      args.outgroup_families)
+                if args.outgroup_from_edges and not args.outgroup_families \
+                        and not og:
+                    no_outgroup.append(cid)
                 fingerprint = judge_fingerprint(
                     cid, clusters[cid], families, pep_pool, cds_pool, cfg,
+                    outgroup_families=og,
                 )
                 membership_fingerprint = cluster_membership_fingerprint(
                     cid, clusters[cid], families,
@@ -950,12 +977,6 @@ def main(argv=None):
                 ):
                     continue
                 archive_stale_verdict(out)
-                og = resolve_outgroup(clusters[cid], vote_edges,
-                                      args.outgroup_from_edges,
-                                      args.outgroup_families)
-                if args.outgroup_from_edges and not args.outgroup_families \
-                        and not og:
-                    no_outgroup.append(cid)
                 rows = judge_cluster(cid, clusters[cid], families,
                                      pep_pool, cds_pool, workdir, cfg,
                                      outgroup_families=og)

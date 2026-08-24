@@ -633,3 +633,68 @@ def test_apply_accepts_the_outgroup_statuses():
 
     # Act / Assert: must not raise on a status it has never seen before
     validate_verdict_coverage(rows, clusters)
+
+
+def test_fingerprint_covers_the_outgroup():
+    # Arrange: two runs of the same cluster differing ONLY in outgroup must
+    # not share a cached verdict. Without this, an outgroup pilot silently
+    # reuses the no-outgroup answer and reports MONOPHYLETIC as if the
+    # outgroup had been given.
+    from validate_families import judge_fingerprint
+    families = {"A": ["Sp1_a"], "B": ["Sp2_b"], "OG": ["og1"]}
+    pool = {g: "MPEP" for m in families.values() for g in m}
+    cfg = _cfg()
+
+    # Act
+    without = judge_fingerprint("C1", ["A", "B"], families, pool, {}, cfg)
+    with_og = judge_fingerprint("C1", ["A", "B"], families, pool, {}, cfg,
+                                outgroup_families=["OG"])
+    other_og = judge_fingerprint("C1", ["A", "B"], families, pool, {}, cfg,
+                                 outgroup_families=["OTHER"])
+
+    # Assert
+    assert without != with_og
+    assert with_og != other_og
+
+
+def test_fingerprint_covers_the_outgroup_sequences_too():
+    # Arrange: same outgroup family id, different member sequences. The
+    # verdict depends on what the outgroup IS, not on what it is called.
+    from validate_families import judge_fingerprint
+    cfg = _cfg()
+    fams_a = {"A": ["Sp1_a"], "OG": ["og1"]}
+    fams_b = {"A": ["Sp1_a"], "OG": ["og1"]}
+    pool_a = {"Sp1_a": "MPEP", "og1": "MKKK"}
+    pool_b = {"Sp1_a": "MPEP", "og1": "MWWW"}
+
+    # Act
+    a = judge_fingerprint("C1", ["A"], fams_a, pool_a, {}, cfg,
+                          outgroup_families=["OG"])
+    b = judge_fingerprint("C1", ["A"], fams_b, pool_b, {}, cfg,
+                          outgroup_families=["OG"])
+
+    # Assert
+    assert a != b
+
+
+def test_outgroup_is_resolved_before_the_cache_is_consulted():
+    # Arrange: the fingerprint can only cover the outgroup if the outgroup
+    # exists when the fingerprint is computed. Getting this order wrong is
+    # invisible - the run succeeds and reports a stale verdict - so pin the
+    # order rather than only the hash.
+    import inspect
+
+    import validate_families
+    source = inspect.getsource(validate_families.main)
+
+    # Act
+    resolve_at = source.index("og = resolve_outgroup(")
+    fingerprint_at = source.index("fingerprint = judge_fingerprint(")
+    cache_at = source.index("if verdict_file_is_current(")
+
+    # Assert
+    assert resolve_at < fingerprint_at < cache_at
+    # and the fingerprint must actually be handed the outgroup
+    call = source[fingerprint_at:source.index(")", source.index(
+        "cds_pool, cfg", fingerprint_at))]
+    assert "outgroup_families=og" in call
