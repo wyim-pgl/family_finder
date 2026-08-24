@@ -425,3 +425,137 @@ def test_write_summary_refuses_ids_without_a_species_delimiter(tmp_path):
             {"R1_OG1": ["missingdelimiter"]}, {}, original,
             tmp_path / "summary_v3.tsv", {},
         )
+
+
+# ---------------------------------------------------------------------------
+# outgroup selection
+# ---------------------------------------------------------------------------
+# The tree can only say "one family" when it has something outside the family
+# to compare against, and vote_edges already ranks every family's neighbours -
+# so the nearest families OUTSIDE the cluster are the outgroup, for free.
+
+def test_outgroup_families_are_the_nearest_non_members():
+    # Arrange: the cluster is {A,B}; C and D are ranked neighbours outside it
+    from validate_families import pick_outgroup_families
+    edges = [("A", "C", 8, 10, 0.8), ("B", "D", 5, 10, 0.5),
+             ("A", "B", 9, 10, 0.9)]
+
+    # Act
+    out = pick_outgroup_families(["A", "B"], edges, n=2)
+
+    # Assert: highest-frac non-members first, cluster members never chosen
+    assert out == ["C", "D"]
+
+
+def test_outgroup_selection_never_returns_a_cluster_member():
+    # Arrange: every edge points back inside the cluster
+    from validate_families import pick_outgroup_families
+    edges = [("A", "B", 9, 10, 0.9), ("B", "A", 8, 10, 0.8)]
+
+    # Act
+    out = pick_outgroup_families(["A", "B"], edges, n=2)
+
+    # Assert: an outgroup drawn from inside the family would be circular
+    assert out == []
+
+
+def test_outgroup_selection_is_capped_and_ordered():
+    # Arrange
+    from validate_families import pick_outgroup_families
+    edges = [("A", "X", 1, 10, 0.1), ("A", "Y", 5, 10, 0.5),
+             ("A", "Z", 3, 10, 0.3)]
+
+    # Act
+    out = pick_outgroup_families(["A"], edges, n=2)
+
+    # Assert
+    assert out == ["Y", "Z"]
+
+
+def test_outgroup_selection_deduplicates():
+    # Arrange: two cluster members can name the same neighbour
+    from validate_families import pick_outgroup_families
+    edges = [("A", "X", 9, 10, 0.9), ("B", "X", 8, 10, 0.8)]
+
+    # Act
+    out = pick_outgroup_families(["A", "B"], edges, n=3)
+
+    # Assert
+    assert out == ["X"]
+
+
+def _cfg():
+    return type("Cfg", (), {"mafft_bin": "mafft", "fasttree_bin": "FastTree",
+                            "pal2nal": "pal2nal.pl", "threads": 1})
+
+
+def test_judge_cluster_puts_the_outgroup_in_the_tree_and_the_verdict(tmp_path, monkeypatch):
+    # Arrange: with an outgroup present the verdict must be the outgroup one,
+    # and the outgroup sequences must actually reach the alignment - a verdict
+    # naming an outgroup that never entered the tree would be a silent lie.
+    import validate_families as vf
+    seen = {}
+
+    def fake_build(pep, cds, workdir, cfg):
+        from utils.seqio import read_fasta
+        seen["pep_ids"] = sorted(read_fasta(str(pep)))
+        tree = workdir / "tree.nwk"
+        tree.write_text("(((Sp1_a,Sp2_b),og1),(og2,Sp3_c));")
+        return tree
+
+    monkeypatch.setattr(vf, "build_cluster_tree", fake_build)
+    families = {"A": ["Sp1_a"], "B": ["Sp2_b"], "C": ["Sp3_c"],
+                "OG": ["og1", "og2"]}
+    pool = {g: "MPEP" for m in families.values() for g in m}
+
+    # Act
+    rows = vf.judge_cluster("C1", ["A", "B", "C"], families, pool, {},
+                            tmp_path, _cfg(), outgroup_families=["OG"])
+
+    # Assert
+    assert seen["pep_ids"] == ["Sp1_a", "Sp2_b", "Sp3_c", "og1", "og2"]
+    status = {r[1]: r[2] for r in rows}
+    assert status == {"A": "SAME_FAMILY", "B": "SAME_FAMILY",
+                      "C": "SEPARATE"}
+    assert not any(r[1] == "OG" for r in rows)
+
+
+def test_judge_cluster_without_an_outgroup_is_unchanged(tmp_path, monkeypatch):
+    # Arrange
+    import validate_families as vf
+
+    def fake_build(pep, cds, workdir, cfg):
+        tree = workdir / "tree.nwk"
+        tree.write_text("((Sp1_a,Sp2_b),(Sp3_c,Sp4_d));")
+        return tree
+
+    monkeypatch.setattr(vf, "build_cluster_tree", fake_build)
+    families = {"A": ["Sp1_a", "Sp2_b"], "B": ["Sp3_c", "Sp4_d"]}
+    pool = {g: "MPEP" for m in families.values() for g in m}
+
+    # Act
+    rows = vf.judge_cluster("C1", ["A", "B"], families, pool, {}, tmp_path,
+                            _cfg())
+
+    # Assert
+    assert {r[2] for r in rows} == {"MONOPHYLETIC"}
+
+
+def test_the_edges_that_built_a_cluster_cannot_supply_its_outgroup():
+    # Arrange: a cluster IS a connected component of the vote edges, so by
+    # construction no edge leaves it. Measured on the shipped 15sp file: all
+    # four edges out of C0297's five PEPC fragments point back inside, and the
+    # file's minimum frac is exactly 0.600 - the cut. An outgroup therefore
+    # has to come from edges BELOW the component threshold, which only the
+    # uncut dump (vote_edges at min_frac=0.0) contains.
+    from validate_families import pick_outgroup_families
+    component_edges = [("A", "B", 9, 10, 0.9), ("B", "C", 8, 10, 0.8)]
+    with_subthreshold = component_edges + [("A", "X", 2, 10, 0.2)]
+
+    # Act
+    from_component = pick_outgroup_families(["A", "B", "C"], component_edges, 3)
+    from_full = pick_outgroup_families(["A", "B", "C"], with_subthreshold, 3)
+
+    # Assert
+    assert from_component == []
+    assert from_full == ["X"]

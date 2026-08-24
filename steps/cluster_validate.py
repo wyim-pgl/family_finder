@@ -60,6 +60,10 @@ _TOPOLOGY_CAVEAT = ("monophyletic — topology alone cannot separate a subfamily
                     "of the same family from a distinct neighbouring family")
 _NO_MIXING_PARTNER = ("non-clade, but every other fragment is separable by "
                       "an edge")
+_OUTGROUP_SEPARATE = ("the outgroup lies between this fragment and every "
+                      "other one - a distinct family")
+_OUTGROUP_STRADDLE = ("members fall on both sides of the outgroup - not a "
+                      "coherent unit against this outgroup")
 
 
 def _leaves(node) -> List[str]:
@@ -108,12 +112,130 @@ def _separated_by_edge(a: set, b: set, splits: Sequence[tuple]) -> bool:
     )
 
 
-def fragment_verdict(newick: str, fragments: Dict[str, Sequence[str]]) -> dict:
+def _outgroup_verdict(root, fragments, present, outgroup, tree_leaves,
+                      owner) -> dict:
+    """Judge a cluster against a sequence known to be outside the family.
+
+    Without an outgroup the tree cannot answer "are these one family". A
+    subfamily is a clade by construction, so MONOPHYLETIC is permanent
+    silence - which is why the PEPC clan stayed undecided across every table
+    version while structure, external anchors, and the clan tree all said it
+    was one family.
+
+    An outgroup makes the question decidable, and it is the test clan_merge
+    actually ran: bacterial-type PEPC against plant-type, 0/95 intrusions.
+    Stated without choosing a root:
+
+      SAME_FAMILY     some edge puts A and B together on one side and the
+                      whole outgroup on the other. They are one family.
+      SEPARATE        no such edge: the outgroup lies between them, so by the
+                      outgroup's own definition they are distinct families.
+                      This is the verdict the topology-only rule can never
+                      produce, and a family table needs it as much as merges.
+      OUTGROUP_SPLIT  the fragment straddles the outgroup - its own members
+                      fall on both sides. It is not a coherent unit against
+                      this outgroup; reported, never merged.
+
+    Two properties decide how much a verdict here is worth, and both are
+    pinned by tests:
+
+      * A MONOPHYLETIC outgroup always yields one family. Its complement is
+        the ingroup, so every fragment inside is same-family by construction.
+        That is correct, and it is the normal case for a well-chosen
+        outgroup - which means a clean SAME_FAMILY merge is not a strong
+        result on its own.
+      * SEPARATE therefore only arises when the outgroup INTERLEAVES with the
+        fragments: something known to be outside the family sits between
+        them. A single outgroup leaf can never do this - its own pendant edge
+        separates it from everything - so one sequence carries no
+        discriminating power. Use several, spanning the near-outside.
+
+    The relation is an equivalence on coherent fragments: rooted at the
+    outgroup, SAME_FAMILY is "in the same child subtree of the root".
+    """
+    splits = _edge_splits(root)
+    status: Dict[str, str] = {}
+    coherent: List[str] = []
+    for fam, mem in present.items():
+        if not mem:
+            status[fam] = "ABSENT"
+        elif _separated_by_edge(mem, outgroup, splits):
+            coherent.append(fam)
+        else:
+            status[fam] = "OUTGROUP_SPLIT"
+
+    kin: Dict[str, set] = {fam: set() for fam in fragments}
+    ordered = sorted(coherent)
+    for i, fam in enumerate(ordered):
+        for other in ordered[i + 1:]:
+            if _separated_by_edge(present[fam] | present[other], outgroup,
+                                  splits):
+                kin[fam].add(other)
+                kin[other].add(fam)
+
+    par = {}
+
+    def find(x):
+        while par.setdefault(x, x) != x:
+            par[x] = par[par[x]]
+            x = par[x]
+        return x
+
+    for fam in coherent:
+        for other in kin[fam]:
+            a, b = find(fam), find(other)
+            if a != b:
+                par[a] = b
+    comps: Dict[str, List[str]] = {}
+    for fam in coherent:
+        comps.setdefault(find(fam), []).append(fam)
+    merge_groups = sorted(sorted(v) for v in comps.values() if len(v) > 1)
+    grouped = {f for g in merge_groups for f in g}
+    for fam in coherent:
+        status[fam] = "SAME_FAMILY" if fam in grouped else "SEPARATE"
+
+    out_frags = {}
+    for fam, members in fragments.items():
+        s = status[fam]
+        if s == "SAME_FAMILY":
+            reason = ("groups with " + ",".join(sorted(kin[fam]))
+                      + " to the exclusion of the outgroup")
+        elif s == "SEPARATE":
+            reason = _OUTGROUP_SEPARATE
+        elif s == "OUTGROUP_SPLIT":
+            reason = _OUTGROUP_STRADDLE
+        else:
+            reason = "no members in tree"
+        out_frags[fam] = {
+            "status": s,
+            "n_members": len(members),
+            "n_present": len(present[fam]),
+            "n_missing": len(members) - len(present[fam]),
+            "reason": reason,
+        }
+    return {
+        "fragments": out_frags,
+        "merge_groups": merge_groups,
+        "n_tree_leaves_unclaimed": sum(1 for g in tree_leaves
+                                       if g not in owner
+                                       and g not in outgroup),
+        "outgroup_size": len(outgroup),
+    }
+
+
+def fragment_verdict(newick: str, fragments: Dict[str, Sequence[str]],
+                     outgroup: Sequence[str] = ()) -> dict:
     """Judge one cluster: which fragments does its tree actually mix?
 
     Returns fragment statuses, merge groups (sorted lists of fragment ids),
     per-fragment missing-member counts, and the count of tree leaves no
     fragment claims - every mismatch is a number, not a silence.
+
+    With `outgroup` - leaf names known to lie OUTSIDE the family - the tree
+    answers a different and much better question. See `_outgroup_verdict`.
+    An outgroup that is absent from the tree falls back to the topology rule
+    rather than deciding on the strength of a sequence that never made it
+    into the alignment.
     """
     root = parse_newick(newick.strip())
     tree_leaves = _leaves(root)
@@ -123,10 +245,22 @@ def fragment_verdict(newick: str, fragments: Dict[str, Sequence[str]]) -> dict:
         for g in members:
             owner[g] = fam
 
+    outgroup_set = set(outgroup)
+    claimed = outgroup_set & set(owner)
+    if claimed:
+        raise ValueError(
+            f"fragment(s) claim outgroup member(s) {sorted(claimed)}; the "
+            f"outgroup must lie outside the family or the test is circular")
+    outgroup_present = outgroup_set & leaf_set
+
     present: Dict[str, set] = {
         fam: {g for g in members if g in leaf_set}
         for fam, members in fragments.items()
     }
+
+    if outgroup_present:
+        return _outgroup_verdict(root, fragments, present, outgroup_present,
+                                 tree_leaves, owner)
 
     # For each fragment present in the tree: is there an EDGE separating its
     # members from everything else?

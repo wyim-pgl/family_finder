@@ -285,3 +285,166 @@ def test_complement_side_cannot_add_an_edge_separable_fragment_to_a_group():
         "every other fragment is separable"
         in verdict["fragments"]["B"]["reason"]
     )
+
+
+# ---------------------------------------------------------------------------
+# outgroup-anchored verdicts
+# ---------------------------------------------------------------------------
+# Without an outgroup the tree cannot answer "are these one family". A
+# subfamily is a clade by construction, so MONOPHYLETIC is permanent silence -
+# which is why the PEPC clan sat undecided across every table version while
+# non-topological evidence (structure, external anchors, the clan tree) said
+# it was one family.
+#
+# An outgroup - a sequence known to lie OUTSIDE the family - makes the
+# question decidable, and it is what clan_merge actually used: bacterial-type
+# PEPC against plant-type, 0/95 intrusions. The test becomes "do these
+# fragments group together to the exclusion of the outgroup", and it yields
+# the verdict the rule could never reach before: SEPARATE.
+
+def _og(newick, frags, outgroup):
+    v = fragment_verdict(newick, frags, outgroup=outgroup)
+    return ({f: v["fragments"][f]["status"] for f in v["fragments"]},
+            [sorted(g) for g in v["merge_groups"]])
+
+
+def test_outgroup_merges_fragments_that_exclude_it():
+    # Arrange: A and B are both inside; the outgroup hangs off outside them.
+    # This is the PEPC shape - two monophyletic subfamilies of one family.
+    frags = {"A": ["a1", "a2"], "B": ["b1", "b2"]}
+
+    # Act
+    statuses, groups = _og("(((a1,a2),(b1,b2)),o1);", frags, ["o1"])
+
+    # Assert: undecidable without the outgroup, decided with it
+    assert statuses == {"A": "SAME_FAMILY", "B": "SAME_FAMILY"}
+    assert groups == [["A", "B"]]
+
+
+def test_outgroup_between_fragments_makes_them_separate():
+    # Arrange: the outgroup nests on BOTH sides, so no edge puts A and B
+    # together against it. Each fragment is closer to an outgroup member than
+    # to the other fragment - by the outgroup's definition, distinct families.
+    frags = {"A": ["a1", "a2"], "B": ["b1", "b2"]}
+
+    # Act
+    statuses, groups = _og("(((a1,a2),o1),((b1,b2),o2));", frags,
+                           ["o1", "o2"])
+
+    # Assert: the verdict the rule could not previously produce
+    assert statuses == {"A": "SEPARATE", "B": "SEPARATE"}
+    assert groups == []
+
+
+def test_a_single_leaf_outgroup_cannot_separate_anything():
+    # Arrange: one outgroup leaf hangs off its own pendant edge, so an edge
+    # always separates it from everything else and every fragment comes back
+    # SAME_FAMILY. That is honest - a lone outgroup says only "all of this is
+    # inside relative to me" - but it means a single sequence carries no
+    # discriminating power. Pin it so nobody reads such a merge as evidence.
+    frags = {"A": ["a1", "a2"], "B": ["b1", "b2"]}
+
+    # Act
+    nested, _ = _og("((a1,a2),o1,(b1,b2));", frags, ["o1"])
+    sister, _ = _og("(((a1,a2),(b1,b2)),o1);", frags, ["o1"])
+
+    # Assert
+    assert nested == sister == {"A": "SAME_FAMILY", "B": "SAME_FAMILY"}
+
+
+def test_outgroup_splits_one_group_from_another():
+    # Arrange: an outgroup member sits between C and A+B, so C is nearer to
+    # something outside the family than A and B are to it. A+B merge; C does
+    # not.
+    frags = {"A": ["a1"], "B": ["b1"], "C": ["c1"]}
+
+    # Act
+    statuses, groups = _og("(((a1,b1),o1),(o2,c1));", frags, ["o1", "o2"])
+
+    # Assert
+    assert statuses["A"] == statuses["B"] == "SAME_FAMILY"
+    assert statuses["C"] == "SEPARATE"
+    assert groups == [["A", "B"]]
+
+
+def test_outgroup_verdict_is_invariant_to_rerooting():
+    # Arrange: same topology, two root placements
+    frags = {"A": ["a1", "a2"], "B": ["b1", "b2"]}
+
+    # Act
+    first = _og("(((a1,a2),(b1,b2)),o1);", frags, ["o1"])
+    second = _og("(a1,(a2,((b1,b2),o1)));", frags, ["o1"])
+
+    # Assert
+    assert first == second
+
+
+def test_a_fragment_straddling_the_outgroup_is_reported_not_merged():
+    # Arrange: A's members sit on both sides of the outgroup. The fragment
+    # itself is not a coherent unit relative to this outgroup, and saying so
+    # is more honest than merging or silently dropping it.
+    frags = {"A": ["a1", "a2"], "B": ["b1"]}
+
+    # Act
+    statuses, groups = _og("((a1,o1),(o2,(a2,b1)));", frags, ["o1", "o2"])
+
+    # Assert
+    assert statuses["A"] == "OUTGROUP_SPLIT"
+    assert "A" not in [f for g in groups for f in g]
+
+
+def test_an_absent_outgroup_falls_back_to_the_topology_rule():
+    # Arrange: the outgroup was requested but is not in the tree - the caller
+    # must not be told SAME_FAMILY on the strength of a sequence that never
+    # made it into the alignment.
+    frags = {"A": ["a1", "a2"], "B": ["b1", "b2"]}
+
+    # Act
+    with_missing = _og("((a1,a2),(b1,b2));", frags, ["not_in_tree"])
+    without = _og("((a1,a2),(b1,b2));", frags, [])
+
+    # Assert
+    assert with_missing == without
+    assert with_missing[0]["A"] == "MONOPHYLETIC"
+
+
+def test_outgroup_members_are_not_counted_as_unclaimed_leaves():
+    # Arrange
+    frags = {"A": ["a1"], "B": ["b1"]}
+
+    # Act
+    v = fragment_verdict("((a1,b1),o1);", frags, outgroup=["o1"])
+
+    # Assert
+    assert v["n_tree_leaves_unclaimed"] == 0
+
+
+def test_a_fragment_claiming_an_outgroup_member_is_refused():
+    # Arrange: the outgroup must lie outside the family by construction; a
+    # fragment that owns it makes the whole test circular.
+    frags = {"A": ["a1", "o1"]}
+
+    # Act / Assert
+    try:
+        fragment_verdict("((a1,o1),b1);", frags, outgroup=["o1"])
+    except ValueError as e:
+        assert "o1" in str(e)
+    else:
+        raise AssertionError("expected a fragment claiming the outgroup to be refused")
+
+
+def test_a_monophyletic_outgroup_always_yields_one_family():
+    # Arrange: when the outgroup is itself a clade, its complement IS the
+    # ingroup, so every fragment inside is one family by construction. That is
+    # correct and it is also the normal case for a well-chosen outgroup - which
+    # means SEPARATE only ever arises when the outgroup interleaves with the
+    # fragments, i.e. something outside the family sits BETWEEN them. Pin the
+    # property so nobody reads a clean merge as a strong result.
+    frags = {"A": ["a1"], "B": ["b1"], "C": ["c1"]}
+
+    # Act
+    statuses, groups = _og("((a1,b1),((o1,o2),c1));", frags, ["o1", "o2"])
+
+    # Assert
+    assert set(statuses.values()) == {"SAME_FAMILY"}
+    assert groups == [["A", "B", "C"]]

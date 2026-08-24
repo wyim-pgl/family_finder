@@ -469,36 +469,100 @@ def build_cluster_tree(pep: Path, cds: Path, workdir: Path, cfg) -> Path:
     return tree
 
 
+def load_vote_edges(path: Path) -> List[tuple]:
+    """(from, to, votes, from_size, frac) rows from vote_edges.tsv."""
+    edges = []
+    with open(path) as fh:
+        fh.readline()
+        for line in fh:
+            p = line.rstrip("\n").split("\t")
+            if len(p) >= 5:
+                edges.append((p[0], p[1], int(p[2]), int(p[3]), float(p[4])))
+    return edges
+
+
+def pick_outgroup_families(cluster: Sequence[str], edges: Sequence[tuple],
+                           n: int = 3) -> List[str]:
+    """The nearest families OUTSIDE the cluster, by vote fraction.
+
+    The tree can only answer "are these one family" when it has something
+    from outside the family to compare against; without that, a subfamily is
+    a clade and the verdict is permanently MONOPHYLETIC. vote_edges already
+    ranks each family's neighbours, so the outgroup costs nothing extra: the
+    cluster is the connected component, and the best-scoring families just
+    outside it are its near-outside.
+
+    Members of the cluster are never chosen. An outgroup drawn from inside
+    the family makes the test circular.
+
+    ⚠️ Pass the UNCUT edge dump, not the one the clusters were built from. A
+    cluster is a connected component of those edges, so by construction none
+    of them leaves it: measured on the shipped 15sp file, all four edges out
+    of C0297's five PEPC fragments point back inside, and the file's minimum
+    frac is exactly 0.600 - the component threshold. The outgroup lives in
+    the edges BELOW that threshold, which only `vote_edges(..., min_frac=0)`
+    keeps. Given a thresholded file this returns nothing, every cluster falls
+    back to the topology rule, and the campaign quietly reverts to permanent
+    MONOPHYLETIC - which is why the caller counts the empty ones and says so.
+    """
+    members = set(cluster)
+    best: Dict[str, float] = {}
+    for fam_from, fam_to, _votes, _size, frac in edges:
+        if fam_from not in members or fam_to in members:
+            continue
+        if frac > best.get(fam_to, -1.0):
+            best[fam_to] = frac
+    ranked = sorted(best, key=lambda f: (-best[f], f))
+    return ranked[:n]
+
+
 def judge_cluster(cluster_id: str, fam_ids: Sequence[str],
                   families: Dict[str, List[str]], pep_pool, cds_pool,
-                  outdir: Path, cfg) -> List[tuple]:
-    """Align/tree/judge one cluster and return its verdict rows."""
+                  outdir: Path, cfg,
+                  outgroup_families: Sequence[str] = ()) -> List[tuple]:
+    """Align/tree/judge one cluster and return its verdict rows.
+
+    `outgroup_families` name families OUTSIDE the cluster whose members go
+    into the alignment and tree but get no verdict row of their own. They are
+    what lets the tree say SAME_FAMILY or SEPARATE instead of the permanent
+    MONOPHYLETIC silence - see steps/cluster_validate._outgroup_verdict.
+    """
     workdir = outdir / cluster_id
     workdir.mkdir(parents=True, exist_ok=True)
     fragments = {f: families[f] for f in fam_ids}
+    overlap = set(outgroup_families) & set(fam_ids)
+    if overlap:
+        raise ValueError(
+            f"{cluster_id}: outgroup families {sorted(overlap)} are also "
+            f"cluster members - the test would be circular")
+    outgroup_genes = [g for f in outgroup_families for g in families[f]]
+    if len(outgroup_genes) != len(set(outgroup_genes)):
+        raise ValueError(f"{cluster_id}: an outgroup gene is listed twice")
     wanted = [g for m in fragments.values() for g in m]
     if len(wanted) != len(set(wanted)):
         raise ValueError(
             f"{cluster_id}: a gene belongs to more than one fragment"
         )
 
-    missing_pep = sorted(set(wanted) - set(pep_pool))
+    missing_pep = sorted((set(wanted) | set(outgroup_genes)) - set(pep_pool))
     if missing_pep:
         raise ValueError(
             f"{cluster_id}: {len(missing_pep)} family member peptide(s) are "
             f"absent from the peptide pool: {','.join(missing_pep[:10])}"
         )
 
+    in_tree = wanted + outgroup_genes
     pep = workdir / "cluster.pep.fa"
-    write_fasta({g: pep_pool[g] for g in wanted}, str(pep))
+    write_fasta({g: pep_pool[g] for g in in_tree}, str(pep))
     cds = workdir / "cluster.cds.fa"
-    have_cds = {g: cds_pool[g] for g in wanted if g in cds_pool}
-    use_cds = len(have_cds) == len(wanted)
+    have_cds = {g: cds_pool[g] for g in in_tree if g in cds_pool}
+    use_cds = len(have_cds) == len(in_tree)
     if use_cds:
         write_fasta(have_cds, str(cds))
 
     tree = build_cluster_tree(pep, cds if use_cds else None, workdir, cfg)
-    verdict = fragment_verdict(tree.read_text(), fragments)
+    verdict = fragment_verdict(tree.read_text(), fragments,
+                               outgroup=outgroup_genes)
     missing_tree = {
         fam: d["n_missing"]
         for fam, d in verdict["fragments"].items()
@@ -754,6 +818,17 @@ def main(argv=None):
     ap.add_argument("--fasttree-bin", default="FastTree")
     ap.add_argument("--pal2nal", default="pal2nal.pl")
     ap.add_argument("--threads", type=int, default=4)
+    ap.add_argument(
+        "--outgroup-from-edges", metavar="N", type=int, default=0,
+        help="judge: add the N nearest families OUTSIDE each cluster to its "
+             "tree as an outgroup, taken from vote_edges.tsv. Without one, a "
+             "subfamily is a clade and the verdict is permanently "
+             "MONOPHYLETIC; with one the tree can say SAME_FAMILY or "
+             "SEPARATE. Use several (3+): a single outgroup leaf is "
+             "separated from everything by its own pendant edge and so "
+             "discriminates nothing.")
+    ap.add_argument("--vote-edges",
+                    help="judge: default <run-dir>/vote_edges.tsv")
     ap.add_argument("--expect", type=int,
                     help="apply: required cluster count; refuses a partial set")
     ap.add_argument(
@@ -801,8 +876,21 @@ def main(argv=None):
 
         if args.cluster and args.cluster not in clusters:
             sys.exit(f"unknown cluster {args.cluster!r}")
+        vote_edges = []
+        if args.outgroup_from_edges:
+            edges_path = (Path(args.vote_edges) if args.vote_edges
+                          else run_dir / "vote_edges.tsv")
+            if not edges_path.exists():
+                sys.exit(f"--outgroup-from-edges needs {edges_path}; run the "
+                         f"merge scan first or pass --vote-edges")
+            vote_edges = load_vote_edges(edges_path)
+            logger.info("outgroup: up to %d families per cluster from %d "
+                        "vote edges", args.outgroup_from_edges,
+                        len(vote_edges))
+
         todo = [args.cluster] if args.cluster else sorted(clusters)
         failed = []
+        no_outgroup = []
         for cid in todo:
             out = verdict_dir / f"{cid}.rows.tsv"
             try:
@@ -817,8 +905,14 @@ def main(argv=None):
                 ):
                     continue
                 archive_stale_verdict(out)
+                og = (pick_outgroup_families(clusters[cid], vote_edges,
+                                             args.outgroup_from_edges)
+                      if vote_edges else [])
+                if args.outgroup_from_edges and not og:
+                    no_outgroup.append(cid)
                 rows = judge_cluster(cid, clusters[cid], families,
-                                     pep_pool, cds_pool, workdir, cfg)
+                                     pep_pool, cds_pool, workdir, cfg,
+                                     outgroup_families=og)
             except Exception as exc:            # one bad cluster must not
                 logger.error("%s failed: %s", cid, exc)   # kill the campaign
                 (verdict_dir / f"{cid}.FAILED").write_text(str(exc))
@@ -828,6 +922,15 @@ def main(argv=None):
                 out, rows, fingerprint, membership_fingerprint,
             )
             (verdict_dir / f"{cid}.FAILED").unlink(missing_ok=True)
+        if args.outgroup_from_edges and no_outgroup:
+            share = 100.0 * len(no_outgroup) / max(len(todo), 1)
+            logger.error(
+                "%d of %d clusters (%.1f%%) got NO outgroup and fell back to "
+                "the topology rule - they can only return MONOPHYLETIC. A "
+                "cluster is a connected component of the vote edges, so a "
+                "thresholded edge file cannot supply one: re-run the merge "
+                "scan so vote_edges.tsv keeps the sub-threshold edges.",
+                len(no_outgroup), len(todo), share)
         logger.info("judged: %d verdict files",
                     len(list(verdict_dir.glob("*.rows.tsv"))))
         if failed:
