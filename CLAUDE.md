@@ -81,6 +81,14 @@ clade-marking used by the retargeting/codeml modules and tests — it exists so 
 analysis code runs without ete4. `steps/prune.py` still uses ete4 (`from ete4 import
 Tree` at module level — tests must stub it, see below).
 
+**Selection-test policy (2026-08-24, HyPhy-first)**: hypothesis tests run on
+HyPhy (RELAX / MEME / aBSREL / BUSTED) — codeml full-clan runs proved
+impractical (102 taxa: 100 iterations in 23h, non-convergent; 95 taxa: ~2 days)
+and the hypothesis verdicts never depended on them. codeml is reserved for two
+uses only: regenerating legacy published numbers, and BEB site posteriors when
+a result must be compared against BEB-based literature — and then on a
+fast-track taxon subset, never the full clan.
+
 **Neofunctionalization** (`find_neofunctionalization.py`, issue #16):
 `steps/deeploc.py` (DeepLoc once per proteome, probability vectors cached — dual
 targeting stays ambiguous) → `steps/retargeting.py` (Fitch on family trees, switching
