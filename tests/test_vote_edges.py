@@ -48,28 +48,57 @@ def _hit(gene, fam, *, full_e=1e-40, full_bits=200.0, hmm_len=100,
 # ---------------------------------------------------------------------------
 
 def test_merge_coverage_floor_is_read_from_config():
-    # Arrange: cross-hits cover 0.4 of the profile - below the 0.5 default.
-    # Measured on the 15-species run, healthy full-length members cover a
-    # median 0.22, so 0.5 is not a floor the data supports.
+    # Arrange: cross-hits cover 0.15 of the profile - below the 0.2 default
     families = {"FamA": {"Sp1_a1"}, "FamB": {"Sp1_b1"}}
     hits = {
-        "Sp1_a1": [_hit("Sp1_a1", "FamB", domains=[(1, 40, 1, 100, 200.0)])],
-        "Sp1_b1": [_hit("Sp1_b1", "FamA", domains=[(1, 40, 1, 100, 200.0)])],
+        "Sp1_a1": [_hit("Sp1_a1", "FamB", domains=[(1, 15, 1, 100, 200.0)])],
+        "Sp1_b1": [_hit("Sp1_b1", "FamA", domains=[(1, 15, 1, 100, 200.0)])],
     }
 
     # Act
     at_default = detect_merge_candidates(hits, families, Config())
     at_relaxed = detect_merge_candidates(
-        hits, families, Config(merge_min_profile_cov=0.2))
+        hits, families, Config(merge_min_profile_cov=0.1))
 
     # Assert
     assert at_default == []
     assert at_relaxed == [("FamA", "FamB", 1.0)]
 
 
-def test_merge_coverage_floor_defaults_to_the_historical_value():
-    # Arrange / Act / Assert: the default must not silently change behaviour
-    assert Config().merge_min_profile_cov == 0.5
+def test_merge_coverage_floor_default_is_the_measured_one():
+    # Arrange / Act / Assert: 0.2, not the 0.5 the module constant held.
+    # Reproduction sweep against the shipped 15sp vote_edges.tsv (200 sampled
+    # families, 4,182 genes, all 23,744 profiles): exact agreement peaks at
+    # 0.2 (191/200, 0 missing) and collapses at 0.5 (84/200, 19 missing).
+    # Independently, rescue measured healthy full-length members covering a
+    # median 0.22 of their profile. See config.py for the full rationale.
+    assert Config().merge_min_profile_cov == 0.2
+
+
+def test_merge_coverage_floor_gate_redirects_votes_not_just_drops_them():
+    # Arrange: the failure mode the sweep exposed, with the numbers of the
+    # gene that showed it - Sole_Spov3_chr6.01383, whose strongest hit was
+    # R1_OG0001440 at 44 bits and cov 0.43. Too high a floor does not merely
+    # lose that vote, it hands it to a weaker but better-covered family,
+    # which is worse than silence.
+    families = {"FamA": {"Sp1_a1"}, "TrueNeighbour": {"Sp1_t1"},
+                "Weak": {"Sp1_w1"}}
+    hits = {
+        "Sp1_a1": [
+            _hit("Sp1_a1", "TrueNeighbour", full_bits=44.0,
+                 domains=[(1, 43, 1, 100, 44.0)]),      # strong, cov 0.43
+            _hit("Sp1_a1", "Weak", full_bits=28.0,
+                 domains=[(1, 90, 1, 100, 28.0)]),      # weak, cov 0.90
+        ],
+    }
+
+    # Act
+    at_high = vote_edges(hits, families, Config(merge_min_profile_cov=0.5))
+    at_default = vote_edges(hits, families, Config())
+
+    # Assert
+    assert at_high == [("FamA", "Weak", 1, 1, 1.0)]
+    assert at_default == [("FamA", "TrueNeighbour", 1, 1, 1.0)]
 
 
 def test_merge_coverage_floor_enters_the_config_hash():
@@ -81,7 +110,7 @@ def test_merge_coverage_floor_enters_the_config_hash():
 
     # Act
     base = hashed_config_fields(Config())
-    changed = hashed_config_fields(Config(merge_min_profile_cov=0.2))
+    changed = hashed_config_fields(Config(merge_min_profile_cov=0.5))
 
     # Assert
     assert "merge_min_profile_cov" in base

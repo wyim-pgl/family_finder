@@ -98,9 +98,24 @@ class Config:
     # neither file tied to a config hash - producing the 0.2 file required
     # editing source. It is a field now, so the manifest refuses a resume
     # across a change and every candidate file names the floor that made it.
-    # Kept at the historical 0.5 by default; note rescue_min_profile_coverage
-    # above measured this same gate at zero discrimination (median 0.22).
-    merge_min_profile_cov: float = 0.5
+    #
+    # 0.2, not the 0.5 the constant held, on three independent measurements:
+    #   * reproduction sweep (2026-08-24, 200 sampled families / 4,182 genes
+    #     against all 23,744 profiles): exact agreement with the shipped
+    #     vote_edges.tsv peaks sharply at 0.2 - 191/200 with 0 missing, vs
+    #     84/200 with 19 missing at 0.5. The published edge file was made at
+    #     0.2 while the source said 0.5.
+    #   * rescue_min_profile_coverage above: healthy full-length members
+    #     cover a median 0.22 of their family profile, so 0.5 rejects most
+    #     of them - measured at zero discrimination and defaulted off.
+    #   * gene-level diagnostic: at 0.5 the gate does not merely drop votes,
+    #     it REDIRECTS them. Members whose strongest hit was the true
+    #     neighbour at 44-60 bits were gated out and voted instead for a
+    #     weaker but better-covered family at 25-39 bits.
+    # The gate is a nomination filter and the tree is the arbiter
+    # (steps/cluster_validate), so a floor this high decides before the
+    # arbiter ever sees the case.
+    merge_min_profile_cov: float = 0.2
 
     # Pipeline parameters
     max_rounds: int = 10
