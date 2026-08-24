@@ -15,6 +15,8 @@
 | `pepc_pilot_seltest/{seltest,seltest_fast}` | **폐기 branch-site 정본** — LRT 15.3631이 나온 곳. `_M` 오염 서열 집합(102-taxon) 위 계산 (#40, #44). 사본은 `~/scratch/pepc_branchsite_20260823/retired_2026-08-20/`에도 있음 | `~/scratch/pepc_branchsite_20260823/` (교정 세트 재생성, 진행 중) |
 | `codon95.codon.aln.NOGAP_599codons` | `pal2nal -nogap`이 **코돈 58% 삭제**(1,428→599). 선택압·BEB 좌표에 치명적 (#44, resume.md §5) | `pepc_branchsite_20260823/inputs/`의 1,428코돈 재정렬 |
 
+| `fragmentation_clusters.tsv` `vote_edges.tsv` (2026-08-24 초판) | **vote-inflation 버그 산출물** — domtblout의 프로파일 단위 정렬을 유전자 단위 연속으로 오인해 유전자당 다중 투표. 간선 1.02M(상한 23,744), 거대 컴포넌트 13,347 families 전부 인공물 (resume.md §5) | `merge_analyze2` 재계산본 (`output_15sp_v2/`) |
+
 ## gpu: `~/RETIRED_DO_NOT_USE/`
 
 | 격리물 | 왜 | 대체물 |
