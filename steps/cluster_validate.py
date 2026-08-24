@@ -1,8 +1,22 @@
 """Tree validation of fragmentation clusters (issue #47, family table v3).
 
 The one-way clusters in fragmentation_clusters.tsv over-merge by construction:
-a frac >= 0.6 vote edge marks the nearest-neighbour family, and every family
-has one. So cluster membership NOMINATES; only the cluster's own tree merges.
+a frac >= 0.6 vote edge marks the nearest-neighbour family, so cluster
+membership NOMINATES; only the cluster's own tree merges.
+
+They also UNDER-COVER, and that half was missing here until it was measured.
+"every family has a nearest neighbour" is true of the data and false of the
+file: the fifteen-species edge dump has a minimum frac of exactly 0.600 - the
+cut, not the evidence, is what its floor records - and 8,902 of 23,744
+families have no outgoing edge at all. 7,683 families therefore reached no
+cluster and no tree, 32.4% of the table. The family holding the Mcry PEPC
+flagship is one of them: it votes for R1_OG0019668, a member of C0297, the
+very cluster the other PEPC pieces merged into, at frac 2/9 = 0.22.
+
+So a verdict here is evidence about the fragments it was given, and silence
+about a third of the table. Over-merging is corrected by the tree; this is
+not, because the tree never sees the case. steps/profile_assign.vote_edges
+exports the edges uncut for exactly this reason.
 
 The tree can say three things about a fragment, and only one of them merges:
 
