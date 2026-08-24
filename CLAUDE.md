@@ -89,6 +89,18 @@ uses only: regenerating legacy published numbers, and BEB site posteriors when
 a result must be compared against BEB-based literature — and then on a
 fast-track taxon subset, never the full clan.
 
+The policy has since been tested by the case it anticipated. On the PEPC
+foreground, codeml branch-site returned **significant positive selection**
+(LRT 27.11, p 9.6e-08, five BEB sites at P>0.95) while MEME found **zero**
+sites at FDR, aBSREL left the same stem non-significant, and RELAX reported
+**strong relaxation** (p 5.9e-13). The run was valid — `#1` on the right
+internal node, its ten leaves exactly the intended foreground — so this is
+not a marking error. Model A's ω₂ ≥ 1 class absorbs sites whose constraint
+has lifted toward ω = 1, which is what RELAX exists to distinguish, so the
+branch-site significance is best read as relaxation misread rather than as a
+second finding. **When the two disagree, HyPhy decides**, and codeml's BEB
+sites are not cited without stating that MEME confirmed none of them.
+
 **Neofunctionalization** (`find_neofunctionalization.py`, issue #16):
 `steps/deeploc.py` (DeepLoc once per proteome, probability vectors cached — dual
 targeting stays ambiguous) → `steps/retargeting.py` (Fitch on family trees, switching
