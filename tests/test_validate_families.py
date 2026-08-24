@@ -559,3 +559,77 @@ def test_the_edges_that_built_a_cluster_cannot_supply_its_outgroup():
     # Assert
     assert from_component == []
     assert from_full == ["X"]
+
+
+def test_explicit_outgroup_families_are_used_verbatim():
+    # Arrange: the defensible outgroup is an externally justified one, not a
+    # below-cut graph neighbour. For PEPC that is the BTPC group: scored
+    # against the four Arabidopsis anchors on 15-species sequences alone, the
+    # five PTPC fragments sit 700-1000 bits nearer PPC1/2/3 while
+    # R1_OG0009826 sits 812 bits nearer PPC4. One sign flip, not a gradient.
+    from validate_families import resolve_outgroup
+    edges = [("A", "X", 2, 10, 0.2)]
+
+    # Act
+    explicit = resolve_outgroup(["A", "B"], edges, n_from_edges=3,
+                                explicit=["OG_BTPC"])
+    from_edges = resolve_outgroup(["A", "B"], edges, n_from_edges=3,
+                                  explicit=None)
+
+    # Assert: an explicit panel wins over anything the graph would pick
+    assert explicit == ["OG_BTPC"]
+    assert from_edges == ["X"]
+
+
+def test_explicit_outgroup_may_not_name_a_cluster_member():
+    # Arrange
+    from validate_families import resolve_outgroup
+
+    # Act / Assert
+    try:
+        resolve_outgroup(["A", "B"], [], n_from_edges=0, explicit=["B"])
+    except ValueError as e:
+        assert "B" in str(e)
+    else:
+        raise AssertionError("expected a cluster member to be refused")
+
+
+# ---------------------------------------------------------------------------
+# the outgroup verdicts must actually reach the family table
+# ---------------------------------------------------------------------------
+# Judging emitted SAME_FAMILY/SEPARATE/OUTGROUP_SPLIT while apply accepted only
+# INTERLEAVED/MONOPHYLETIC, so an outgroup campaign would have been rejected or
+# silently merged nothing. The tests below are the seam nobody was testing.
+
+def test_same_family_groups_are_applied():
+    # Arrange
+    rows = [("C1", "A", "SAME_FAMILY", 5, 0, "A+B", "groups with B"),
+            ("C1", "B", "SAME_FAMILY", 4, 0, "A+B", "groups with A")]
+
+    # Act
+    groups = merge_groups_from_rows(rows)
+
+    # Assert
+    assert groups == [["A", "B"]]
+
+
+def test_separate_and_outgroup_split_never_merge():
+    # Arrange: SEPARATE is a decision NOT to merge; OUTGROUP_SPLIT is a
+    # conflict report. Neither may put a fragment into a group.
+    rows = [("C1", "A", "SEPARATE", 5, 0, "", "outgroup lies between"),
+            ("C1", "B", "OUTGROUP_SPLIT", 4, 0, "", "both sides")]
+
+    # Act / Assert
+    assert merge_groups_from_rows(rows) == []
+
+
+def test_apply_accepts_the_outgroup_statuses():
+    # Arrange
+    from validate_families import validate_verdict_coverage
+    clusters = {"C1": ["A", "B", "C"]}
+    rows = [("C1", "A", "SAME_FAMILY", 2, 0, "A+B", ""),
+            ("C1", "B", "SAME_FAMILY", 2, 0, "A+B", ""),
+            ("C1", "C", "SEPARATE", 1, 0, "", "")]
+
+    # Act / Assert: must not raise on a status it has never seen before
+    validate_verdict_coverage(rows, clusters)

@@ -52,6 +52,14 @@ FINGERPRINT_PREFIX = "# judge_fingerprint\t"
 LOGIC_PREFIX = "# judge_logic\t"
 MEMBERSHIP_PREFIX = "# judge_membership\t"
 
+# Verdicts that merge, and the full vocabulary. Kept as named sets because the
+# apply path once hard-coded INTERLEAVED and silently ignored every outgroup
+# verdict - a campaign could have judged thousands of clusters and merged
+# nothing, with no error anywhere.
+MERGING_STATUSES = {"INTERLEAVED", "SAME_FAMILY"}
+VERDICT_STATUSES = MERGING_STATUSES | {"MONOPHYLETIC", "SEPARATE",
+                                       "OUTGROUP_SPLIT", "ABSENT"}
+
 
 # ---------------------------------------------------------------------------
 # reading the run's own outputs
@@ -250,7 +258,7 @@ def merge_groups_from_rows(rows: Sequence[tuple]) -> List[List[str]]:
     groups: List[List[str]] = []
     for row in rows:
         status, group = row[2], row[5]
-        if status != "INTERLEAVED" or not group:
+        if status not in MERGING_STATUSES or not group:
             continue
         members = sorted(f for f in group.split("+") if f)
         if len(members) < 2:
@@ -292,7 +300,7 @@ def validate_verdict_coverage(
                 f"duplicate verdict row for {fam!r} in {cluster_id}"
             )
         status = row[2]
-        if status not in {"INTERLEAVED", "MONOPHYLETIC"}:
+        if status not in VERDICT_STATUSES:
             raise ValueError(
                 f"invalid verdict status {status!r} for {fam!r} in {cluster_id}"
             )
@@ -330,10 +338,11 @@ def validate_verdict_coverage(
                 f"merge group for {fam!r} in {cluster_id} crosses the cluster "
                 f"boundary: {','.join(outside)}"
             )
-        if status == "MONOPHYLETIC" and group:
+        if status not in MERGING_STATUSES and group:
             raise ValueError(
-                f"MONOPHYLETIC fragment {fam!r} in {cluster_id} carries a "
-                "merge group"
+                f"{status} fragment {fam!r} in {cluster_id} carries a merge "
+                "group; only " + "/".join(sorted(MERGING_STATUSES)) +
+                " may name one"
             )
         seen[cluster_id].add(fam)
         rows_by_fragment[(cluster_id, fam)] = (status, group)
@@ -357,11 +366,11 @@ def validate_verdict_coverage(
             continue
         for member in group:
             other_status, other_group = rows_by_fragment[(cluster_id, member)]
-            if other_status != "INTERLEAVED" or other_group != group:
+            if (other_status != status or other_group != group):
                 raise ValueError(
                     f"inconsistent merge group {row_group(group)!r} in "
                     f"{cluster_id}: {member!r} does not carry the same "
-                    "INTERLEAVED decision"
+                    f"{status} decision"
                 )
 
 
@@ -514,6 +523,36 @@ def pick_outgroup_families(cluster: Sequence[str], edges: Sequence[tuple],
             best[fam_to] = frac
     ranked = sorted(best, key=lambda f: (-best[f], f))
     return ranked[:n]
+
+
+def resolve_outgroup(cluster: Sequence[str], edges: Sequence[tuple],
+                     n_from_edges: int = 0,
+                     explicit: Sequence[str] = None) -> List[str]:
+    """The outgroup for one cluster: an explicit panel, or the graph fallback.
+
+    Prefer explicit. A below-cut graph neighbour is exactly where membership
+    is most ambiguous, so it is the least defensible place to manufacture a
+    known negative; an externally justified panel is the defensible one.
+
+    PEPC has such a panel and it needs no curation beyond what is already
+    here. Scored against the four Arabidopsis anchors using 15-species
+    sequences alone, the five PTPC fragments sit 700-1000 bits nearer
+    PPC1/PPC2/PPC3 while R1_OG0009826 sits 812 bits nearer PPC4 - one sign
+    flip across 128 genes, not a gradient. PPC4 is the bacterial-type PEPC
+    (BTPC), a class that diverged from plant-type before land plants, and
+    steps' own anchors.tsv already labels ATH_AT1G68750.1 as bacterial. It is
+    an independently justified negative for the PTPC family.
+    """
+    if explicit:
+        overlap = sorted(set(explicit) & set(cluster))
+        if overlap:
+            raise ValueError(
+                f"outgroup families {overlap} are cluster members - an "
+                f"outgroup drawn from inside the family is circular")
+        return list(explicit)
+    if n_from_edges and edges:
+        return pick_outgroup_families(cluster, edges, n_from_edges)
+    return []
 
 
 def judge_cluster(cluster_id: str, fam_ids: Sequence[str],
@@ -829,6 +868,12 @@ def main(argv=None):
              "discriminates nothing.")
     ap.add_argument("--vote-edges",
                     help="judge: default <run-dir>/vote_edges.tsv")
+    ap.add_argument(
+        "--outgroup-families", nargs="+", metavar="FAMILY",
+        help="judge: use these families as the outgroup for every cluster, "
+             "overriding --outgroup-from-edges. This is the defensible form: "
+             "an externally justified negative, not a below-cut graph "
+             "neighbour. For PEPC that is the BTPC family (R1_OG0009826).")
     ap.add_argument("--expect", type=int,
                     help="apply: required cluster count; refuses a partial set")
     ap.add_argument(
@@ -905,10 +950,11 @@ def main(argv=None):
                 ):
                     continue
                 archive_stale_verdict(out)
-                og = (pick_outgroup_families(clusters[cid], vote_edges,
-                                             args.outgroup_from_edges)
-                      if vote_edges else [])
-                if args.outgroup_from_edges and not og:
+                og = resolve_outgroup(clusters[cid], vote_edges,
+                                      args.outgroup_from_edges,
+                                      args.outgroup_families)
+                if args.outgroup_from_edges and not args.outgroup_families \
+                        and not og:
                     no_outgroup.append(cid)
                 rows = judge_cluster(cid, clusters[cid], families,
                                      pep_pool, cds_pool, workdir, cfg,
