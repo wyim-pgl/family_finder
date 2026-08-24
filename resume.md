@@ -619,9 +619,9 @@ ssh pronghorn 'wc -l < ~/scratch/pepc_branchsite_20260823/fast46/alt/rub'
    그 오판으로 scancel했고 **5차 재제출됨** (`squeue --name=fast46`로 확인). ⚠️ **교훈: 진행 판정은
    rub이 아니라 results.txt의 lnL 줄로** — 이 프로젝트가 codeml exit code에 대해 이미 세운 규칙과 같은
    이유다. gapped가 먼저 수렴하면 예비는 scancel
-2. **캠페인 집계 후**: 판정 분포 확인 → INTERLEAVED 병합군 적용 `summary_v3.tsv` 생성 →
-   `results_15sp.md` **v3** 개판. 판정 모듈 `steps/cluster_validate.py`(`a5f44ed`), known-answer는
-   C0297에서 통과(계통 조각 3개만 병합, 1E2·PPC4는 MONOPHYLETIC-미판정 = 정답)
+2. ~~캠페인~~ ✅ **완료**: 5,618/5,618 실패 0. INTERLEAVED 9,228 → 병합군 2,410 적용,
+   **`summary_v3.tsv` = 20,133 families**(−3,611), 유전자 459,398 보존·중복 0.
+   `results_15sp.md` **v3** 발행(`a85bb03`). MONOPHYLETIC 6,833은 미판정 유지
 3. **codeml lnL 8/8 되면**: LRT·p·BEB(BEB 헤더 이후만 파싱) → 폐기 수치(LRT 15.3631)와 비교 →
    **HyPhy 삼중 발사**: `ssh gpu 'bash ~/pepc_hyphy_corrected/run_hyphy.sh'` (스테이징 완료:
    교정 정렬 + fgA 10잎 {FG} 트리) → methods.md 반영 → #47 닫기
