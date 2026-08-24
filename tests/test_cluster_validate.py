@@ -5,14 +5,21 @@ vote concentration), so cluster membership alone must never merge anything.
 The tree decides, and it can say three things about a fragment:
 
   INTERLEAVED   its members do not form an edge-defined clade. Pairwise
-                inseparable fragments are lineage-axis fragmentation, the PEPC
-                signature, and merge. An isolated internal strip does not.
+                inseparable fragments mix, and merge. An isolated internal
+                strip does not.
   MONOPHYLETIC  its members form their own clade. Topology alone CANNOT
                 distinguish "subfamily of the same family" from "distinct
                 neighbouring family" - PPC4 is monophyletic inside the PEPC
                 cluster and was its own family in the 5-species run. Undecided,
                 with the metrics reported.
   (missing)     members absent from the tree are counted, never assumed.
+
+⚠️ These fixtures are synthetic. PEPC is NOT the worked example for the
+INTERLEAVED shape - this file used to call it "the PEPC signature". Measured
+on the 15-species run the split runs largely along the SUBFAMILY axis (all 15
+species appear in 3-5 of the six fragments), and a subfamily is a clade, so
+the rule merges only two of the six. See steps/cluster_validate.py's module
+docstring for the numbers.
 """
 import sys
 import types
@@ -50,7 +57,10 @@ def test_all_monophyletic_means_no_merges_at_all():
 
 
 def test_three_way_interleaving_merges_all_three():
-    """The PEPC lineage chain: no pair is clean, all mix."""
+    """Three fragments, no pair separable by an edge: all mix.
+
+    Synthetic, not PEPC - see the module docstring.
+    """
     v = fragment_verdict("((a1,(b1,c1)),(b2,(a2,c2)));",
                          {"A": ["a1", "a2"], "B": ["b1", "b2"],
                           "C": ["c1", "c2"]})

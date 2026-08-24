@@ -21,16 +21,28 @@ exports the edges uncut for exactly this reason.
 The tree can say three things about a fragment, and only one of them merges:
 
   INTERLEAVED   the fragment's members do not form their own edge-defined
-                clade. Pairwise-inseparable fragments mix; that is lineage-axis
-                fragmentation, the shape MCL fragmentation produces (the PEPC
-                pieces split by species, not by subfamily). Connected mixing
-                fragments merge. An isolated internal strip does not.
+                clade. Pairwise-inseparable fragments mix. Connected mixing
+                fragments merge; an isolated internal strip does not.
   MONOPHYLETIC  the fragment is its own clade. Topology alone cannot say
                 whether that is a subfamily of the same family or a distinct
                 neighbouring family - PPC4 is monophyletic inside the PEPC
                 cluster and was its own family in the five-species run.
                 Undecided: reported with its numbers, merged by nobody.
   missing       members absent from the tree are counted, never assumed in.
+
+⚠️ PEPC is NOT the worked example for that INTERLEAVED shape, and this file
+used to claim it was ("the PEPC pieces split by species, not by subfamily").
+Measured on the 15-species run, the six PEPC fragments hold 128 genes and
+**every one of the 15 species appears in three to five of them**; two of the
+fragments are one-gene-per-species subfamilies (R1_OG0009826 = PPC4 across
+15 species, R1_OG0008467 = 1E2 across 12) and R1_OG0000440 is a
+Portulacineae-only expansion, 63 genes over 9 species. So the split runs
+largely along the SUBFAMILY axis, and a subfamily is a clade by
+construction - this rule can never merge it. Of the six fragments it merges
+exactly two (21 genes). That is the rule behaving as designed on a question
+it cannot answer, not a bug; the "one family" verdict for PEPC comes from
+non-topological evidence (structure, external anchors, the clan tree). See
+results_15sp.md "무근 트리 결함" and "커버리지 구멍".
 
 Merge groups are connected components of the "mixes with" relation.  That
 relation is pairwise and unrooted: two fragments mix only when no tree edge
