@@ -9,7 +9,15 @@ def read_fasta(path: str) -> Dict[str, str]:
     """Read FASTA file, return dict of id -> sequence string."""
     seqs = {}
     for record in SeqIO.parse(path, "fasta"):
-        seqs[record.id] = str(record.seq)
+        sequence = str(record.seq)
+        previous = seqs.get(record.id)
+        if previous is not None and previous != sequence:
+            raise ValueError(
+                f"{path}: duplicate sequence id {record.id!r} carrying "
+                f"different sequences. dict last-write-wins would drop one "
+                f"BEFORE clustering, where no downstream audit can see it - "
+                f"the parse_orthogroups guard only watches OrthoFinder output")
+        seqs[record.id] = sequence
     return seqs
 
 
@@ -17,9 +25,18 @@ def read_fasta_dir(directory: str) -> Dict[str, str]:
     """Read all FASTA files in a directory, return combined dict of id -> sequence."""
     seqs = {}
     dirpath = Path(directory)
+    source: Dict[str, str] = {}
     for ext in ("*.fa", "*.fasta", "*.faa", "*.pep", "*.fna", "*.fas", "*.cds"):
         for fpath in dirpath.glob(ext):
-            seqs.update(read_fasta(str(fpath)))
+            for gene, sequence in read_fasta(str(fpath)).items():
+                previous = seqs.get(gene)
+                if previous is not None and previous != sequence:
+                    raise ValueError(
+                        f"duplicate sequence id {gene!r} with different "
+                        f"sequences in {source[gene]} and {fpath}; one would "
+                        f"be lost before clustering")
+                seqs[gene] = sequence
+                source[gene] = str(fpath)
     return seqs
 
 

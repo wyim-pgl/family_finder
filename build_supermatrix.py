@@ -105,7 +105,13 @@ def single_copy_families(summary_tsv, species: Sequence[str]) -> List[Marker]:
         for line in f:
             if not line.strip():
                 continue
-            family, rnd, n_genes, n_species, gene_list = line.rstrip("\n").split("\t")
+            # summary_v3.tsv adds merged_from and cluster_id, so take the
+            # first five and ignore the rest rather than raising on the table
+            # that now ships (#50).
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) < 5:
+                continue
+            family, rnd, n_genes, n_species, gene_list = fields[:5]
             if int(n_genes) != len(want) or int(n_species) != len(want):
                 continue
             members = gene_list.split(",")

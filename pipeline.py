@@ -29,6 +29,20 @@ from utils.parallel import parallel_map
 logger = logging.getLogger("family_finder")
 
 
+class ClusteringFailed(RuntimeError):
+    """Clustering died mid-run. Terminal: the round is named, so is the cause.
+
+    Raised rather than logged because the alternative was a zero exit code, a
+    truncated summary.tsv and a manifest reading "completed" - indistinguishable
+    from a finished run in a batch log, and trusted as the baseline by the next
+    resume.
+    """
+
+    def __init__(self, method: str, round_num: int, cause):
+        super().__init__(
+            f"clustering ({method}) failed in round {round_num}: {cause}")
+
+
 def process_single_orthogroup(args: tuple):
     """Process a single orthogroup: align → tree → prune.
 
@@ -639,11 +653,12 @@ def run(
                 results_dir = run_orthofinder(input_dir, of_dir, config)
                 orthogroups = parse_orthogroups(results_dir)
         except Exception as e:
-            logger.error(
-                f"Clustering ({config.clustering_method}) failed in "
-                f"round {round_num}: {e}"
-            )
-            break
+            # Not a break. A run whose clustering died must not reach
+            # _write_final_output and finish "completed": that partial
+            # summary.tsv is exactly what the next resume trusts as its
+            # baseline, so swallowing this here re-opens #48 through the
+            # front door (#49).
+            raise ClusteringFailed(config.clustering_method, round_num, e) from e
         logger.info(f"Round {round_num}: {len(orthogroups)} orthogroups found")
 
         save_checkpoint(round_dir, round_num, len(current_pool), "processing")
@@ -849,6 +864,11 @@ def run(
         )
 
         if should_stop_iterating(round_yields, config):
+            # Update before leaving, like the other two convergence branches.
+            # Breaking first handed HMMER rescue the PREVIOUS round's pool
+            # (#51), so genes placed in the final round were offered again and
+            # genes newly orphaned by it were never offered at all.
+            current_pool = new_outlier_pool
             logger.info(
                 f"Converged after round {round_num}: yield {this_yield:.4%} "
                 f"(threshold {config.convergence_min_yield:.4%})"
