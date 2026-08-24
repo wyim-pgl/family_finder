@@ -71,23 +71,35 @@ def fragment_verdict(newick: str, fragments: Dict[str, Sequence[str]]) -> dict:
         for fam, members in fragments.items()
     }
 
-    # For each fragment present in the tree: is its MRCA's leaf set exactly
-    # its own members? If not, the extra leaves say who it mixes with.
+    # For each fragment present in the tree: is there an EDGE separating its
+    # members from everything else? If not, the leaves on the smaller side
+    # with them say who it mixes with.
+    #
+    # FastTree emits UNROOTED trees and puts the root wherever it likes, so
+    # "clade" cannot mean "descendants of some node" (issue #51): that reads
+    # two Newick strings of the same topology differently, and the campaign's
+    # verdicts would then be an artifact of notation. In an unrooted tree
+    # every non-root node defines a SPLIT - its descendants on one side, the
+    # rest on the other - and both sides are candidate clades.
     mixes: Dict[str, set] = {fam: set() for fam in fragments}
     status: Dict[str, str] = {}
     for fam, mem in present.items():
         if not mem:
             status[fam] = "ABSENT"
             continue
-        # smallest clade containing mem
-        best = None
+        # smallest side of any split that contains mem, the whole leaf set
+        # included (a fragment holding every leaf is trivially its own clade)
+        best = set(leaf_set)
         stack = [root]
         while stack:
             n = stack.pop()
-            L = set(_leaves(n))
-            if mem <= L and (best is None or len(L) < len(best)):
-                best = L
             stack.extend(n.children)
+            if n is root:
+                continue          # the root defines no edge of its own
+            side = set(_leaves(n))
+            for candidate in (side, leaf_set - side):
+                if mem <= candidate and len(candidate) < len(best):
+                    best = candidate
         extra = best - mem
         if not extra:
             status[fam] = "MONOPHYLETIC"

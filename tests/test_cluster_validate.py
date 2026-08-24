@@ -84,3 +84,74 @@ def test_verdict_report_carries_the_cluster_and_the_decision(tmp_path):
                        "merge_group\treason")
     a = [l for l in lines if l.startswith("C0297\tA")][0].split("\t")
     assert a[2] == "INTERLEAVED" and a[5] == "A+B"
+
+
+# ---------------------------------------------------------------------------
+# unrooted trees (issue #51) - the verdict must not depend on where the
+# Newick happens to be rooted
+# ---------------------------------------------------------------------------
+
+# Same topology, two root placements. FastTree emits unrooted trees and puts
+# the root wherever it likes, so any verdict that differs between these two is
+# an artifact of notation, not of the data.
+_SAME_TOPOLOGY = [
+    "((a1,a2),((b1,c1),(b2,c2)));",
+    "(a1,(a2,((b1,c1),(b2,c2))));",
+]
+_THREE_FRAGS = {"A": ["a1", "a2"], "B": ["b1", "b2"], "C": ["c1", "c2"]}
+
+
+def _statuses(newick, frags):
+    v = fragment_verdict(newick, frags)
+    return ({f: v["fragments"][f]["status"] for f in v["fragments"]},
+            [sorted(g) for g in v["merge_groups"]])
+
+
+def test_verdict_is_invariant_to_rerooting():
+    # Arrange / Act
+    first = _statuses(_SAME_TOPOLOGY[0], _THREE_FRAGS)
+    second = _statuses(_SAME_TOPOLOGY[1], _THREE_FRAGS)
+
+    # Assert
+    assert first == second
+
+
+def test_a_clade_split_across_the_root_is_still_monophyletic():
+    # Arrange: A's members sit on either side of the root, but one EDGE still
+    # separates {a1,a2} from everything else, which is what monophyly means in
+    # an unrooted tree.
+    frags = {"A": ["a1", "a2"], "B": ["b1", "b2"]}
+
+    # Act
+    statuses, groups = _statuses("(a1,(a2,(b1,b2)));", frags)
+
+    # Assert
+    assert statuses["A"] == "MONOPHYLETIC"
+    assert groups == []
+
+
+def test_genuinely_interleaved_stays_interleaved_under_rerooting():
+    # Arrange: no edge separates A from B in either notation
+    frags = {"A": ["a1", "a2"], "B": ["b1", "b2"]}
+
+    # Act
+    first = _statuses("((a1,b1),(a2,b2));", frags)
+    second = _statuses("(a1,(b1,(a2,b2)));", frags)
+
+    # Assert
+    assert first[0]["A"] == first[0]["B"] == "INTERLEAVED"
+    assert first == second
+
+
+def test_all_members_present_is_monophyletic_regardless_of_root():
+    # Arrange: a fragment holding every leaf is trivially its own clade -
+    # the complement is empty, which must not be read as "mixes with nothing
+    # in particular" and flipped to INTERLEAVED.
+    frags = {"A": ["a1", "a2", "b1"]}
+
+    # Act
+    statuses, groups = _statuses("((a1,a2),b1);", frags)
+
+    # Assert
+    assert statuses["A"] == "MONOPHYLETIC"
+    assert groups == []
