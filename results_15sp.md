@@ -1,76 +1,84 @@
-# 15종 v2 최종 family 결과 — v1 (2026-08-23)
+# 15종 v2 최종 family 결과 — **v2** (2026-08-24)
 
 > **정본 테이블**: `pronghorn:~/scratch/bin/family_finder/output_15sp_v2/summary.tsv`
-> (23,744 families / 459,398 배정 유전자, 12.7 MB)
-> 이 문서는 그 테이블을 **어떻게 읽어야 하는지** — 무엇이 인용 가능하고 무엇이 잠정인지 — 를 정의한다.
-> v2 갱신 조건은 맨 아래에 있다.
+> (23,744 families / 459,398 배정 유전자)
+> v1(`cb2c973`)의 잠정 항목 두 개 — rescue 층, family 경계 — 가 이 판에서 확정/주석화됐다.
+> 남은 미결은 codeml 선택압 하나뿐이다(맨 아래).
 
 ## 런 정보
 
 | | |
 |---|---|
 | SLURM | 6097190, **COMPLETED**, 1-12:43:29 |
-| config | `config_15sp_v2.json` (`profile_assign_per_round: true`, chunked rescue 500×48) |
-| 종트리 | `data_15sp/species_tree_estimated.nwk` — 135 단일카피 loci / 250,329 nt / 전 내부노드 100/100 |
-| Cgig | **Helixer** (27,583) — 5종 패널(MAKER 29,163)과 비교 불가 |
-| 수렴 | R1 22,051 → R2 1,448 → R3 212 → R4 32 → R5 1 → R6–7 0 |
+| config | `config_15sp_v2.json` · 추정 종트리(135 loci, 전 내부노드 100/100) · Cgig=Helixer |
+| 수렴 | R1 22,051 → R6–7 0 |
+| 무결성 | 유실 0 · 중복 0 · rescue 청크 48/48 |
 
-## 무결성 — 전부 통과
+## 인용 가능 — 배치율
+
+**comparable(≥100 aa + 완전 CDS)만 종간 비교에 쓴다.** headline: Mcry raw 10.8% vs baseline 14.9% **PASS**.
+
+| 종 | comparable | raw | | 종 | comparable | raw |
+|---|---|---|---|---|---|---|
+| Ococ | **0.0%** | 0.0% | | Pole | 1.7% | 3.6% |
+| Cjam | 0.3% | 1.6% | | Cgig | 1.7% | 5.9% |
+| Ccac | 0.7% | 11.2% | | Sund | 1.9% | 3.0% |
+| Obas | 0.8% | 2.8% | | Bvul | 2.7% | 5.3% |
+| Ahyp | 0.9% | 4.0% | | Sof | 2.7% | 3.1% |
+| Tfru | 1.0% | 12.8% | | **Mcry** | **2.8%** | 10.8% |
+| Dcar | 1.6% | 2.5% | | Pami | 5.2% | 7.2% |
+| Sole | 1.6% | 4.1% | | | | |
+
+raw 상위 3종(Tfru·Ccac·Mcry)은 전부 주석 정책 산물. **"Mcry 문제"는 종결** — comparable에서 Bvul·Sof 동급.
+
+## ✅ 확정 — rescue 층 (v1에서 잠정이었던 것)
+
+게이트 보정 판정(#47): 프로파일 커버리지 게이트는 rescue 맥락에서 **판별력 0**
+(comparable 거부 96% vs 깨진 모델 99%; 건강한 전장 멤버의 profile_cov 중앙값 0.22 — 프로파일
+길이가 갭으로 부풀기 때문). `rescue_min_profile_coverage=0.0` 기본(off), 쿼리 게이트 유지(`91dc96c`).
 
 ```
-배정 459,398 + 미배치 25,354 = 484,752 = 입력 총계   (유실 0)
-중복 배정 0  ·  rescue 청크 48/48 (# [ok] 전수 확인)
+최종 rescue: HIGH 8,159 / PROVISIONAL 1,139 / UNRESOLVED 1,083  ->  배정 9,298
+             (옛 E-value 판정 10,381 대비: 게이트 탈락 ~1,083, family 변경 28)
+배정 목록: ~/scratch/rescue_dom_15sp/final_assign.json
 ```
 
-## 인용 가능한 배치율
+## ✅ 주석화 — family 경계의 파편화 (v1의 두 번째 잠정)
 
-**comparable = ≥100 aa AND 완전 CDS(시작·종결·3배수·내부종결 없음). 종간 비교는 이 열만 쓴다.**
+전수 병합 스캔(459,398 유전자 × 23,744 프로파일, SLURM 6098723 + 6099002) 산출물 3종이
+`output_15sp_v2/`에 있다. **자동 병합은 하지 않았다** — 전부 트리 검증 전 후보다.
 
-| 종 | comparable | raw | 제외 (short / invalid CDS) |
-|---|---|---|---|
-| Ococ | **0.0%** | 0.0% | 806 / 271 |
-| Cjam | 0.3% | 1.6% | 2,214 / 0 |
-| Ccac | 0.7% | 11.2% | 1,104 / 2,845 |
-| Obas | 0.8% | 2.8% | 2,383 / 36 |
-| Ahyp | 0.9% | 4.0% | 2,634 / 2,547 |
-| Tfru | 1.0% | 12.8% | 10,920 / 9 |
-| Dcar | 1.6% | 2.5% | 2,358 / 880 |
-| Sole | 1.6% | 4.1% | 3,408 / 9 |
-| Cgig | 1.7% | 5.9% | 3,132 / 117 |
-| Pole | 1.7% | 3.6% | 2,459 / 0 |
-| Sund | 1.9% | 3.0% | 2,027 / 1,213 |
-| Bvul | 2.7% | 5.3% | 2,012 / 325 |
-| Sof | 2.7% | 3.1% | 2,566 / 285 |
-| Mcry | **2.8%** | 10.8% | 3,374 / 2,237 |
-| Pami | 5.2% | 7.2% | 3,621 / 385 |
+**1층 — 상호 쌍 (고신뢰 하한):** `merge_candidates_cov0.5.tsv` — **3,614쌍**
+(min-reciprocal ≥0.6 양방향). 전부 검증·병합되면 23,744 → 20,130. 구조상 family당 최대 1쌍.
 
-- headline: **Mcry raw 10.8% vs v1 baseline 14.9% — PASS**
-- raw 상위 3종(Tfru 12.8 / Ccac 11.2 / Mcry 10.8)은 **전부 주석 정책 산물** — comparable에서 1.0 / 0.7 / 2.8
-- comparable 기준 Mcry는 Bvul·Sof와 동급, Pami보다 낮다 → **"Mcry 문제"는 종결**
+**2층 — 단방향 이웃 클러스터 (상한, 병합 권고 아님):** `fragmentation_clusters.tsv` —
+frac ≥0.6 단방향 간선 14,842개의 연결 성분 **5,618개, family 16,061개(68%) / 유전자 320,721개** 연루.
+최대 47 families/705 유전자. ⚠️ 단방향 간선은 "최근접 이웃 family에 표가 몰림"이라 **구성상
+과병합**한다 — 진짜 파편화의 상한이지 병합 목록이 아니다. 전부 병합하면 13,301이 되지만
+그 숫자를 인용하지 말 것.
 
-## ⚠️ 잠정 — v2에서 바뀔 수 있는 것
+**known-answer:** PEPC 6조각 중 **5개가 C0297 하나로 정확히**(119유전자, 외부 혼입 0) 묶인다.
+쌍 규칙(1층)은 PEPC를 **하나도 못 잡았다** — 표가 사슬(0.94→0.94→1.00)을 이뤄 어느 쌍도
+상호성을 못 채운다. 6번째 조각 `R2_OG0000359`(Mcry Ppc1 splinter)는 9멤버 중 4개만 유효
+표를 내 어느 층에도 안 걸린다 — **검출 한계는 splinter의 작고 잡음 많은 쪽에 있다.**
 
-**1. 대형 family의 경계.** CAM known-answer FAIL (`TOGETHER 0 / SPLIT 2`). PEPC clan이
-**최소 6개 family, 128유전자로 파편화**: `R1_OG0000440`(63) · `R1_OG0008467`(18) ·
-`R1_OG0009826`(17) · `R1_OG0013449`(15) · `R2_OG0000359`(9) · `R1_OG0019668`(6).
-분할은 서브패밀리가 아니라 계통을 따른다(MCL 그래프 파편화). 전수 병합 스캔(6098723) 진행 중.
-**clan 수준 분석은 family 경계를 믿지 말고 손으로 모을 것.**
+**결론: clan 수준 분석은 `fragmentation_clusters.tsv`의 클러스터 단위로 서열을 모아 시작하고,
+family 경계 자체는 트리 검증 없이 병합하지 않는다.** PEPC 정본은 여전히
+`mM_repair/clan_corrected.faa`(108서열; ppc-1E1 62 [95/91] · ppc-1E2 15 [100/76], 둘 다 PROVISIONAL).
 
-**2. PEPC의 정본은 파이프라인 산출물이 아니다.** `pronghorn:~/scratch/mM_repair/clan_corrected.faa`
-(108서열, `_M` 교정 완료)가 정본이다. 서브패밀리: **ppc-1E1** 62멤버(SH-aLRT/UFboot 95/91) ·
-**ppc-1E2** 15멤버(100/76) — 등급 기준으로 **둘 다 PROVISIONAL**(UFboot < 95). 선인장 ppc-1E2
-전장 사본은 *O. basilaris* 1개, Ococ·Cjam은 절단 좌위(synteny·재구성 근거).
+## 미결 — 하나
 
-**3. rescue 층의 10,381 유전자는 잠정 배정이다.** 이 배정은 옛 E-value 판정으로 나왔다.
-bits 재판정으로 37건이 다른 family를 가리키고, tier-2 기본 커버리지 게이트를 적용하면
-**325건만 통과(97% 거부)** 한다 — 게이트가 옳은지(잔여 풀의 69%가 short/broken 모델) 임계값이
-안 맞는지(대형 발산 family의 HMM 길이 부풀림) 보정 전이다(#47). rescue 층 유전자 목록은
-`output_15sp_v2/hmmer_rescue/rescue_summary.tsv`.
+**codeml branch-site** (교정 세트 1,428코돈, SLURM 6097933-38): 2/8 lnL, 진행 중. 완료 시
+methods.md에 반영한다. 감도 축(599코돈 -nogap)은 LRT 0.33/p 1.0이었으나 코돈 58%가 없는
+정렬이라 정본이 아니다.
 
-## v2 갱신 조건 (이 순서, 새 측정 스레드 없이)
+## 산출물 인덱스 (pronghorn)
 
-1. 병합 스캔(6098723) 완료 → 후보 쌍 목록 → 상위 후보 트리 검증 → **family 경계 v2**
-2. rescue 커버리지 임계값 보정(1건 확인: 거부가 short/broken 모델에 집중되는가) → **rescue 층 확정**
-3. codeml 주 분석(1,428코돈) 완료 → SF3 선택압 재생성 값 → methods.md
-
-작업 추적: 이슈 #47. 이 문서가 갱신되면 v2로 개판한다.
+```
+output_15sp_v2/summary.tsv                     정본 family 테이블
+output_15sp_v2/merge_candidates_cov{0.5,0.2}.tsv   1층: 상호 쌍
+output_15sp_v2/fragmentation_clusters.tsv      2층: 이웃 클러스터 (C0297 = PEPC)
+output_15sp_v2/vote_edges.tsv                  간선 원자료
+~/scratch/rescue_dom_15sp/final_assign.json    확정 rescue 배정
+RETIRED_DO_NOT_USE/                            폐기물 (대장: retired_data.md)
+```
