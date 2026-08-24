@@ -357,7 +357,8 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 
 | 이슈 | 우선순위 | 내용 | 막힘 |
 |---|---|---|---|
-| [#35](https://github.com/wyim-pgl/family_finder/issues/35) | **P0** | 15sp v2 프로덕션 런 | **RUNNING** 6097190 — R1 22,051 → R5 1로 수렴 중, 잔여 2일 |
+| [#47](https://github.com/wyim-pgl/family_finder/issues/47) | **P0** | 15종 v2→v3 완결 경로 — 순환 중단 규칙 + 진행 로그 | 캠페인·codeml 실행 중 |
+| [#35](https://github.com/wyim-pgl/family_finder/issues/35) | P0 | 15sp v2 — **완주**, 수용 판정 완료(배치율 PASS / CAM쌍 FAIL→검증 캠페인으로 이관) | — |
 | [#44](https://github.com/wyim-pgl/family_finder/issues/44) | **P1** | codeml 미설정 + **정본 branch-site 산출물 부재** | — (코드 완료 `b82fee3`, 재생성 미실행) |
 | [#42](https://github.com/wyim-pgl/family_finder/issues/42) | P1 | SDP/잔기 해석 일반화 | 임계값 보정만 #35 대기 |
 | [#43](https://github.com/wyim-pgl/family_finder/issues/43) | P1 | 원고 불일치 3건 | — |
@@ -590,53 +591,62 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 
 ---
 
-## 7. /clear 후 세션 재개 가이드 (2026-08-23 기준)
+## 7. /clear 후 세션 재개 가이드 (2026-08-24 저녁 기준)
 
-**정본 문서**: 이 파일 + 이슈 **#25**(스펙) + **#26**(트래커). 서브에이전트·워크플로는 세션과 함께 사라진다.
-⚠️ **정본을 둘로 만들지 말 것.** 이 프로젝트에서 실제로 손해를 본 오류(`_M` 서열, Ccac 종 동정,
-발현 매트릭스 오기)가 전부 "같은 사실이 두 곳에 다르게 적혀 있었다"는 부류였다.
+**정본 문서**: 이 파일 + `results_15sp.md`(v2) + `retired_data.md` + #47(완결 경로) + #26.
+⚠️ **모니터·백그라운드 waiter는 /clear와 함께 전부 죽는다** — 아래 잡들은 손으로 확인해야 한다.
 
-### 즉시 확인할 것
-🔴 **15sp v2 런이 돌고 있다** — SLURM `6097190` (`ff_15sp_v2`), 2026-08-21 23:15 시작, 3일 한도.
-산출물 `output_15sp_v2/`. **이 디렉터리를 건드리지 말 것.**
-2026-08-23 00:30 시점: **R1 22,051 → R2 1,448 → R3 212 → R4 32 → R5 1** (5종 v2와 같은 수렴 곡선),
-누적 23,744 family, 잔여 2일 5시간. `profile_assign_per_round`가 실제로 켜져 도는 것을 로그로 확인.
+### 즉시 확인할 것 — 돌고 있는 잡 3갈래
+
 ```bash
-ssh pronghorn 'squeue -j 6097190 -o "%.10i %.3t %.10M %.11L"'
-ssh pronghorn 'tail -5 ~/scratch/bin/family_finder/logs/ff_15sp_v2_6097190.log'
-git status --short && python3 -m pytest tests/ -q | tail -1
+# 1) 병합 검증 캠페인 (prep 6099221 완료 → 배열 6099222 → 집계 6099223 afterany 체인)
+ssh pronghorn 'sacct -j 6099222,6099223 -X -n --format=JobID%18,State | tail -4;
+  ls ~/scratch/merge_validate/verdicts/*.rows.tsv 2>/dev/null | wc -l'   # /clear 시점 2,635/5,618, 실패 0
+# 집계 완료 표지: output_15sp_v2/cluster_verdicts.tsv 존재 + mv_agg 로그에 AGG_DONE
+
+# 2) codeml gapped 6체인 (6097933-38) — 95-taxa 1,428코돈, /clear 시점 반복 322-326, lnL 0/6
+ssh pronghorn 'grep -h "^lnL" ~/scratch/pepc_branchsite_20260823/gapped_*/results.txt | wc -l'
+# 판정은 exit code가 아니라 lnL 줄로 (§5). nogap 감도축(599코돈)은 완료: LRT 0.33, p 1.0 — 정본 아님
+
+# 3) fast46 예비 (6099193) — 🔴 1시간+ 반복 0으로 정체. 처분 필요 (아래)
+ssh pronghorn 'wc -l < ~/scratch/pepc_branchsite_20260823/fast46/alt/rub'
 ```
-기대값: 워킹트리 clean / **749 passed**.
 
-완주 후: 청크 병합 `# [ok]` 검사 · `measure_v2.py --pep-dir`(**길이 층화 필수**) ·
-`cam_pairs` TOGETHER 유지 · PEPC clan이 단일 family로 병합되는지.
-⚠️ 배치율은 **세 층을 분리 보고**할 것 — raw / ≥100 aa / ≥100 aa + CDS 무결성 통과.
-raw 단독으로 종간 비교하지 않는다(§1.5).
+### 결정·조치가 필요한 것
 
-### 결정이 필요한 것
-1. **#34 tier-3 지표** — `tier3_assign`이 `alntmscore`만 보는데 **ProstT5 DB에는 CA 좌표가 없다.**
-   GPU로 속도 문제는 사라졌지만(아래) **이 제약은 그대로**다. bits 경로 신설 + 임계값 보정이 필요하다.
-   권고: **ProstT5 전수 스크린 전에 ESMFold로 고아 몇백 개 파일럿**을 돌려 배정률을 먼저 잰다.
-   배정률 ≈ 0이면 새 경로를 만들기 전에 두 경로 다 폐기할 수 있다.
-2. **#43 항목 2** — "Ppc2" 라벨 반전 정정 범위. 사용자가 결과 확인 후 직접 정리하기로 함.
+1. 🔴 **fast46 정체** — RUNNING인데 rub 0이 1시간+. pairwise 표는 2분에 완성됐고 그 뒤 무진행.
+   stdin 프롬프트는 아님(재현 실행 30초 에러 없음). **gapped가 수렴하면 예비는 무용 → `scancel 6099193`.**
+   gapped도 실패하면 `stdbuf -o0`으로 재실행해 버퍼 없이 멈춤 지점을 볼 것
+2. **캠페인 집계 후**: 판정 분포 확인 → INTERLEAVED 병합군 적용 `summary_v3.tsv` 생성 →
+   `results_15sp.md` **v3** 개판. 판정 모듈 `steps/cluster_validate.py`(`a5f44ed`), known-answer는
+   C0297에서 통과(계통 조각 3개만 병합, 1E2·PPC4는 MONOPHYLETIC-미판정 = 정답)
+3. **codeml lnL 8/8 되면**: LRT·p·BEB(BEB 헤더 이후만 파싱) → 폐기 수치(LRT 15.3631)와 비교 →
+   **HyPhy 삼중 발사**: `ssh gpu 'bash ~/pepc_hyphy_corrected/run_hyphy.sh'` (스테이징 완료:
+   교정 정렬 + fgA 10잎 {FG} 트리) → methods.md 반영 → #47 닫기
 
-### 바로 착수 가능한 것 (막힘 없음)
-1. 🔴 **#44** — `codeml_bin` 핀과 코드는 끝났다(`b82fee3`). 남은 것은 **정본 branch-site를 산출물과
-   함께 재생성**하는 것. `.ctl`/`rst`/`results.txt`/`lnL` 줄을 보존 디렉터리에 남길 것.
-   재생성 값이 LRT 15.3631과 다르면 **그 사실 자체가 보고 대상**이다.
-2. **#33 앵커 확보** — ATH MYB 132개 + Stracke S1–S25 라벨 provenance. #35와 무관하게 지금 가능.
-   본작업(clan 구성·트리)만 #35 대기.
-3. **#42 잔여** — known-answer 검정(레퍼런스 차단하고 PEPC 재현) · `candidates` 배선.
-   ⚠️ 임계값(`MIN_SHARED_BINS`, `MIN_WITHIN_IN_SHARED_BINS`)은 **#35 완주 후** 다수 패밀리로 보정.
-4. **#38 cis-element** — 우선순위 낮음. 상류 서열 품질 게이트를 먼저 정의할 것.
-5. **`run_manifest.json`** — 미구현. #35 완주 시점에 결과 디렉터리 메타데이터
-   (config.resolved / species_tree.used / input_counts / tool_versions / chunk_manifest)를 남기면
-   다음 런의 재현이 쉬워진다.
-6. **Sof 4개 GFF 조인 실패** — `Sapof.09G011500.1`이 `gff_external/Sof.gff3`의 어느 ID와도 안 맞는다.
-   매처 문제가 아니라 GFF 자체 문제. 그중 3개가 ppc-1E2다.
+### 이 세션(08-23~24)에서 확정된 것
 
-### #35 완주까지 대기
-#33 본작업 · #34 스크린 · #36 재측정 · #42 임계값 보정
+- **results_15sp.md v2** (`e85606d`): comparable 배치율 인용 가능 / family 경계 2층 주석
+  (상호 쌍 3,614 = 하한 · 이웃 클러스터 5,618 = 상한) / rescue 확정 9,298 (HIGH 8,159 · PROV 1,139)
+- **rescue 게이트 보정** (`91dc96c`): 프로파일 커버리지 게이트는 rescue에서 판별력 0
+  (comparable 96% vs 깨진 모델 99% 거부, 전장 멤버 profile_cov 중앙값 0.22) → 기본 off
+- **클러스터 트리 검증 방법론** (`a5f44ed`): INTERLEAVED만 병합, MONOPHYLETIC은 명시적 미판정
+- **HyPhy-first 정책** (`84f54b8`): 가설 검정은 HyPhy, codeml은 legacy 수치·BEB 대조 전용 + fast-track만
+- **격리 완료 + 사건**: 폐기물 전부 `RETIRED_DO_NOT_USE/`(대장 `retired_data.md`).
+  ⚠️ 격리가 15sp 입력 24개(심볼릭 링크)를 끊었음 — 실파일 복사로 수리, pep 484,752 재검증
+  (`85ec6d9`). **격리/이동 직후 `find <활성 트리> -xtype l` 필수**
+- PEPC known-answers: 서브패밀리 정본은 `mM_repair/clan_corrected`(1E1 62 [95/91] · 1E2 15 [100/76],
+  둘 다 PROVISIONAL) — **15sp family 테이블은 서브패밀리 분리가 아니라 계통 축 파편화**
+- 테스트 449 → **881**
+
+### 알려진 정체·함정 (이 세션분, §5에도 등재)
+
+- vote-inflation: domtblout은 프로파일 정렬 — 유전자 연속 가정 금지, 간선 ≤ family 수 불변식
+- `write_newick`이 이름 없는 내부 노드를 문자열 "None"으로 직렬화 → codeml `#1` 파싱 실패
+  (fast46 3차 실패 원인. `utils/newick.py` 수정 후보)
+- codeml ctl은 **한 줄에 옵션 하나**
+- `find ~/scratch`는 심볼릭 링크 시작점을 안 내려간다 (§5)
+
 
 ### 선택압 검정 정책 (2026-08-24 사용자 결정)
 **HyPhy-first.** 가설 검정은 HyPhy(RELAX/MEME/aBSREL)로. codeml은 (1) 기존 발표 수치 재생성
