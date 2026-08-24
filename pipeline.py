@@ -692,6 +692,16 @@ def run(
             config=config,
         )
 
+    # Post-convergence: nominate families that look like one family split in two.
+    # detect_merge_candidates has existed since #13 and nothing ever called it,
+    # which is why the 15-species run split the PEPC clan four ways in silence.
+    if config.merge_scan and all_confirmed_families:
+        try:
+            scan_for_fragmented_families(all_confirmed_families,
+                                         full_protein_pool, outdir, config)
+        except Exception as e:
+            logger.error(f"Merge scan failed (continuing): {e}")
+
     # Final: Assemble all confirmed families (must run before pseudogene detection
     # so that final_families/ tree files are available for branch-length scanning)
     _write_final_output(all_confirmed_families, current_pool, cds_pool, outdir, config)
@@ -744,6 +754,76 @@ def run(
 
     finish_manifest(outdir, "completed")
     logger.info(f"Pipeline complete: {len(all_confirmed_families)} total families across {round_num} rounds")
+
+
+def write_merge_candidates(candidates, families: Dict[str, Set[str]],
+                          outdir: Path) -> Path:
+    """Record family pairs that look like one family split in two.
+
+    Nominations only. `detect_merge_candidates` says in its own docstring that
+    a candidate needs tree validation - align A and B together, build the codon
+    tree, score every leaf - before anything is merged, and merging two
+    families a codon tree would keep apart is worse than leaving them reported.
+
+    The file is written even when the list is empty, because a missing file
+    cannot be told apart from a scan that never ran, and "no fragmentation
+    detected" is itself a result.
+
+    Family sizes travel with each pair: 63 members against a 9-member splinter
+    is a different claim from two 40-member families, and the reciprocal
+    fraction alone hides which one you are looking at.
+    """
+    path = outdir / "merge_candidates.tsv"
+    with open(path, "w") as f:
+        f.write("family_a\tfamily_b\tmin_reciprocal\tn_genes_a\tn_genes_b\n")
+        for fam_a, fam_b, frac in candidates:
+            f.write(f"{fam_a}\t{fam_b}\t{frac:.3f}\t"
+                    f"{len(families.get(fam_a, ()))}\t"
+                    f"{len(families.get(fam_b, ()))}\n")
+    return path
+
+
+def scan_for_fragmented_families(families: Dict[str, Set[str]],
+                                 protein_pool: Dict[str, str],
+                                 outdir: Path, config: Config) -> Path:
+    """Search the final families' own members against the family profiles.
+
+    Run once, after convergence and rescue. Not per round: the per-round tier
+    switches itself off once it stops placing (issue #46), which would take the
+    fragmentation scan with it, and the family set it would be scanning is not
+    the one that ships.
+
+    Failure here must not lose a finished run - the families are already
+    assembled by this point - so it is logged and swallowed.
+    """
+    from steps.profile_assign import (detect_merge_candidates, parse_domtblout,
+                                      _hmmsearch_domtblout)
+    from steps.hmmer_rescue import _find_family_alignment, _concat_hmms
+
+    scan_dir = outdir / "merge_scan"
+    scan_dir.mkdir(parents=True, exist_ok=True)
+    members = {g: protein_pool[g] for fam in families.values()
+               for g in fam if g in protein_pool}
+    if not members:
+        logger.warning("merge scan: no family member sequences available")
+        return write_merge_candidates([], families, outdir)
+
+    query = scan_dir / "family_members.fa"
+    write_fasta(members, str(query))
+    hmm_db = scan_dir / "all_families.hmm"
+    if not hmm_db.exists():
+        logger.warning("merge scan: no profile database at %s", hmm_db)
+        return write_merge_candidates([], families, outdir)
+
+    dom = scan_dir / "members_vs_families.domtblout"
+    _hmmsearch_domtblout(hmm_db, query, dom, config)
+    hits = parse_domtblout(dom)
+    candidates = detect_merge_candidates(hits, families, config)
+    logger.info(
+        f"Merge scan: {len(candidates)} family pair(s) look like one family "
+        f"split in two (reciprocal >= {config.merge_min_reciprocal})"
+    )
+    return write_merge_candidates(candidates, families, outdir)
 
 
 def _write_final_output(

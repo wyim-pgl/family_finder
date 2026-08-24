@@ -78,6 +78,11 @@ class Config:
     profile_margin_bits: float = 10.0        # best-vs-second bit-score margin (absolute)
     profile_margin_frac: float = 0.05        # ... or this fraction of best bits, if larger
     profile_reassign_margin_nbits: float = 0.15  # length-normalized bits margin for moves
+    # Scan the final families for pairs that look like one family split in two
+    # (issue #35). Runs once after convergence and rescue, and only nominates -
+    # a merge needs tree validation. Off by default: it costs one hmmsearch of
+    # every placed gene against every family profile.
+    merge_scan: bool = False
     merge_min_reciprocal: float = 0.6        # min reciprocal cross-hit fraction for merges
 
     # Pipeline parameters
