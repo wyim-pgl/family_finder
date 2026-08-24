@@ -23,7 +23,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from config import Config
 from utils.seqio import write_fasta
@@ -34,9 +34,12 @@ logger = logging.getLogger("family_finder")
 # row (through column 18, "ali to"). Full rows have 23 columns.
 _DOMTBL_MIN_FIELDS = 19
 
-# Profile-coverage floors for the reassignment screen and merge detection.
+# Profile-coverage floor for the reassignment screen. The merge/fragmentation
+# floor used to live here too, as MERGE_MIN_PROFILE_COV = 0.5; it is now
+# config.merge_min_profile_cov, because a floor that only exists in source
+# cannot be recorded in the run manifest - and the 15-species run shipped
+# candidate files at two different floors with nothing to tell them apart.
 REASSIGN_MIN_PROFILE_COV = 0.6
-MERGE_MIN_PROFILE_COV = 0.5
 
 # Maximum candidates reported per ambiguous gene.
 MAX_AMBIGUOUS_CANDIDATES = 5
@@ -426,6 +429,117 @@ def _screen_reassignment(
     return (current_family, best_candidate.family_id)
 
 
+def count_cross_family_votes(
+    hits_by_gene: Dict[str, List[ProfileHit]],
+    families: Dict[str, Set[str]],
+    config: Config,
+) -> Dict[Tuple[str, str], int]:
+    """Count, per ordered pair (A, B), members of A whose best hit is B.
+
+    One gene casts at most one vote: its best NON-SELF family hit by
+    full_bits, restricted to hits clearing `config.merge_min_profile_cov`
+    and `config.hmmer_evalue`. Genes belonging to no family do not vote.
+
+    The single-vote rule is what keeps the edge count bounded by the family
+    count. domtblout is ordered by PROFILE, not by gene, so anything that
+    assumes gene-contiguous rows inflates these counts into plausible
+    garbage - the invariant to assert downstream is edges <= families.
+    """
+    gene_to_family: Dict[str, str] = {}
+    for family_id, members in families.items():
+        for gene_id in members:
+            gene_to_family[gene_id] = family_id
+
+    votes: Dict[Tuple[str, str], int] = {}
+    for gene_id, hits in hits_by_gene.items():
+        own_family = gene_to_family.get(gene_id)
+        if own_family is None:
+            continue
+        for h in hits:  # sorted by full_bits desc
+            if h.family_id == own_family:
+                continue
+            if h.profile_cov < config.merge_min_profile_cov:
+                continue
+            if h.full_evalue > config.hmmer_evalue:
+                continue
+            key = (own_family, h.family_id)
+            votes[key] = votes.get(key, 0) + 1
+            break  # only the best qualifying non-self hit votes
+    return votes
+
+
+def vote_edges(
+    hits_by_gene: Dict[str, List[ProfileHit]],
+    families: Dict[str, Set[str]],
+    config: Config,
+    min_frac: float = 0.0,
+) -> List[Tuple[str, str, int, int, float]]:
+    """One-way nearest-neighbour edges: (from, to, votes, from_size, frac).
+
+    This is the same vote count `detect_merge_candidates` computes and then
+    discards; the difference is that nothing is required to be reciprocal and
+    nothing is cut at `merge_min_reciprocal`. That matters because the cut
+    decides before the arbiter sees the case: the tree is what merges
+    (steps/cluster_validate.fragment_verdict), and a family whose members
+    vote for a neighbour at frac 0.22 is a question for the tree, not an
+    answer on its own. In the 15-species run the shipped edge file had a
+    minimum frac of exactly 0.600 and 8,902 of 23,744 families had no
+    outgoing edge at all - including the one holding the Mcry PEPC flagship,
+    which votes for a member of the very cluster the other PEPC pieces
+    merged into.
+
+    `min_frac` defaults to 0.0: export everything and let the caller decide.
+    """
+    votes = count_cross_family_votes(hits_by_gene, families, config)
+    edges: List[Tuple[str, str, int, int, float]] = []
+    for (fam_from, fam_to), n in votes.items():
+        from_size = len(families.get(fam_from, ()))
+        if from_size == 0:
+            continue
+        frac = round(n / from_size, 3)
+        if frac < min_frac:
+            continue
+        edges.append((fam_from, fam_to, n, from_size, frac))
+    edges.sort(key=lambda e: (-e[4], e[0], e[1]))
+    return edges
+
+
+def fragmentation_clusters(
+    edges: Sequence[Tuple[str, str, int, int, float]],
+) -> List[List[str]]:
+    """Connected components of the vote-edge relation, largest first.
+
+    The relation is treated as UNDIRECTED: A voting for B and C voting for B
+    put all three in one component, because fragmentation is not required to
+    be symmetric - a 9-member splinter votes for a 63-member family far more
+    readily than the reverse.
+
+    Components over-merge by construction and are only a NOMINATION: they
+    decide which families get aligned together and handed to a tree, and the
+    tree decides what is actually one family. Singletons are dropped - a
+    family with nothing to merge into is not a cluster.
+    """
+    parent: Dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for fam_from, fam_to, *_ in edges:
+        a, b = find(fam_from), find(fam_to)
+        if a != b:
+            parent[a] = b
+
+    comps: Dict[str, List[str]] = {}
+    for fam in parent:
+        comps.setdefault(find(fam), []).append(fam)
+    clusters = [sorted(v) for v in comps.values() if len(v) > 1]
+    clusters.sort(key=lambda c: (-len(c), c[0]))
+    return clusters
+
+
 def detect_merge_candidates(
     hits_by_gene: Dict[str, List[ProfileHit]],
     families: Dict[str, Set[str]],
@@ -442,27 +556,7 @@ def detect_merge_candidates(
     (align A∪B, build the codon tree, score every leaf with the pruning
     statistic) — this function only nominates pairs.
     """
-    gene_to_family: Dict[str, str] = {}
-    for family_id, members in families.items():
-        for gene_id in members:
-            gene_to_family[gene_id] = family_id
-
-    # Count, per ordered pair (A, B), members of A voting for B.
-    votes: Dict[Tuple[str, str], int] = {}
-    for gene_id, hits in hits_by_gene.items():
-        own_family = gene_to_family.get(gene_id)
-        if own_family is None:
-            continue
-        for h in hits:  # sorted by full_bits desc
-            if h.family_id == own_family:
-                continue
-            if h.profile_cov < MERGE_MIN_PROFILE_COV:
-                continue
-            if h.full_evalue > config.hmmer_evalue:
-                continue
-            key = (own_family, h.family_id)
-            votes[key] = votes.get(key, 0) + 1
-            break  # only the best qualifying non-self hit votes
+    votes = count_cross_family_votes(hits_by_gene, families, config)
 
     candidates: List[Tuple[str, str, float]] = []
     seen: Set[Tuple[str, str]] = set()

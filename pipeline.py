@@ -783,6 +783,48 @@ def write_merge_candidates(candidates, families: Dict[str, Set[str]],
     return path
 
 
+def write_vote_edges(edges, outdir: Path) -> Path:
+    """Record every one-way nearest-neighbour edge, uncut.
+
+    The v3 family table was built from a file with exactly this schema and
+    nothing in this repository wrote it, so the merge of 3,611 families could
+    not be reproduced. The edges are a NOMINATION layer: the tree decides
+    (steps/cluster_validate.fragment_verdict), and an edge at frac 0.22 is a
+    question for the tree rather than an answer.
+
+    Written even when empty - a missing file cannot be told apart from a scan
+    that never ran.
+    """
+    path = outdir / "vote_edges.tsv"
+    with open(path, "w") as f:
+        f.write("from\tto\tvotes\tfrom_size\tfrac\n")
+        for fam_from, fam_to, votes, from_size, frac in edges:
+            f.write(f"{fam_from}\t{fam_to}\t{votes}\t{from_size}\t{frac:.3f}\n")
+    return path
+
+
+def write_fragmentation_clusters(clusters, families: Dict[str, Set[str]],
+                                 outdir: Path) -> Path:
+    """Name the connected components and count what they hold.
+
+    Gene counts travel with each cluster because a component of two 40-member
+    families is a different claim from a 63-member family and a 9-member
+    splinter, and the family count alone hides which one you are looking at.
+
+    Ids are positional (C0001, C0002, ...) over the ordering
+    `fragmentation_clusters` returns - largest first, members sorted - so the
+    same edges always produce the same ids.
+    """
+    path = outdir / "fragmentation_clusters.tsv"
+    with open(path, "w") as f:
+        f.write("cluster_id\tn_families\tn_genes\tfamilies\n")
+        for i, members in enumerate(clusters, start=1):
+            n_genes = sum(len(families.get(fam, ())) for fam in members)
+            f.write(f"C{i:04d}\t{len(members)}\t{n_genes}\t"
+                    f"{','.join(members)}\n")
+    return path
+
+
 def scan_for_fragmented_families(families: Dict[str, Set[str]],
                                  protein_pool: Dict[str, str],
                                  outdir: Path, config: Config) -> Path:
@@ -796,8 +838,9 @@ def scan_for_fragmented_families(families: Dict[str, Set[str]],
     Failure here must not lose a finished run - the families are already
     assembled by this point - so it is logged and swallowed.
     """
-    from steps.profile_assign import (detect_merge_candidates, parse_domtblout,
-                                      _hmmsearch_domtblout)
+    from steps.profile_assign import (detect_merge_candidates,
+                                      fragmentation_clusters, parse_domtblout,
+                                      vote_edges, _hmmsearch_domtblout)
     from steps.hmmer_rescue import _find_family_alignment, _concat_hmms
 
     scan_dir = outdir / "merge_scan"
@@ -806,6 +849,8 @@ def scan_for_fragmented_families(families: Dict[str, Set[str]],
                for g in fam if g in protein_pool}
     if not members:
         logger.warning("merge scan: no family member sequences available")
+        write_vote_edges([], outdir)
+        write_fragmentation_clusters([], families, outdir)
         return write_merge_candidates([], families, outdir)
 
     query = scan_dir / "family_members.fa"
@@ -813,15 +858,34 @@ def scan_for_fragmented_families(families: Dict[str, Set[str]],
     hmm_db = scan_dir / "all_families.hmm"
     if not hmm_db.exists():
         logger.warning("merge scan: no profile database at %s", hmm_db)
+        write_vote_edges([], outdir)
+        write_fragmentation_clusters([], families, outdir)
         return write_merge_candidates([], families, outdir)
 
     dom = scan_dir / "members_vs_families.domtblout"
     _hmmsearch_domtblout(hmm_db, query, dom, config)
     hits = parse_domtblout(dom)
+
+    # The uncut edge layer first: it is what the tree validation consumes, and
+    # the reciprocity cut below throws away the cases most worth judging - in
+    # the 15-species run the cut left 8,902 of 23,744 families with no edge at
+    # all, the flagship PEPC splinter among them, at frac 0.22.
+    edges = vote_edges(hits, families, config)
+    if len(edges) > len(families):  # domtblout is profile-ordered, not gene-
+        logger.error(                # ordered; more edges than families means
+            "merge scan: %d edges for %d families - vote inflation, "        # noqa: E501
+            "refusing to write", len(edges), len(families))
+        edges = []
+    clusters = fragmentation_clusters(edges)
+    write_vote_edges(edges, outdir)
+    write_fragmentation_clusters(clusters, families, outdir)
+
     candidates = detect_merge_candidates(hits, families, config)
     logger.info(
-        f"Merge scan: {len(candidates)} family pair(s) look like one family "
-        f"split in two (reciprocal >= {config.merge_min_reciprocal})"
+        f"Merge scan: {len(edges)} vote edge(s) over {len(families)} families "
+        f"(profile_cov >= {config.merge_min_profile_cov}) forming "
+        f"{len(clusters)} cluster(s); {len(candidates)} pair(s) also clear "
+        f"reciprocal >= {config.merge_min_reciprocal}"
     )
     return write_merge_candidates(candidates, families, outdir)
 

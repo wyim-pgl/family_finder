@@ -92,6 +92,15 @@ class Config:
     # conserved domain inside a long protein is still not membership.
     rescue_min_profile_coverage: float = 0.0
     merge_min_reciprocal: float = 0.6        # min reciprocal cross-hit fraction for merges
+    # Profile-coverage floor for merge/fragmentation detection (issue #47).
+    # Was a module constant in steps/profile_assign.py, which is why the
+    # 15-species run could ship merge_candidates at BOTH 0.2 and 0.5 with
+    # neither file tied to a config hash - producing the 0.2 file required
+    # editing source. It is a field now, so the manifest refuses a resume
+    # across a change and every candidate file names the floor that made it.
+    # Kept at the historical 0.5 by default; note rescue_min_profile_coverage
+    # above measured this same gate at zero discrimination (median 0.22).
+    merge_min_profile_cov: float = 0.5
 
     # Pipeline parameters
     max_rounds: int = 10
