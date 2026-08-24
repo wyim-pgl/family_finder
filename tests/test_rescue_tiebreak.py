@@ -135,16 +135,32 @@ def _dom(tmp_path, rows):
     return path
 
 
-def test_a_hit_covering_almost_none_of_the_profile_is_refused(tmp_path):
-    """A 40-residue match to a 1000-residue profile is not family membership.
+def test_the_profile_coverage_gate_is_off_by_default_for_rescue():
+    """Measured on the 15-species rescue: healthy full-length members cover a
+    median 0.22 of their family profile, because the profile's length is the
+    alignment's column count and large divergent families are gap-bloated. At
+    the per-round threshold (0.5) the gate refused comparable genes at 96% and
+    broken ones at 99% — no discrimination at all. A gate that cannot tell a
+    good model from a broken one carries no signal, so it defaults off here."""
+    assert Config().rescue_min_profile_coverage == 0.0
 
-    The query here is 40 aa and fully covered, so the QUERY gate cannot refuse
-    it — only the profile gate can. Written this way on purpose: an earlier
-    version used a 900-aa query, which failed both gates, so disabling the
-    profile check left the test passing for the wrong reason.
-    """
-    dom = _dom(tmp_path, [("g", 40, "F1", 1000, "1e-40", 300.0, 1, 40, 1, 40)])
+
+def test_a_gap_bloated_profile_does_not_refuse_a_healthy_member(tmp_path):
+    """profile_cov 0.22, query fully covered: the 15sp median case."""
+    dom = _dom(tmp_path, [("g", 220, "F1", 1000, "1e-40", 300.0, 1, 220, 1, 220)])
     hit = _parse_rescue_domtblout(dom, CFG.hmmer_evalue, CFG)["g"]
+    assert hit.grade == "HIGH"
+
+
+def test_the_profile_gate_still_works_when_asked_for(tmp_path):
+    """The knob exists for panels where profiles are not gap-bloated. The query
+    here is 40 aa and fully covered, so only the profile gate can refuse it —
+    an earlier version used a 900-aa query, which failed both gates, and
+    disabling the profile check left the test passing for the wrong reason."""
+    cfg = Config()
+    cfg.rescue_min_profile_coverage = 0.5
+    dom = _dom(tmp_path, [("g", 40, "F1", 1000, "1e-40", 300.0, 1, 40, 1, 40)])
+    hit = _parse_rescue_domtblout(dom, cfg.hmmer_evalue, cfg)["g"]
     assert hit.grade == "UNRESOLVED"
     assert "profile coverage" in hit.reason.lower()
 

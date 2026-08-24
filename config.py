@@ -83,6 +83,14 @@ class Config:
     # a merge needs tree validation. Off by default: it costs one hmmsearch of
     # every placed gene against every family profile.
     merge_scan: bool = False
+    # Rescue-specific profile-coverage floor (issue #47). 0.0 = off, on purpose:
+    # measured on the 15-species rescue, healthy full-length members cover a
+    # median 0.22 of their family profile (profile length = alignment columns,
+    # and large divergent families are gap-bloated), so the per-round threshold
+    # of 0.5 refused comparable genes at 96% and broken ones at 99% - equal
+    # rates, i.e. zero discrimination. The query-coverage gate stays on: a short
+    # conserved domain inside a long protein is still not membership.
+    rescue_min_profile_coverage: float = 0.0
     merge_min_reciprocal: float = 0.6        # min reciprocal cross-hit fraction for merges
 
     # Pipeline parameters

@@ -190,11 +190,11 @@ def _parse_rescue_domtblout(
         second_bits = candidates[1].full_bits if len(candidates) > 1 else None
         grade, reason = _grade_hit(best.full_bits, second_bits, config)
 
-        if best.profile_cov < config.profile_min_coverage:
+        if best.profile_cov < config.rescue_min_profile_coverage:
             grade, reason = "UNRESOLVED", (
                 f"profile coverage {best.profile_cov:.2f} is below "
-                f"{config.profile_min_coverage:.2f} — the match is too partial "
-                f"to call membership"
+                f"{config.rescue_min_profile_coverage:.2f} — the match is too "
+                f"partial to call membership"
             )
         elif best.query_cov < config.profile_min_query_coverage:
             grade, reason = "UNRESOLVED", (
