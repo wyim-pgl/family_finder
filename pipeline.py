@@ -871,10 +871,20 @@ def scan_for_fragmented_families(families: Dict[str, Set[str]],
     # the 15-species run the cut left 8,902 of 23,744 families with no edge at
     # all, the flagship PEPC splinter among them, at frac 0.22.
     edges = vote_edges(hits, families, config)
-    if len(edges) > len(families):  # domtblout is profile-ordered, not gene-
-        logger.error(                # ordered; more edges than families means
-            "merge scan: %d edges for %d families - vote inflation, "        # noqa: E501
-            "refusing to write", len(edges), len(families))
+    # One gene casts one vote, so total votes cannot exceed the members that
+    # were searched. That is the invariant - NOT "edges <= families", which is
+    # false: a family's members need not agree on a neighbour, and the 15sp
+    # sample produced 353 edges from 200 families. domtblout is ordered by
+    # profile, not by gene, so anything that assumes gene-contiguous rows
+    # inflates the counts into frac values above 1.0.
+    n_members = sum(len(m) for m in families.values())
+    total_votes = sum(v for _, _, v, _, _ in edges)
+    inflated = [e for e in edges if e[2] > e[3]]
+    if total_votes > n_members or inflated:
+        logger.error(
+            "merge scan: %d votes from %d members, %d edge(s) with votes "
+            "above the source family's size - vote inflation, refusing to "
+            "write", total_votes, n_members, len(inflated))
         edges = []
     clusters = fragmentation_clusters(edges)
     write_vote_edges(edges, outdir)

@@ -186,9 +186,11 @@ def test_vote_edges_count_one_vote_per_gene():
     assert edges == [("FamA", "FamB", 1, 1, 1.0)]
 
 
-def test_vote_edges_never_exceed_the_family_count():
-    # Arrange: the invariant the vote-inflation trap violated - domtblout is
-    # profile-ordered, so a gene-contiguous assumption double-counts.
+def test_vote_edges_stay_within_one_vote_per_gene():
+    # Arrange: the invariant the vote-inflation trap violated. domtblout is
+    # ordered by PROFILE, not by gene, so a gene-contiguous assumption
+    # double-counts. The bound is votes <= members, NOT edges <= families -
+    # see test_a_family_may_emit_several_edges for why the latter is false.
     families = {"FamA": {"Sp1_a1"}, "FamB": {"Sp1_b1"}, "FamC": {"Sp1_c1"}}
     hits = {
         "Sp1_a1": [_hit("Sp1_a1", "FamB"), _hit("Sp1_a1", "FamC")],
@@ -200,7 +202,7 @@ def test_vote_edges_never_exceed_the_family_count():
     edges = vote_edges(hits, families, Config())
 
     # Assert
-    assert len(edges) <= len(families)
+    assert sum(v for _, _, v, _, _ in edges) <= sum(len(m) for m in families.values())
 
 
 def test_vote_edges_ignore_self_hits_and_unknown_genes():
@@ -373,19 +375,19 @@ def test_scan_writes_both_files_when_nothing_votes(tmp_path, monkeypatch):
     assert (tmp_path / "fragmentation_clusters.tsv").exists()
 
 
-def test_scan_refuses_to_write_inflated_edges(tmp_path, monkeypatch, caplog):
-    # Arrange: more edges than families can only come from miscounting
-    # profile-ordered domtblout rows as gene-contiguous.
+def test_scan_refuses_to_write_inflated_edges(tmp_path, monkeypatch):
+    # Arrange: inflation looks like a family casting more votes than it has
+    # members - frac above 1.0. That, not the edge count, is the symptom of
+    # reading profile-ordered domtblout as gene-contiguous.
     import steps.profile_assign as pa
     from pipeline import scan_for_fragmented_families
-    families = {"FamA": {"Sp1_a1"}}
+    families = {"FamA": {"Sp1_a1"}, "FamB": {"Sp1_b1"}}
     _stub_scan(monkeypatch, tmp_path, {})
     # scan_for_fragmented_families imports vote_edges from the module at call
     # time, so the module attribute is the binding that matters.
     monkeypatch.setattr(
         pa, "vote_edges",
-        lambda h, f, c, min_frac=0.0: [("FamA", "FamB", 1, 1, 1.0),
-                                       ("FamB", "FamC", 1, 1, 1.0)])
+        lambda h, f, c, min_frac=0.0: [("FamA", "FamB", 4, 1, 4.0)])
 
     # Act
     scan_for_fragmented_families(families, {"Sp1_a1": "MPEP"}, tmp_path,
@@ -394,3 +396,85 @@ def test_scan_refuses_to_write_inflated_edges(tmp_path, monkeypatch, caplog):
     # Assert: the file exists and is empty rather than plausibly wrong
     rows = (tmp_path / "vote_edges.tsv").read_text().splitlines()
     assert rows == ["from\tto\tvotes\tfrom_size\tfrac"]
+
+
+def test_scan_writes_more_edges_than_families(tmp_path, monkeypatch):
+    # Arrange: the real-data ratio. 200 sampled families produced 353 edges,
+    # so a guard keyed on "edges > families" would have emptied the output of
+    # every production run. Two families, three edges, all legitimate.
+    import steps.profile_assign as pa
+    from pipeline import scan_for_fragmented_families
+    families = {"FamA": {"Sp1_a1", "Sp2_a2", "Sp3_a3"}, "FamB": {"Sp1_b1"}}
+    pool = {g: "MPEP" for fam in families.values() for g in fam}
+    _stub_scan(monkeypatch, tmp_path, {})
+    monkeypatch.setattr(
+        pa, "vote_edges",
+        lambda h, f, c, min_frac=0.0: [("FamA", "FamB", 2, 3, 0.667),
+                                       ("FamA", "FamC", 1, 3, 0.333),
+                                       ("FamB", "FamA", 1, 1, 1.0)])
+
+    # Act
+    scan_for_fragmented_families(families, pool, tmp_path, Config())
+
+    # Assert
+    rows = (tmp_path / "vote_edges.tsv").read_text().splitlines()
+    assert len(rows) == 4          # header + 3 edges, none refused
+    assert len(rows) - 1 > len(families)
+
+
+# ---------------------------------------------------------------------------
+# the inflation invariant, corrected
+# ---------------------------------------------------------------------------
+
+def test_a_family_may_emit_several_edges():
+    # Arrange: the shape that broke the first guard. A family's members do
+    # not have to agree on a neighbour - measured on the 15sp sample, 200
+    # families produced 353 edges (1.77 each). "more edges than families" is
+    # therefore NORMAL, and a guard using it empties the output on real data.
+    families = {"FamA": {"Sp1_a1", "Sp2_a2", "Sp3_a3"},
+                "FamB": {"Sp1_b1"}, "FamC": {"Sp1_c1"}}
+    hits = {
+        "Sp1_a1": [_hit("Sp1_a1", "FamB", full_bits=150.0)],
+        "Sp2_a2": [_hit("Sp2_a2", "FamB", full_bits=140.0)],
+        "Sp3_a3": [_hit("Sp3_a3", "FamC", full_bits=130.0)],
+    }
+
+    # Act
+    edges = vote_edges(hits, families, Config())
+
+    # Assert
+    assert len(edges) == 2 > 0
+    assert {(a, b) for a, b, *_ in edges} == {("FamA", "FamB"),
+                                              ("FamA", "FamC")}
+
+
+def test_total_votes_never_exceed_the_voting_population():
+    # Arrange: the invariant that actually holds - one gene, one vote. This
+    # is what catches treating profile-ordered domtblout as gene-contiguous.
+    families = {"FamA": {"Sp1_a1", "Sp2_a2"}, "FamB": {"Sp1_b1"}}
+    hits = {
+        "Sp1_a1": [_hit("Sp1_a1", "FamB", full_bits=300.0),
+                   _hit("Sp1_a1", "FamB", full_bits=200.0)],   # 2 rows, 1 gene
+        "Sp2_a2": [_hit("Sp2_a2", "FamB", full_bits=140.0)],
+    }
+
+    # Act
+    edges = vote_edges(hits, families, Config())
+
+    # Assert
+    n_members = sum(len(m) for m in families.values())
+    assert sum(v for _, _, v, _, _ in edges) <= n_members
+
+
+def test_no_source_family_casts_more_votes_than_it_has_members():
+    # Arrange: frac > 1.0 is the visible symptom of inflation
+    families = {"FamA": {f"Sp{i}_a{i}" for i in range(5)}, "FamB": {"Sp1_b1"}}
+    hits = {f"Sp{i}_a{i}": [_hit(f"Sp{i}_a{i}", "FamB")] for i in range(5)}
+
+    # Act
+    edges = vote_edges(hits, families, Config())
+
+    # Assert
+    for _, _, votes, from_size, frac in edges:
+        assert votes <= from_size
+        assert frac <= 1.0
