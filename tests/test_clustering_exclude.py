@@ -80,3 +80,24 @@ def test_partition_does_not_mutate_input():
     before = dict(POOL)
     pipeline.partition_excluded_species(POOL, ["CgigH"], "_")
     assert POOL == before
+
+
+def test_resume_recovers_excluded_species_from_the_original_input():
+    # A round checkpoint contains only the clustering outliers.  The excluded
+    # CgigH genes live outside that pool and used to disappear on resume when
+    # the code tried to partition the checkpoint instead of the full input.
+    resumed_outliers = {"Cgig_g2": "MB", "Mcry_g1": "ME"}
+
+    kept, excluded = pipeline._prepare_clustering_pools(
+        resumed_outliers, POOL, ["CgigH"], "_",
+    )
+
+    assert kept == resumed_outliers
+    assert set(excluded) == {"CgigH_g1", "CgigH_g2"}
+
+
+def test_resume_refuses_an_outlier_sequence_from_a_different_input():
+    with pytest.raises(ValueError, match="differ from the input proteomes"):
+        pipeline._prepare_clustering_pools(
+            {"Cgig_g1": "CHANGED"}, POOL, ["CgigH"], "_",
+        )

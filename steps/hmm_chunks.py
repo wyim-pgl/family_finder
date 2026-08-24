@@ -21,7 +21,10 @@ Two deliberate design points:
 """
 
 import logging
+import os
+import re
 import shlex
+import shutil
 import stat
 from pathlib import Path
 from typing import List, Optional
@@ -174,24 +177,78 @@ def merge_tblouts(tblout_dir: Path, out_path: Path,
     tblout_dir = Path(tblout_dir)
     parts = sorted(tblout_dir.glob(glob))
 
-    if expected is not None and len(parts) != expected:
-        raise RuntimeError(
-            f"expected {expected} chunk tblouts, found {len(parts)} in "
-            f"{tblout_dir} — refusing to merge a partial rescue"
-        )
     if not parts:
         raise RuntimeError(f"no chunk tblouts in {tblout_dir}")
 
-    incomplete = [p.name for p in parts
-                  if HMMER_OK_MARKER not in p.read_text()[-200:]]
+    # Counting files is not enough: chunk_0000 + chunk_0002 is still two
+    # files, but it is not a complete two-chunk run.  A stale high-numbered
+    # output must not stand in for the missing task and make the merge look
+    # complete.  Accept any zero padding, sort numerically, and require the
+    # exact 0..N-1 identity set when the caller supplies `expected`.
+    indexed = []
+    for part in parts:
+        match = re.fullmatch(r"chunk_(\d+)\.(?:dom)?tblout", part.name)
+        if match is None:
+            raise RuntimeError(
+                f"cannot determine chunk index from {part.name!r}; refusing "
+                "an unverifiable merge"
+            )
+        indexed.append((int(match.group(1)), part))
+    indices = [i for i, _ in indexed]
+    if len(indices) != len(set(indices)):
+        raise RuntimeError(
+            f"duplicate numeric chunk indices in {tblout_dir}; refusing to merge"
+        )
+    indexed.sort(key=lambda item: item[0])
+    parts = [part for _, part in indexed]
+
+    if expected is not None:
+        wanted = set(range(expected))
+        observed = set(indices)
+        if observed != wanted:
+            missing = sorted(wanted - observed)
+            unexpected = sorted(observed - wanted)
+            detail = []
+            if missing:
+                detail.append("missing " + ",".join(map(str, missing[:20])))
+            if unexpected:
+                detail.append(
+                    "unexpected " + ",".join(map(str, unexpected[:20])))
+            raise RuntimeError(
+                f"expected {expected} chunks with indices 0..{expected - 1}, found "
+                f"{len(parts)} file(s) in {tblout_dir} ({'; '.join(detail)}) "
+                "— refusing to merge a partial rescue"
+            )
+
+    marker = HMMER_OK_MARKER.encode("ascii")
+
+    def has_ok_marker(path: Path) -> bool:
+        # Production domtblouts can be very large. Read only a bounded tail;
+        # loading each whole chunk merely to inspect its footer can OOM the
+        # merge before parsing begins.
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - 4096))
+            return marker in fh.read()
+
+    incomplete = [p.name for p in parts if not has_ok_marker(p)]
     if incomplete:
         raise RuntimeError(
             f"incomplete hmmsearch chunks (no '{HMMER_OK_MARKER}'): "
             f"{', '.join(incomplete)} — rerun them before merging"
         )
 
-    with open(out_path, "w") as out:
-        for p in parts:
-            out.write(p.read_text())
+    out_path = Path(out_path)
+    tmp = out_path.with_name(f".{out_path.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "wb") as out:
+            for part in parts:
+                with open(part, "rb") as src:
+                    shutil.copyfileobj(src, out, length=1024 * 1024)
+        os.replace(tmp, out_path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
     logger.info(f"Merged {len(parts)} chunk tblouts -> {out_path}")
     return len(parts)

@@ -35,10 +35,12 @@ class _Result:
 class FakeSubprocess:
     """Emulates the three HMMER binaries the rescue shells out to."""
 
-    def __init__(self, tblout_body="", chunk_bodies=(), press_rc=0,
+    def __init__(self, tblout_body="", chunk_bodies=(), dom_chunk_bodies=(),
+                 press_rc=0,
                  build_fail=(), build_silent=False):
         self.tblout_body = tblout_body
         self.chunk_bodies = list(chunk_bodies)
+        self.dom_chunk_bodies = list(dom_chunk_bodies)
         self.press_rc = press_rc
         self.build_fail = set(build_fail)
         self.build_silent = build_silent
@@ -69,6 +71,8 @@ class FakeSubprocess:
             out_dir.mkdir(parents=True, exist_ok=True)
             for i, body in enumerate(self.chunk_bodies):
                 (out_dir / f"chunk_{i:04d}.tblout").write_text(body)
+            for i, body in enumerate(self.dom_chunk_bodies):
+                (out_dir / f"chunk_{i:04d}.domtblout").write_text(body)
             return _Result(0)
 
         raise AssertionError(f"unexpected command: {cmd}")
@@ -106,6 +110,20 @@ def tblout(rows):
         bits = row[3] if len(row) > 3 else 120.0
         body += f"{g} - {f} - {e} {bits} 3.4 1 1\n"
     return head + body + "#\n# [ok]\n"
+
+
+def domtblout(rows):
+    """Complete synthetic --domtblout from (gene, family, E, bits[, ali_to])."""
+    body = "# target name  ...\n"
+    for row in rows:
+        gene, family, evalue, bits = row[:4]
+        ali_to = row[4] if len(row) > 4 else 100
+        body += (
+            f"{gene} - 100 {family} - 100 {evalue} {bits} 0.0 "
+            f"1 1 {evalue} {evalue} {bits} 0.0 "
+            f"1 100 1 {ali_to} 1 {ali_to} 0.99 -\n"
+        )
+    return body + "#\n# [ok]\n"
 
 
 def make_outdir(tmp_path, with_alignments=True, round_ogs=()):
@@ -385,6 +403,9 @@ def test_chunked_search_skips_hmmpress_and_merges_every_chunk(
     fake = install(monkeypatch, FakeSubprocess(chunk_bodies=[
         tblout([("Aaa_u1", "R1_OG0000001", "1.0e-30")]),
         tblout([("Bbb_u2", "R2_OG0000003", "2.0e-20")]),
+    ], dom_chunk_bodies=[
+        domtblout([("Aaa_u1", "R1_OG0000001", "1.0e-30", 120.0)]),
+        domtblout([("Bbb_u2", "R2_OG0000003", "2.0e-20", 120.0)]),
     ]))
 
     # Act
@@ -399,6 +420,38 @@ def test_chunked_search_skips_hmmpress_and_merges_every_chunk(
     assert fake.ran("hmmsearch") == []          # the runner script does it
     assert "Aaa_u1" in out["R1_OG0000001"]
     assert "Bbb_u2" in out["R2_OG0000003"]
+
+
+def test_chunked_search_uses_domain_output_for_the_query_coverage_gate(
+        tmp_path, monkeypatch, realigned):
+    """A strong two-residue domain must not be rescued via tblout fallback."""
+    outdir = make_outdir(tmp_path)
+    hmm_dir = outdir / "hmmer_rescue" / "hmm_profiles"
+    hmm_dir.mkdir(parents=True)
+    for fam in families():
+        (hmm_dir / f"{fam}.hmm").write_text(
+            f"HMMER3/f [3.2.1]\nNAME  {fam}\nLENG  12\nHMM\n//\n")
+    install(monkeypatch, FakeSubprocess(
+        chunk_bodies=[
+            tblout([("Aaa_u1", "R1_OG0000001", "1.0e-30", 120.0)]),
+            tblout([]),
+        ],
+        dom_chunk_bodies=[
+            domtblout([
+                ("Aaa_u1", "R1_OG0000001", "1.0e-30", 120.0, 2)
+            ]),
+            domtblout([]),
+        ],
+    ))
+
+    out = hr.rescue_unplaced(
+        families(), {"Aaa_u1": PROT["Aaa_u1"]}, PROT, CDS, outdir,
+        make_config(hmmer_chunk_size=2),
+    )
+
+    assert "Aaa_u1" not in out["R1_OG0000001"]
+    assert (outdir / "hmmer_rescue" /
+            "hmmsearch_results.domtblout").exists()
 
 
 def test_an_incomplete_chunk_fails_loudly_rather_than_under_reporting(

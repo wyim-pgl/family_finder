@@ -114,6 +114,10 @@ def _run_hmmsearch_chunked(
         logger.error(f"chunk runner failed: {result.stderr[-500:]}")
         raise RuntimeError(f"chunked hmmsearch failed (exit {result.returncode})")
     merge_tblouts(out_dir, tblout, expected=len(chunks))
+    merge_tblouts(
+        out_dir, tblout.with_suffix(".domtblout"), expected=len(chunks),
+        glob=DOM_CHUNK_GLOB,
+    )
 
 
 @dataclass(frozen=True)
@@ -376,11 +380,6 @@ def _search_unplaced(
     # is allowed for a rescue directory written before this existed, but it is
     # said out loud rather than degrading quietly.
     dom = tblout.with_suffix(".domtblout")
-    if config.hmmer_chunk_size:
-        dom_parts = sorted((rescue_dir / "chunks").glob(DOM_CHUNK_GLOB))
-        if dom_parts:
-            merge_tblouts(rescue_dir / "chunks", dom,
-                          expected=len(dom_parts), glob=DOM_CHUNK_GLOB)
     if dom.exists():
         return _parse_rescue_domtblout(dom, config.hmmer_evalue, config)
     logger.warning(

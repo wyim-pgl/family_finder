@@ -163,10 +163,24 @@ def parse_domtblout(path: Path) -> Dict[str, List[ProfileHit]]:
     return hits_by_gene
 
 
-def _member_digest(members: Set[str]) -> str:
-    """sha1 of the sorted member ids — cache key for a family's profile."""
-    joined = "\n".join(sorted(members))
-    return hashlib.sha1(joined.encode("utf-8")).hexdigest()
+def _profile_digest(members: Set[str], alignment_path: Path) -> str:
+    """Hash every input that determines a cached family's HMM profile.
+
+    Membership alone is insufficient: a corrected proteome or alignment can
+    keep exactly the same gene ids while changing the residues hmmbuild sees.
+    Reusing that old HMM is a plausible, silent stale-result failure.
+    """
+    digest = hashlib.sha256()
+    digest.update(b"family_finder profile cache v2\0")
+    digest.update(len(members).to_bytes(8, "big"))
+    for member in sorted(members):
+        data = member.encode("utf-8")
+        digest.update(len(data).to_bytes(8, "big") + data)
+    digest.update(b"\0alignment\0")
+    with open(alignment_path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _hmmbuild(
@@ -224,10 +238,11 @@ def build_profiles(
     """Build (or reuse cached) per-family HMMs and press a combined database.
 
     A family's profile is reused only when its .hmm file exists AND is
-    non-empty AND its `.members` sidecar matches the sha1 of the current
-    sorted member ids. This fixes two hmmer_rescue defects: zero-byte
-    files from failed builds were treated as cached, and profiles were
-    never rebuilt when family membership changed.
+    non-empty AND its `.members` sidecar matches a digest of the current
+    member ids and alignment bytes. This fixes three stale-cache defects:
+    zero-byte files from failed builds were treated as cached, profiles were
+    not rebuilt when membership changed, and corrected sequences with the same
+    ids reused an HMM built from the old alignment.
 
     Returns the combined, pressed HMM database path, or None when no
     profiles could be built.
@@ -243,7 +258,7 @@ def build_profiles(
             continue
         hmm_path = hmm_dir / f"{family_id}.hmm"
         members_path = hmm_dir / f"{family_id}.members"
-        digest = _member_digest(families[family_id])
+        digest = _profile_digest(families[family_id], Path(aln_path))
         is_cached = (
             hmm_path.exists()
             and hmm_path.stat().st_size > 0
@@ -440,31 +455,64 @@ def count_cross_family_votes(
     full_bits, restricted to hits clearing `config.merge_min_profile_cov`
     and `config.hmmer_evalue`. Genes belonging to no family do not vote.
 
-    The single-vote rule is what keeps the edge count bounded by the family
-    count. domtblout is ordered by PROFILE, not by gene, so anything that
-    assumes gene-contiguous rows inflates these counts into plausible
-    garbage - the invariant to assert downstream is edges <= families.
+    Exact top-bit-score ties abstain: domtblout bit scores are rounded, and
+    choosing the first tied profile would make the edge depend on HMM database
+    order. The single-vote rule bounds TOTAL VOTES by the number of family
+    members. It does not bound edge count by family count: different members
+    of one family may legitimately vote for different neighbours.
     """
     gene_to_family: Dict[str, str] = {}
     for family_id, members in families.items():
         for gene_id in members:
+            previous = gene_to_family.get(gene_id)
+            if previous is not None and previous != family_id:
+                raise ValueError(
+                    f"gene {gene_id!r} belongs to both {previous!r} and "
+                    f"{family_id!r}; cross-family votes would depend on dict "
+                    "insertion order"
+                )
             gene_to_family[gene_id] = family_id
+
+    unknown_profiles = sorted({
+        hit.family_id
+        for hits in hits_by_gene.values()
+        for hit in hits
+        if hit.family_id not in families
+    })
+    if unknown_profiles:
+        raise ValueError(
+            "profile hits name families absent from the current family table: "
+            + ",".join(unknown_profiles[:10])
+        )
 
     votes: Dict[Tuple[str, str], int] = {}
     for gene_id, hits in hits_by_gene.items():
         own_family = gene_to_family.get(gene_id)
         if own_family is None:
             continue
-        for h in hits:  # sorted by full_bits desc
-            if h.family_id == own_family:
-                continue
-            if h.profile_cov < config.merge_min_profile_cov:
-                continue
-            if h.full_evalue > config.hmmer_evalue:
-                continue
-            key = (own_family, h.family_id)
-            votes[key] = votes.get(key, 0) + 1
-            break  # only the best qualifying non-self hit votes
+        mismatched = [h.gene_id for h in hits if h.gene_id != gene_id]
+        if mismatched:
+            raise ValueError(
+                f"hits stored under {gene_id!r} contain records for "
+                f"{mismatched[0]!r}"
+            )
+        qualifying = [
+            h for h in hits
+            if h.family_id != own_family
+            and h.profile_cov >= config.merge_min_profile_cov
+            and h.full_evalue <= config.hmmer_evalue
+        ]
+        if not qualifying:
+            continue
+        best_bits = max(h.full_bits for h in qualifying)
+        best_families = {
+            h.family_id for h in qualifying if h.full_bits == best_bits
+        }
+        if len(best_families) != 1:
+            continue
+        best_family = next(iter(best_families))
+        key = (own_family, best_family)
+        votes[key] = votes.get(key, 0) + 1
     return votes
 
 
@@ -496,9 +544,10 @@ def vote_edges(
         from_size = len(families.get(fam_from, ()))
         if from_size == 0:
             continue
-        frac = round(n / from_size, 3)
-        if frac < min_frac:
+        exact_frac = n / from_size
+        if exact_frac < min_frac:
             continue
+        frac = round(exact_frac, 3)
         edges.append((fam_from, fam_to, n, from_size, frac))
     edges.sort(key=lambda e: (-e[4], e[0], e[1]))
     return edges
@@ -603,6 +652,11 @@ def run_profile_assignment(
     """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+    # A retried round reuses this directory. If the new attempt fails before
+    # writing reports, an older assignment file must not be replayed when the
+    # round later reaches its completed checkpoint.
+    for report in ("profile_assignments.tsv", "ambiguous_assignments.tsv"):
+        (outdir / report).unlink(missing_ok=True)
     still_unplaced: Set[str] = set(unplaced_pool)
 
     if not families or not unplaced_pool:
@@ -620,6 +674,34 @@ def run_profile_assignment(
     _hmmsearch_domtblout(hmm_db, query_fasta, domtblout, config)
 
     hits_by_gene = parse_domtblout(domtblout)
+    unexpected_genes = sorted(set(hits_by_gene) - set(unplaced_pool))
+    if unexpected_genes:
+        raise ValueError(
+            "hmmsearch results contain genes absent from the submitted "
+            "unplaced pool: " + ",".join(unexpected_genes[:10])
+        )
+    mismatched_hit_ids = sorted({
+        hit.gene_id
+        for gene_id, hits in hits_by_gene.items()
+        for hit in hits
+        if hit.gene_id != gene_id
+    })
+    if mismatched_hit_ids:
+        raise ValueError(
+            "hmmsearch hit records are indexed under the wrong gene id: "
+            + ",".join(mismatched_hit_ids[:10])
+        )
+    unknown_profiles = sorted({
+        hit.family_id
+        for hits in hits_by_gene.values()
+        for hit in hits
+        if hit.family_id not in families
+    })
+    if unknown_profiles:
+        raise ValueError(
+            "hmmsearch results name profiles absent from the current family "
+            "table: " + ",".join(unknown_profiles[:10])
+        )
     current_assignment: Dict[str, Optional[str]] = {g: None for g in unplaced_pool}
     new_assignments, ambiguous, _moves = assign(hits_by_gene, current_assignment, config)
 

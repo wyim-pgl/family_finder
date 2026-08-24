@@ -256,6 +256,79 @@ def test_round_families_roundtrip(tmp_path):
     assert loaded_r1_only == fams_r1
 
 
+def test_resume_replays_profile_assignment_into_an_earlier_round_family(tmp_path):
+    # Arrange: round 2 assigns SpC_u into an R1 family and therefore removes it
+    # from round_02/outlier_pool.fa. confirmed_families.tsv for round 2 cannot
+    # carry that R1 family without duplicating the family across round files.
+    r1 = tmp_path / "round_01"
+    r2 = tmp_path / "round_02"
+    pipeline._write_round_families(r1, {"R1_OG0000000": {"SpA_g1"}})
+    pipeline._write_round_families(r2, {"R2_OG0000000": {"SpB_g2"}})
+    pa = r2 / "profile_assign"
+    pa.mkdir()
+    pa.joinpath("profile_assignments.tsv").write_text(
+        "gene_id\tfamily_id\tfull_evalue\tfull_bits\tprofile_cov\tquery_cov\n"
+        "SpC_u\tR1_OG0000000\t1e-50\t200.0\t0.8\t0.9\n"
+    )
+
+    # Act
+    completed_r2 = pipeline._load_round_families(tmp_path, max_round=2)
+    completed_r1 = pipeline._load_round_families(tmp_path, max_round=1)
+
+    # Assert: the assignment appears only once its own round is completed.
+    assert completed_r2["R1_OG0000000"] == {"SpA_g1", "SpC_u"}
+    assert completed_r1["R1_OG0000000"] == {"SpA_g1"}
+
+
+def test_resume_refuses_profile_assignment_to_an_unknown_or_future_family(tmp_path):
+    # Arrange: replaying this row by silently skipping it would lose SpC_u,
+    # because the completed round's outlier pool no longer contains the gene.
+    r1 = tmp_path / "round_01"
+    pipeline._write_round_families(r1, {"R1_OG0000000": {"SpA_g1"}})
+    pa = r1 / "profile_assign"
+    pa.mkdir()
+    pa.joinpath("profile_assignments.tsv").write_text(
+        "gene_id\tfamily_id\nSpC_u\tR2_OG0000000\n"
+    )
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="unknown/future family"):
+        pipeline._load_round_families(tmp_path, max_round=1)
+
+
+def test_resume_refuses_duplicate_family_rows_instead_of_overwriting(tmp_path):
+    # Arrange: the old dict assignment retained only SpB_g2 from the second
+    # row, so SpA_g1 disappeared before any conservation check saw it.
+    r1 = tmp_path / "round_01"
+    r1.mkdir()
+    r1.joinpath("confirmed_families.tsv").write_text(
+        "R1_OG0000000\tSpA_g1\nR1_OG0000000\tSpB_g2\n"
+    )
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="duplicate family id"):
+        pipeline._load_round_families(tmp_path, max_round=1)
+
+
+def test_resume_refuses_a_completed_round_without_its_outlier_pool(tmp_path):
+    # Treating this as an empty/no checkpoint artifact used to advance to R2
+    # with the original full input, reprocessing genes already placed in R1.
+    (tmp_path / "round_01").mkdir()
+
+    with pytest.raises(ValueError, match="cannot reconstruct"):
+        pipeline._load_completed_round_pool(tmp_path, round_num=1)
+
+
+def test_resume_accepts_an_empty_completed_outlier_pool(tmp_path):
+    # All genes placed is a legitimate completed state and is distinct from a
+    # missing artifact.
+    round_dir = tmp_path / "round_01"
+    round_dir.mkdir()
+    (round_dir / "outlier_pool.fa").write_text("")
+
+    assert pipeline._load_completed_round_pool(tmp_path, round_num=1) == {}
+
+
 # ---------------------------------------------------------------------------
 # pep/CDS ID-agreement report (issue #2)
 # ---------------------------------------------------------------------------

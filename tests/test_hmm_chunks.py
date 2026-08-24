@@ -158,6 +158,63 @@ def test_merge_fails_when_a_chunk_is_missing(tmp_path):
     raise AssertionError("a missing chunk must fail the merge")
 
 
+def test_merge_count_cannot_be_satisfied_by_a_stale_chunk(tmp_path):
+    """Two files are not a complete two-task run when task 1 is absent."""
+    (tmp_path / "chunk_0000.tblout").write_text(TBL_OK)
+    (tmp_path / "chunk_0002.tblout").write_text(TBL_OK)
+
+    try:
+        merge_tblouts(tmp_path, tmp_path / "m.tblout", expected=2)
+    except RuntimeError as e:
+        assert "missing 1" in str(e)
+        assert "unexpected 2" in str(e)
+        return
+    raise AssertionError("a stale chunk must not replace the missing task")
+
+
+def test_merged_domtblout_may_repeat_hmmer_headers_and_footers(tmp_path):
+    """Every chunk has comments; the shared parser must ignore all of them."""
+    from steps.hmm_chunks import DOM_CHUNK_GLOB
+
+    def dom(gene, family):
+        row = (f"{gene} - 100 {family} - 80 1e-30 120.0 0.0 1 1 "
+               "1e-30 1e-30 120.0 0.0 1 80 1 80 1 80 0.99 -\n")
+        return "# HMMER domtblout header\n" + row + "# footer\n# [ok]\n"
+
+    (tmp_path / "chunk_0000.domtblout").write_text(dom("Sp1_a", "FamA"))
+    (tmp_path / "chunk_0001.domtblout").write_text(dom("Sp2_b", "FamB"))
+    out = tmp_path / "merged.domtblout"
+
+    merge_tblouts(tmp_path, out, expected=2, glob=DOM_CHUNK_GLOB)
+
+    from steps.profile_assign import parse_domtblout
+    assert set(parse_domtblout(out)) == {"Sp1_a", "Sp2_b"}
+
+
+def test_merge_streams_chunks_without_path_read_text(tmp_path, monkeypatch):
+    # Arrange: Path.read_text loads a whole production domtblout in memory.
+    # Make any such call on an input chunk fail so this test pins the streaming
+    # path rather than merely checking byte equality on tiny fixtures.
+    for i in range(2):
+        (tmp_path / f"chunk_{i:04d}.tblout").write_text(TBL_OK)
+    original = Path.read_text
+
+    def guarded_read_text(path, *args, **kwargs):
+        if path.name.startswith("chunk_"):
+            raise AssertionError("chunk was loaded whole")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read_text)
+
+    # Act
+    out = tmp_path / "merged.tblout"
+    merge_tblouts(tmp_path, out, expected=2)
+
+    # Assert
+    with open(out) as fh:
+        assert fh.read().count("# [ok]") == 2
+
+
 def test_merge_output_parses_with_the_existing_reader(tmp_path):
     """The merged file must satisfy steps.hmmer_rescue's tblout parser."""
     for i in range(2):

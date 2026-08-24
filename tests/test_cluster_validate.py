@@ -4,8 +4,9 @@ The one-way fragmentation clusters over-merge by construction (nearest-neighbor
 vote concentration), so cluster membership alone must never merge anything.
 The tree decides, and it can say three things about a fragment:
 
-  INTERLEAVED   its members mix with another fragment's - lineage-axis
-                fragmentation, the PEPC signature. Merge.
+  INTERLEAVED   its members do not form an edge-defined clade. Pairwise
+                inseparable fragments are lineage-axis fragmentation, the PEPC
+                signature, and merge. An isolated internal strip does not.
   MONOPHYLETIC  its members form their own clade. Topology alone CANNOT
                 distinguish "subfamily of the same family" from "distinct
                 neighbouring family" - PPC4 is monophyletic inside the PEPC
@@ -155,3 +156,122 @@ def test_all_members_present_is_monophyletic_regardless_of_root():
     # Assert
     assert statuses["A"] == "MONOPHYLETIC"
     assert groups == []
+
+
+def test_tied_smallest_sides_do_not_make_merge_groups_root_dependent():
+    # Arrange: one unrooted caterpillar, printed with the root at two internal
+    # nodes. B={e,f} occupies an internal strip.  The equally small sides
+    # containing B are A+B and B+C+D; picking whichever is visited first used
+    # to call B mixed with A in one notation and C,D in the other.
+    trees = [
+        "(a,b,(c,(d,(e,(f,(g,(h,(i,j))))))));",
+        "((((a,b),c),d),e,(f,(g,(h,(i,j)))));",
+    ]
+    frags = {
+        "A": ["a", "b", "c", "d"],
+        "B": ["e", "f"],
+        "C": ["g", "i"],
+        "D": ["h", "j"],
+    }
+
+    # Act
+    first = _statuses(trees[0], frags)
+    second = _statuses(trees[1], frags)
+    first_reasons = {
+        fam: row["reason"]
+        for fam, row in fragment_verdict(trees[0], frags)["fragments"].items()
+    }
+    second_reasons = {
+        fam: row["reason"]
+        for fam, row in fragment_verdict(trees[1], frags)["fragments"].items()
+    }
+
+    # Assert: C and D really interleave; an edge separates B from every other
+    # individual fragment, so B supplies no evidence for a merge.
+    assert first == second
+    assert first_reasons == second_reasons
+    assert first[1] == [["C", "D"]]
+
+
+def test_an_internal_strip_does_not_name_a_separable_fragment_as_a_partner():
+    # Arrange: B is not itself one side of an edge, but the edge immediately
+    # to either side separates it from A and from C respectively. Non-clade is
+    # therefore not enough to claim that B mixes with either neighbour.
+    tree = "((a1,a2),(b1,(b2,(c1,c2))));"
+    frags = {
+        "A": ["a1", "a2"],
+        "B": ["b1", "b2"],
+        "C": ["c1", "c2"],
+    }
+
+    # Act
+    verdict = fragment_verdict(tree, frags)
+
+    # Assert
+    assert verdict["fragments"]["B"]["status"] == "INTERLEAVED"
+    assert (
+        "every other fragment is separable"
+        in verdict["fragments"]["B"]["reason"]
+    )
+    assert verdict["merge_groups"] == []
+
+
+def test_polytomy_interleaving_is_invariant_to_putting_root_on_an_edge():
+    # Arrange: in a four-way star, both two-leaf convex hulls meet at the
+    # central node, so no edge separates A from B. The second Newick inserts a
+    # degree-two printed root on a pendant edge of the same unrooted star.
+    frags = {"A": ["a1", "a2"], "B": ["b1", "b2"]}
+    at_node = "(a1,a2,b1,b2);"
+    on_edge = "(a1,(a2,b1,b2));"
+
+    # Act / Assert
+    assert _statuses(at_node, frags) == _statuses(on_edge, frags)
+    assert _statuses(at_node, frags)[1] == [["A", "B"]]
+
+
+def test_unclaimed_leaf_can_break_a_clade_but_cannot_invent_a_partner():
+    # Arrange: x lies inside B's smallest rooted-looking span, but belongs to
+    # no fragment. A and B are still separated from one another by an edge.
+    tree = "((a1,a2),(b1,(x,b2)));"
+    frags = {"A": ["a1", "a2"], "B": ["b1", "b2"]}
+
+    # Act
+    verdict = fragment_verdict(tree, frags)
+
+    # Assert: reporting B as a non-clade is intentional; silently turning the
+    # unclaimed leaf into evidence to merge A+B would not be.
+    assert verdict["fragments"]["A"]["status"] == "MONOPHYLETIC"
+    assert verdict["fragments"]["B"]["status"] == "INTERLEAVED"
+    assert (
+        "every other fragment is separable"
+        in verdict["fragments"]["B"]["reason"]
+    )
+    assert verdict["merge_groups"] == []
+    assert verdict["n_tree_leaves_unclaimed"] == 1
+
+
+def test_complement_side_cannot_add_an_edge_separable_fragment_to_a_group():
+    # Arrange: this is a merge-level counterexample to the claim that merely
+    # adding complement sides made the old rooted grouping monotone. The old
+    # code grouped A+D+E and left B alone; the first unrooted patch chose a
+    # complement span for E and grouped A+B+D+E, even though the edge before i
+    # separates every E member (g,h) from every B member (j,k).
+    tree = "(((((((((a,b),c),d),e),f),g),h),i),(j,(k,l)));"
+    frags = {
+        "A": ["a", "b", "c", "i"],
+        "B": ["j", "k"],
+        "C": ["l"],
+        "D": ["d", "e", "f"],
+        "E": ["g", "h"],
+    }
+
+    # Act
+    verdict = fragment_verdict(tree, frags)
+
+    # Assert: the status monotonicity argument was valid, but the former
+    # smallest-containing-side partner attribution was not.
+    assert verdict["merge_groups"] == [["A", "D", "E"]]
+    assert (
+        "every other fragment is separable"
+        in verdict["fragments"]["B"]["reason"]
+    )

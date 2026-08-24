@@ -10,8 +10,10 @@ threshold, or applied to a different dataset.
 
 The verdict rule (see steps/cluster_validate for the reasoning):
 
-  INTERLEAVED   the fragment does not form its own clade - it mixes with
-                another fragment's. Lineage-axis fragmentation. MERGE.
+  INTERLEAVED   the fragment does not form its own edge-defined clade. It
+                merges only with other INTERLEAVED fragments that no edge can
+                separate from it; a non-clade internal strip can have no such
+                partner and therefore no merge group.
   MONOPHYLETIC  the fragment is its own clade. Topology alone cannot tell a
                 subfamily of the same family from a distinct neighbouring
                 family, so this is reported and merged by nobody.
@@ -28,7 +30,10 @@ to be interrupted; --judge is resumable per cluster and --apply refuses to run
 on an incomplete verdict set rather than quietly shipping a partial merge.
 """
 import argparse
+import hashlib
+import inspect
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -43,6 +48,9 @@ logger = logging.getLogger("family_finder")
 
 VERDICT_HEADER = ("cluster_id\tfragment\tstatus\tn_members\tn_missing\t"
                   "merge_group\treason")
+FINGERPRINT_PREFIX = "# judge_fingerprint\t"
+LOGIC_PREFIX = "# judge_logic\t"
+MEMBERSHIP_PREFIX = "# judge_membership\t"
 
 
 # ---------------------------------------------------------------------------
@@ -52,42 +60,178 @@ VERDICT_HEADER = ("cluster_id\tfragment\tstatus\tn_members\tn_missing\t"
 def load_families(summary_path: Path) -> Dict[str, List[str]]:
     """family_id -> member gene ids, from a run's summary.tsv."""
     families: Dict[str, List[str]] = {}
+    owner: Dict[str, str] = {}
     with open(summary_path) as fh:
         header = fh.readline().rstrip("\n").split("\t")
-        gi = header.index("gene_list")
-        for line in fh:
-            parts = line.rstrip("\n").split("\t")
-            if len(parts) <= gi:
+        try:
+            fi = header.index("family_id")
+            gi = header.index("gene_list")
+        except ValueError as exc:
+            raise ValueError(
+                f"{summary_path}: expected family_id and gene_list columns"
+            ) from exc
+        ni = header.index("n_genes") if "n_genes" in header else None
+        need = max(fi, gi, ni if ni is not None else 0)
+        for lineno, line in enumerate(fh, start=2):
+            if not line.strip():
                 continue
-            families[parts[0]] = [g for g in parts[gi].split(",") if g]
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) <= need:
+                raise ValueError(
+                    f"{summary_path}:{lineno}: truncated family row"
+                )
+            family_id = parts[fi]
+            genes = [g for g in parts[gi].split(",") if g]
+            if not family_id or not genes:
+                raise ValueError(
+                    f"{summary_path}:{lineno}: empty family id or gene list"
+                )
+            if family_id in families:
+                raise ValueError(
+                    f"{summary_path}:{lineno}: duplicate family id {family_id!r}"
+                )
+            if len(genes) != len(set(genes)):
+                raise ValueError(
+                    f"{summary_path}:{lineno}: duplicate gene within {family_id}"
+                )
+            if ni is not None:
+                try:
+                    declared = int(parts[ni])
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{summary_path}:{lineno}: invalid n_genes {parts[ni]!r}"
+                    ) from exc
+                if declared != len(genes):
+                    raise ValueError(
+                        f"{summary_path}:{lineno}: {family_id} declares "
+                        f"{declared} genes but lists {len(genes)}"
+                    )
+            for gene in genes:
+                previous = owner.get(gene)
+                if previous is not None:
+                    raise ValueError(
+                        f"{summary_path}:{lineno}: gene {gene!r} occurs in both "
+                        f"{previous} and {family_id}"
+                    )
+                owner[gene] = family_id
+            families[family_id] = genes
     return families
 
 
 def load_clusters(clusters_path: Path) -> Dict[str, List[str]]:
     """cluster_id -> member family ids, from fragmentation_clusters.tsv."""
     clusters: Dict[str, List[str]] = {}
+    family_owner: Dict[str, str] = {}
     with open(clusters_path) as fh:
-        fh.readline()
-        for line in fh:
-            parts = line.rstrip("\n").split("\t")
-            if len(parts) < 4:
+        header = fh.readline().rstrip("\n").split("\t")
+        try:
+            ci = header.index("cluster_id")
+            fi = header.index("families")
+        except ValueError as exc:
+            raise ValueError(
+                f"{clusters_path}: expected cluster_id and families columns"
+            ) from exc
+        ni = header.index("n_families") if "n_families" in header else None
+        need = max(ci, fi, ni if ni is not None else 0)
+        for lineno, line in enumerate(fh, start=2):
+            if not line.strip():
                 continue
-            clusters[parts[0]] = [f for f in parts[3].split(",") if f]
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) <= need:
+                raise ValueError(
+                    f"{clusters_path}:{lineno}: truncated cluster row"
+                )
+            cluster_id = parts[ci]
+            members = [f for f in parts[fi].split(",") if f]
+            if not cluster_id or not members:
+                raise ValueError(
+                    f"{clusters_path}:{lineno}: empty cluster id or family list"
+                )
+            if cluster_id in clusters:
+                raise ValueError(
+                    f"{clusters_path}:{lineno}: duplicate cluster id {cluster_id!r}"
+                )
+            if len(members) != len(set(members)):
+                raise ValueError(
+                    f"{clusters_path}:{lineno}: duplicate family in {cluster_id}"
+                )
+            if ni is not None:
+                try:
+                    declared = int(parts[ni])
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{clusters_path}:{lineno}: invalid n_families "
+                        f"{parts[ni]!r}"
+                    ) from exc
+                if declared != len(members):
+                    raise ValueError(
+                        f"{clusters_path}:{lineno}: {cluster_id} declares "
+                        f"{declared} families but lists {len(members)}"
+                    )
+            for family_id in members:
+                previous = family_owner.get(family_id)
+                if previous is not None:
+                    raise ValueError(
+                        f"{clusters_path}:{lineno}: family {family_id!r} occurs "
+                        f"in both {previous} and {cluster_id}"
+                    )
+                family_owner[family_id] = cluster_id
+            clusters[cluster_id] = members
     return clusters
 
 
 def load_verdict_rows(path: Path) -> List[tuple]:
-    """Verdict rows as tuples, header skipped."""
+    """Verdict rows as tuples; comments and an optional header are skipped."""
     rows = []
     with open(path) as fh:
-        first = fh.readline()
-        if not first.startswith("cluster_id\t"):
-            fh.seek(0)
-        for line in fh:
+        for lineno, line in enumerate(fh, start=1):
+            if not line.strip() or line.startswith("#"):
+                continue
+            if line.startswith("cluster_id\t"):
+                continue
             parts = line.rstrip("\n").split("\t")
-            if len(parts) >= 6:
-                rows.append(tuple(parts))
+            if len(parts) != 7:
+                raise ValueError(
+                    f"{path}:{lineno}: expected 7 verdict columns, got "
+                    f"{len(parts)}"
+                )
+            rows.append(tuple(parts))
     return rows
+
+
+def validate_cluster_membership(
+    clusters: Dict[str, List[str]], families: Dict[str, List[str]],
+) -> None:
+    """Refuse clusters that name a family absent from the source summary."""
+    unknown = sorted(
+        (cluster_id, family_id)
+        for cluster_id, members in clusters.items()
+        for family_id in members
+        if family_id not in families
+    )
+    if unknown:
+        preview = "; ".join(f"{c}: {f}" for c, f in unknown[:10])
+        raise ValueError(
+            "fragmentation clusters name families absent from summary.tsv: "
+            + preview
+        )
+
+
+def load_sequence_pool(directory: Path, label: str) -> Dict[str, str]:
+    """Load FASTAs without silently overwriting duplicate sequence ids."""
+    pool: Dict[str, str] = {}
+    source: Dict[str, Path] = {}
+    for fasta in sorted(Path(directory).glob("*.fa*")):
+        seqs = read_fasta(str(fasta))
+        overlap = sorted(set(pool) & set(seqs))
+        if overlap:
+            gene = overlap[0]
+            raise ValueError(
+                f"duplicate {label} id {gene!r} in {source[gene]} and {fasta}"
+            )
+        pool.update(seqs)
+        source.update({gene: fasta for gene in seqs})
+    return pool
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +260,114 @@ def merge_groups_from_rows(rows: Sequence[tuple]) -> List[List[str]]:
             seen.add(key)
             groups.append(members)
     return groups
+
+
+def validate_verdict_coverage(
+    rows: Sequence[tuple], clusters: Dict[str, List[str]],
+    families: Dict[str, List[str]] = None,
+) -> None:
+    """Refuse incomplete, inconsistent, or cross-cluster verdict rows."""
+    expected = {cid: set(fams) for cid, fams in clusters.items()}
+    seen: Dict[str, set] = {cid: set() for cid in clusters}
+    rows_by_fragment = {}
+
+    for row in rows:
+        if len(row) != 7:
+            raise ValueError(
+                f"malformed verdict row: expected 7 columns, got {len(row)}"
+            )
+        cluster_id, fam = row[0], row[1]
+        if cluster_id not in expected:
+            raise ValueError(
+                f"verdict names unknown cluster {cluster_id!r}; verdicts and "
+                f"fragmentation_clusters.tsv are from different runs"
+            )
+        if fam not in expected[cluster_id]:
+            raise ValueError(
+                f"verdict names {fam!r} in {cluster_id}, but that family is "
+                f"not a member of the cluster"
+            )
+        if fam in seen[cluster_id]:
+            raise ValueError(
+                f"duplicate verdict row for {fam!r} in {cluster_id}"
+            )
+        status = row[2]
+        if status not in {"INTERLEAVED", "MONOPHYLETIC"}:
+            raise ValueError(
+                f"invalid verdict status {status!r} for {fam!r} in {cluster_id}"
+            )
+        try:
+            n_members = int(row[3])
+            n_missing = int(row[4])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"invalid member counts for {fam!r} in {cluster_id}"
+            ) from exc
+        if n_members < 1 or n_missing < 0:
+            raise ValueError(
+                f"invalid member counts for {fam!r} in {cluster_id}: "
+                f"n_members={n_members}, n_missing={n_missing}"
+            )
+        if n_missing:
+            raise ValueError(
+                f"verdict for {fam!r} in {cluster_id} omitted {n_missing} "
+                "expected tree member(s); refusing a partial-tree judgement"
+            )
+        if families is not None and n_members != len(families[fam]):
+            raise ValueError(
+                f"stale verdict for {fam!r} in {cluster_id}: records "
+                f"{n_members} members, summary.tsv has {len(families[fam])}"
+            )
+
+        group = tuple(sorted(f for f in row[5].split("+") if f))
+        if row[5] and (len(group) < 2 or fam not in group):
+            raise ValueError(
+                f"invalid merge group {row[5]!r} for {fam!r} in {cluster_id}"
+            )
+        outside = sorted(set(group) - expected[cluster_id])
+        if outside:
+            raise ValueError(
+                f"merge group for {fam!r} in {cluster_id} crosses the cluster "
+                f"boundary: {','.join(outside)}"
+            )
+        if status == "MONOPHYLETIC" and group:
+            raise ValueError(
+                f"MONOPHYLETIC fragment {fam!r} in {cluster_id} carries a "
+                "merge group"
+            )
+        seen[cluster_id].add(fam)
+        rows_by_fragment[(cluster_id, fam)] = (status, group)
+
+    missing = []
+    for cluster_id, fams in expected.items():
+        absent = sorted(fams - seen[cluster_id])
+        if absent:
+            missing.append(f"{cluster_id}: {','.join(absent)}")
+    if missing:
+        raise ValueError(
+            "incomplete verdict set: missing fragment rows for "
+            + "; ".join(missing[:10])
+        )
+
+    # Every named merge group is a connected component emitted on every one of
+    # its INTERLEAVED member rows. A truncated or hand-edited group must not
+    # quietly merge fragments that did not carry the same decision.
+    for (cluster_id, fam), (status, group) in rows_by_fragment.items():
+        if not group:
+            continue
+        for member in group:
+            other_status, other_group = rows_by_fragment[(cluster_id, member)]
+            if other_status != "INTERLEAVED" or other_group != group:
+                raise ValueError(
+                    f"inconsistent merge group {row_group(group)!r} in "
+                    f"{cluster_id}: {member!r} does not carry the same "
+                    "INTERLEAVED decision"
+                )
+
+
+def row_group(group: Sequence[str]) -> str:
+    """Stable display form for an already parsed verdict merge group."""
+    return "+".join(group)
 
 
 def apply_merges(
@@ -225,16 +477,40 @@ def judge_cluster(cluster_id: str, fam_ids: Sequence[str],
     workdir.mkdir(parents=True, exist_ok=True)
     fragments = {f: families[f] for f in fam_ids}
     wanted = [g for m in fragments.values() for g in m]
+    if len(wanted) != len(set(wanted)):
+        raise ValueError(
+            f"{cluster_id}: a gene belongs to more than one fragment"
+        )
+
+    missing_pep = sorted(set(wanted) - set(pep_pool))
+    if missing_pep:
+        raise ValueError(
+            f"{cluster_id}: {len(missing_pep)} family member peptide(s) are "
+            f"absent from the peptide pool: {','.join(missing_pep[:10])}"
+        )
 
     pep = workdir / "cluster.pep.fa"
-    write_fasta({g: pep_pool[g] for g in wanted if g in pep_pool}, str(pep))
+    write_fasta({g: pep_pool[g] for g in wanted}, str(pep))
     cds = workdir / "cluster.cds.fa"
     have_cds = {g: cds_pool[g] for g in wanted if g in cds_pool}
-    if have_cds:
+    use_cds = len(have_cds) == len(wanted)
+    if use_cds:
         write_fasta(have_cds, str(cds))
 
-    tree = build_cluster_tree(pep, cds if have_cds else None, workdir, cfg)
+    tree = build_cluster_tree(pep, cds if use_cds else None, workdir, cfg)
     verdict = fragment_verdict(tree.read_text(), fragments)
+    missing_tree = {
+        fam: d["n_missing"]
+        for fam, d in verdict["fragments"].items()
+        if d["n_missing"]
+    }
+    if missing_tree or verdict["n_tree_leaves_unclaimed"]:
+        detail = ", ".join(f"{fam}={n}" for fam, n in sorted(missing_tree.items()))
+        raise RuntimeError(
+            f"{cluster_id}: tree leaf set does not equal the requested gene "
+            f"set (missing: {detail or 'none'}; unclaimed: "
+            f"{verdict['n_tree_leaves_unclaimed']})"
+        )
 
     group_of = {}
     for grp in verdict["merge_groups"]:
@@ -248,6 +524,159 @@ def judge_cluster(cluster_id: str, fam_ids: Sequence[str],
     return rows
 
 
+def _logic_digest() -> str:
+    """Digest of the code whose result a resumable verdict file caches."""
+    source = "\n".join(
+        inspect.getsource(fn)
+        for fn in (build_cluster_tree, judge_cluster, fragment_verdict)
+    )
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def judge_fingerprint(cluster_id: str, fam_ids: Sequence[str],
+                      families: Dict[str, List[str]], pep_pool, cds_pool,
+                      cfg) -> str:
+    """Fingerprint inputs, tool settings, and judgement logic for resume."""
+    digest = hashlib.sha256()
+
+    def add(value) -> None:
+        data = str(value).encode("utf-8")
+        digest.update(str(len(data)).encode("ascii") + b":" + data)
+
+    add(_logic_digest())
+    add(cluster_id)
+    for attr in ("mafft_bin", "fasttree_bin", "pal2nal", "threads"):
+        add(attr)
+        add(getattr(cfg, attr))
+    for family_id in sorted(fam_ids):
+        add(family_id)
+        for gene in sorted(families[family_id]):
+            add(gene)
+            add(pep_pool.get(gene, "<MISSING>"))
+            add(cds_pool.get(gene, "<MISSING>"))
+    return digest.hexdigest()
+
+
+def cluster_membership_fingerprint(
+    cluster_id: str, fam_ids: Sequence[str], families: Dict[str, List[str]],
+) -> str:
+    """Digest the exact family/gene membership a verdict will be applied to."""
+    digest = hashlib.sha256()
+
+    def add(value) -> None:
+        data = str(value).encode("utf-8")
+        digest.update(str(len(data)).encode("ascii") + b":" + data)
+
+    add(cluster_id)
+    for family_id in sorted(fam_ids):
+        add(family_id)
+        for gene in sorted(families[family_id]):
+            add(gene)
+    return digest.hexdigest()
+
+
+def _read_stamp(path: Path, prefix: str) -> str:
+    if not path.exists():
+        return ""
+    with open(path) as fh:
+        for line in fh:
+            if line.startswith(prefix):
+                return line[len(prefix):].strip()
+            if line and not line.startswith("#"):
+                break
+    return ""
+
+
+def verdict_file_is_current(path: Path, fingerprint: str,
+                            cluster_id: str, fam_ids: Sequence[str],
+                            families: Dict[str, List[str]]) -> bool:
+    """A cache hit needs both a matching stamp and a complete valid row set."""
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    if _read_stamp(path, FINGERPRINT_PREFIX) != fingerprint:
+        return False
+    if _read_stamp(path, LOGIC_PREFIX) != _logic_digest():
+        return False
+    expected_membership = cluster_membership_fingerprint(
+        cluster_id, fam_ids, families,
+    )
+    if _read_stamp(path, MEMBERSHIP_PREFIX) != expected_membership:
+        return False
+    try:
+        rows = load_verdict_rows(path)
+        validate_verdict_coverage(
+            rows, {cluster_id: list(fam_ids)}, families=families,
+        )
+    except (KeyError, ValueError):
+        return False
+    return True
+
+
+def write_verdict_rows(path: Path, rows: Sequence[tuple], fingerprint: str,
+                       membership_fingerprint: str) -> None:
+    """Atomically write a stamped verdict cache file."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "w") as fh:
+            fh.write(f"{LOGIC_PREFIX}{_logic_digest()}\n")
+            fh.write(f"{FINGERPRINT_PREFIX}{fingerprint}\n")
+            fh.write(f"{MEMBERSHIP_PREFIX}{membership_fingerprint}\n")
+            fh.write("".join("\t".join(r) + "\n" for r in rows))
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+def archive_stale_verdict(path: Path) -> None:
+    """Move an invalid cache aside so --apply cannot consume it by accident."""
+    if not path.exists():
+        return
+    suffix = _read_stamp(path, FINGERPRINT_PREFIX)[:12] or "unstamped"
+    stale = path.with_name(f"{path.name}.stale-{suffix}")
+    counter = 1
+    while stale.exists():
+        stale = path.with_name(f"{path.name}.stale-{suffix}-{counter}")
+        counter += 1
+    path.replace(stale)
+
+
+def validate_verdict_file_stamps(
+    path: Path, rows: Sequence[tuple], clusters: Dict[str, List[str]],
+    families: Dict[str, List[str]], allow_unstamped: bool = False,
+) -> None:
+    """Verify that an apply input was judged for this logic and membership."""
+    logic = _read_stamp(path, LOGIC_PREFIX)
+    if not logic:
+        if allow_unstamped:
+            return
+        raise ValueError(
+            f"refusing unstamped legacy verdict {path}; re-run --judge or "
+            "pass --allow-unstamped-verdicts explicitly"
+        )
+    if logic != _logic_digest():
+        raise ValueError(f"refusing stale verdict logic in {path}; re-run --judge")
+
+    cluster_ids = {row[0] for row in rows}
+    if len(cluster_ids) != 1:
+        raise ValueError(
+            f"{path}: expected verdict rows for exactly one cluster, got "
+            f"{sorted(cluster_ids)}"
+        )
+    cluster_id = next(iter(cluster_ids))
+    if cluster_id not in clusters:
+        raise ValueError(f"{path}: verdict names unknown cluster {cluster_id!r}")
+    expected = cluster_membership_fingerprint(
+        cluster_id, clusters[cluster_id], families,
+    )
+    recorded = _read_stamp(path, MEMBERSHIP_PREFIX)
+    if recorded != expected:
+        raise ValueError(
+            f"refusing stale verdict membership in {path}; summary.tsv or "
+            "fragmentation_clusters.tsv changed, so re-run --judge"
+        )
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -255,22 +684,50 @@ def judge_cluster(cluster_id: str, fam_ids: Sequence[str],
 def write_summary_v3(families: Dict[str, List[str]],
                      provenance: Dict[str, str],
                      original: Path, out: Path,
-                     cluster_of: Dict[str, str]) -> None:
+                     cluster_of: Dict[str, str],
+                     species_delimiter: str = "_") -> None:
     """Write the merged family table, carrying merge provenance."""
+    if not species_delimiter:
+        raise ValueError("species delimiter must not be empty")
     meta = {}
     with open(original) as fh:
         header = fh.readline().rstrip("\n").split("\t")
-        ri = header.index("round") if "round" in header else None
-        for line in fh:
+        if "family_id" not in header or "round" not in header:
+            raise ValueError(
+                f"{original}: family_id and round metadata are required"
+            )
+        fi, ri = header.index("family_id"), header.index("round")
+        for lineno, line in enumerate(fh, start=2):
+            if not line.strip():
+                continue
             p = line.rstrip("\n").split("\t")
-            meta[p[0]] = p[ri] if ri is not None else ""
+            if len(p) <= max(fi, ri) or not p[ri]:
+                raise ValueError(
+                    f"{original}:{lineno}: missing family id or round metadata"
+                )
+            if p[fi] in meta:
+                raise ValueError(
+                    f"{original}:{lineno}: duplicate family id {p[fi]!r}"
+                )
+            meta[p[fi]] = p[ri]
     with open(out, "w") as f:
         f.write("family_id\tround\tn_genes\tn_species\tgene_list\t"
                 "merged_from\tcluster_id\n")
         for fam in sorted(families):
             genes = families[fam]
-            species = {g.split("_", 1)[0] for g in genes}
-            f.write(f"{fam}\t{meta.get(fam, '')}\t{len(genes)}\t"
+            if fam not in meta:
+                raise ValueError(
+                    f"merged family {fam!r} has no round metadata in {original}"
+                )
+            missing_delimiter = [g for g in genes if species_delimiter not in g]
+            if missing_delimiter:
+                raise ValueError(
+                    f"cannot count species for {fam}: gene id "
+                    f"{missing_delimiter[0]!r} lacks delimiter "
+                    f"{species_delimiter!r}"
+                )
+            species = {g.split(species_delimiter, 1)[0] for g in genes}
+            f.write(f"{fam}\t{meta[fam]}\t{len(genes)}\t"
                     f"{len(species)}\t{','.join(genes)}\t"
                     f"{provenance.get(fam, '')}\t{cluster_of.get(fam, '')}\n")
 
@@ -287,8 +744,10 @@ def main(argv=None):
     ap.add_argument("--apply", action="store_true",
                     help="fold verdicts into the family table")
     ap.add_argument("--cluster", help="judge only this cluster (array task)")
-    ap.add_argument("--pep-dir", help="proteome dir, default <run-dir>/../data/pep")
+    ap.add_argument("--pep-dir", help="proteome dir (required with --judge)")
     ap.add_argument("--cds-dir", help="CDS dir")
+    ap.add_argument("--species-delimiter", default="_",
+                    help="gene-id species delimiter used by the source run")
     ap.add_argument("--workdir", help="default <run-dir>/validate")
     ap.add_argument("--out", help="apply: default <run-dir>/summary_v3.tsv")
     ap.add_argument("--mafft-bin", default="mafft")
@@ -297,6 +756,11 @@ def main(argv=None):
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--expect", type=int,
                     help="apply: required cluster count; refuses a partial set")
+    ap.add_argument(
+        "--allow-unstamped-verdicts", action="store_true",
+        help="apply legacy verdict files that predate resume fingerprints; "
+             "never permits a stamped verdict from different logic",
+    )
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -309,39 +773,68 @@ def main(argv=None):
     if not (args.judge or args.apply):
         ap.error("nothing to do: pass --judge and/or --apply")
 
-    families = load_families(run_dir / "summary.tsv")
-    clusters = load_clusters(run_dir / "fragmentation_clusters.tsv")
+    try:
+        families = load_families(run_dir / "summary.tsv")
+        clusters = load_clusters(run_dir / "fragmentation_clusters.tsv")
+        validate_cluster_membership(clusters, families)
+    except ValueError as exc:
+        sys.exit(str(exc))
     logger.info("%d families, %d clusters", len(families), len(clusters))
 
     if args.judge:
+        if not args.pep_dir:
+            sys.exit("--judge requires --pep-dir; an empty peptide pool would "
+                     "turn missing genes into partial-tree verdicts")
         args.mafft_bin = args.mafft_bin
         cfg = argparse.Namespace(
             mafft_bin=args.mafft_bin, fasttree_bin=args.fasttree_bin,
             pal2nal=args.pal2nal, threads=args.threads)
-        pep_pool, cds_pool = {}, {}
-        pep_dir = Path(args.pep_dir) if args.pep_dir else None
-        if pep_dir:
-            for fa in sorted(pep_dir.glob("*.fa*")):
-                pep_pool.update(read_fasta(str(fa)))
-        if args.cds_dir:
-            for fa in sorted(Path(args.cds_dir).glob("*.fa*")):
-                cds_pool.update(read_fasta(str(fa)))
+        pep_dir = Path(args.pep_dir)
+        try:
+            pep_pool = load_sequence_pool(pep_dir, "peptide")
+            cds_pool = (
+                load_sequence_pool(Path(args.cds_dir), "CDS")
+                if args.cds_dir else {}
+            )
+        except ValueError as exc:
+            sys.exit(str(exc))
 
+        if args.cluster and args.cluster not in clusters:
+            sys.exit(f"unknown cluster {args.cluster!r}")
         todo = [args.cluster] if args.cluster else sorted(clusters)
+        failed = []
         for cid in todo:
             out = verdict_dir / f"{cid}.rows.tsv"
-            if out.exists() and out.stat().st_size > 0:
-                continue
             try:
+                fingerprint = judge_fingerprint(
+                    cid, clusters[cid], families, pep_pool, cds_pool, cfg,
+                )
+                membership_fingerprint = cluster_membership_fingerprint(
+                    cid, clusters[cid], families,
+                )
+                if verdict_file_is_current(
+                    out, fingerprint, cid, clusters[cid], families,
+                ):
+                    continue
+                archive_stale_verdict(out)
                 rows = judge_cluster(cid, clusters[cid], families,
                                      pep_pool, cds_pool, workdir, cfg)
             except Exception as exc:            # one bad cluster must not
                 logger.error("%s failed: %s", cid, exc)   # kill the campaign
                 (verdict_dir / f"{cid}.FAILED").write_text(str(exc))
+                failed.append(cid)
                 continue
-            out.write_text("".join("\t".join(r) + "\n" for r in rows))
+            write_verdict_rows(
+                out, rows, fingerprint, membership_fingerprint,
+            )
+            (verdict_dir / f"{cid}.FAILED").unlink(missing_ok=True)
         logger.info("judged: %d verdict files",
                     len(list(verdict_dir.glob("*.rows.tsv"))))
+        if failed:
+            sys.exit(
+                f"{len(failed)} cluster(s) failed judgement: "
+                + ",".join(failed[:10])
+            )
 
     if args.apply:
         parts = sorted(verdict_dir.glob("*.rows.tsv"))
@@ -353,7 +846,19 @@ def main(argv=None):
                      f"in the output.")
         rows = []
         for p in parts:
-            rows.extend(load_verdict_rows(p))
+            try:
+                file_rows = load_verdict_rows(p)
+                validate_verdict_file_stamps(
+                    p, file_rows, clusters, families,
+                    allow_unstamped=args.allow_unstamped_verdicts,
+                )
+            except ValueError as exc:
+                sys.exit(str(exc))
+            rows.extend(file_rows)
+        try:
+            validate_verdict_coverage(rows, clusters, families=families)
+        except ValueError as exc:
+            sys.exit(str(exc))
         combined = run_dir / "cluster_verdicts.tsv"
         with open(combined, "w") as f:
             f.write(VERDICT_HEADER + "\n")
@@ -374,7 +879,7 @@ def main(argv=None):
         cluster_of = {f: c for c, fams in clusters.items() for f in fams}
         out = Path(args.out) if args.out else run_dir / "summary_v3.tsv"
         write_summary_v3(merged, provenance, run_dir / "summary.tsv", out,
-                         cluster_of)
+                         cluster_of, args.species_delimiter)
         n_inter = sum(1 for r in rows if r[2] == "INTERLEAVED")
         n_mono = sum(1 for r in rows if r[2] == "MONOPHYLETIC")
         logger.info(

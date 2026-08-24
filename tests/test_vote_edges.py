@@ -24,6 +24,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 sys.modules.setdefault("ete4", types.ModuleType("ete4"))
 sys.modules["ete4"].Tree = object
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -220,6 +222,59 @@ def test_vote_edges_ignore_self_hits_and_unknown_genes():
     assert edges == []
 
 
+def test_vote_edges_refuse_a_gene_owned_by_two_families():
+    # Arrange: gene_to_family used to keep whichever dict item was visited
+    # last, so the same biological input could cast A->C or B->C by ordering.
+    families = {"FamA": {"Sp1_x"}, "FamB": {"Sp1_x"}, "FamC": {"Sp2_c"}}
+    hits = {"Sp1_x": [_hit("Sp1_x", "FamC")]}
+
+    # Act / Assert
+    import pytest
+    with pytest.raises(ValueError, match="belongs to both"):
+        vote_edges(hits, families, Config())
+
+
+def test_vote_edges_refuse_hits_from_a_stale_profile_database():
+    # Arrange: Ghost is absent from the current family table. Emitting A->Ghost
+    # would create a zero-gene cluster member and defer the mismatch until judge.
+    families = {"FamA": {"Sp1_a"}}
+    hits = {"Sp1_a": [_hit("Sp1_a", "Ghost")]}
+
+    # Act / Assert
+    import pytest
+    with pytest.raises(ValueError, match="Ghost"):
+        vote_edges(hits, families, Config())
+
+
+def test_equal_bit_score_votes_abstain_independent_of_profile_order():
+    # Arrange: HMMER prints rounded bit scores. Choosing the first exact tie
+    # recreates the HMM-database-order bug already forbidden for assignment.
+    families = {
+        "FamA": {"Sp1_a"}, "FamB": {"Sp2_b"}, "FamC": {"Sp3_c"},
+    }
+    b = _hit("Sp1_a", "FamB", full_bits=100.0)
+    c = _hit("Sp1_a", "FamC", full_bits=100.0)
+
+    # Act / Assert
+    assert vote_edges({"Sp1_a": [b, c]}, families, Config()) == []
+    assert vote_edges({"Sp1_a": [c, b]}, families, Config()) == []
+
+
+def test_vote_edge_fraction_filter_uses_unrounded_fraction():
+    # Arrange: 2/3 is below 0.667 but rounds to 0.667 for display. Filtering
+    # the rounded value quietly admits an edge below the requested threshold.
+    families = {
+        "FamA": {"Sp1_a", "Sp2_a", "Sp3_a"}, "FamB": {"Sp4_b"},
+    }
+    hits = {
+        "Sp1_a": [_hit("Sp1_a", "FamB")],
+        "Sp2_a": [_hit("Sp2_a", "FamB")],
+    }
+
+    # Act / Assert
+    assert vote_edges(hits, families, Config(), min_frac=0.667) == []
+
+
 # ---------------------------------------------------------------------------
 # (A3) connected components over the edges
 # ---------------------------------------------------------------------------
@@ -332,10 +387,26 @@ def test_write_fragmentation_clusters_writes_the_file_when_empty(tmp_path):
 
 def _stub_scan(monkeypatch, tmp_path, hits):
     """Point scan_for_fragmented_families at synthetic hits, no hmmsearch."""
+    import steps.hmmer_rescue as hr
     import steps.profile_assign as pa
 
-    (tmp_path / "merge_scan").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "merge_scan" / "all_families.hmm").write_text("stub")
+    alignment = tmp_path / "alignment.afa"
+    alignment.write_text(">stub\nMPEP\n")
+    monkeypatch.setattr(hr, "_find_family_alignment",
+                        lambda family_id, outdir: alignment)
+
+    def fake_build_profiles(families, alignment_lookup, hmm_dir, config):
+        assert all(alignment_lookup(family_id) == alignment
+                   for family_id in families)
+        hmm_dir.mkdir(parents=True, exist_ok=True)
+        combined = hmm_dir.parent / "all_families.hmm"
+        combined.write_text("".join(
+            f"HMMER3/f\nNAME  {family_id}\nLENG  4\nHMM\n//\n"
+            for family_id in sorted(families)
+        ))
+        return combined
+
+    monkeypatch.setattr(pa, "build_profiles", fake_build_profiles)
     monkeypatch.setattr(pa, "_hmmsearch_domtblout",
                         lambda db, q, out, cfg: Path(out))
     monkeypatch.setattr(pa, "parse_domtblout", lambda path: hits)
@@ -375,6 +446,49 @@ def test_scan_writes_both_files_when_nothing_votes(tmp_path, monkeypatch):
     assert (tmp_path / "fragmentation_clusters.tsv").exists()
 
 
+def test_scan_refuses_missing_member_sequences_and_invalidates_stale_outputs(
+        tmp_path, monkeypatch):
+    # Arrange: an old successful-looking output exists, but the current family
+    # table names a member absent from the protein pool.
+    from pipeline import scan_for_fragmented_families
+    families = {"FamA": {"Sp1_a1", "Sp2_missing"}}
+    (tmp_path / "vote_edges.tsv").write_text(
+        "from\tto\tvotes\tfrom_size\tfrac\nOLD\tOLD2\t1\t1\t1.000\n"
+    )
+    _stub_scan(monkeypatch, tmp_path, {})
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="Sp2_missing"):
+        scan_for_fragmented_families(
+            families, {"Sp1_a1": "MPEP"}, tmp_path, Config(),
+        )
+    assert not (tmp_path / "vote_edges.tsv").exists()
+
+
+def test_scan_refuses_a_partial_profile_database(tmp_path, monkeypatch):
+    # Arrange: hmmbuild silently omitted FamB. A whole-table scan cannot call
+    # the resulting absence of votes biological evidence.
+    import steps.profile_assign as pa
+    from pipeline import scan_for_fragmented_families
+
+    families = {"FamA": {"Sp1_a1"}, "FamB": {"Sp2_b1"}}
+    pool = {g: "MPEP" for genes in families.values() for g in genes}
+    _stub_scan(monkeypatch, tmp_path, {})
+
+    def partial_profiles(families, alignment_lookup, hmm_dir, config):
+        hmm_dir.mkdir(parents=True, exist_ok=True)
+        combined = hmm_dir.parent / "all_families.hmm"
+        combined.write_text("HMMER3/f\nNAME  FamA\nLENG  4\nHMM\n//\n")
+        return combined
+
+    monkeypatch.setattr(pa, "build_profiles", partial_profiles)
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="does not exactly cover"):
+        scan_for_fragmented_families(families, pool, tmp_path, Config())
+    assert not (tmp_path / "vote_edges.tsv").exists()
+
+
 def test_scan_refuses_to_write_inflated_edges(tmp_path, monkeypatch):
     # Arrange: inflation looks like a family casting more votes than it has
     # members - frac above 1.0. That, not the edge count, is the symptom of
@@ -389,13 +503,14 @@ def test_scan_refuses_to_write_inflated_edges(tmp_path, monkeypatch):
         pa, "vote_edges",
         lambda h, f, c, min_frac=0.0: [("FamA", "FamB", 4, 1, 4.0)])
 
-    # Act
-    scan_for_fragmented_families(families, {"Sp1_a1": "MPEP"}, tmp_path,
-                                 Config())
+    pool = {g: "MPEP" for genes in families.values() for g in genes}
 
-    # Assert: the file exists and is empty rather than plausibly wrong
-    rows = (tmp_path / "vote_edges.tsv").read_text().splitlines()
-    assert rows == ["from\tto\tvotes\tfrom_size\tfrac"]
+    # Act / Assert: inflation is a failed scan, not a valid empty result.
+    with pytest.raises(RuntimeError, match="vote inflation"):
+        scan_for_fragmented_families(families, pool, tmp_path, Config())
+
+    assert not (tmp_path / "vote_edges.tsv").exists()
+    assert not (tmp_path / "fragmentation_clusters.tsv").exists()
 
 
 def test_scan_writes_more_edges_than_families(tmp_path, monkeypatch):

@@ -18,7 +18,8 @@ sys.modules["ete4"].Tree = object
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import Config
-from pipeline import round_yield, should_stop_iterating, should_skip_profile_tier
+from pipeline import (_round_placed_gene_ids, round_yield,
+                      should_skip_profile_tier, should_stop_iterating)
 
 
 def test_yield_is_genes_placed_over_the_pool_it_started_from():
@@ -28,6 +29,18 @@ def test_yield_is_genes_placed_over_the_pool_it_started_from():
 
 def test_an_empty_pool_yields_nothing_rather_than_dividing_by_zero():
     assert round_yield(n_genes_placed=0, pool_size=0) == 0.0
+
+
+def test_yield_includes_profile_assignment_into_an_older_family():
+    # The assigned gene is removed from the round's outlier pool but is not a
+    # member of a family created in this round.  It still counts as placement.
+    placed = _round_placed_gene_ids(
+        {"R2_OG1": {"Sp1_new", "Sp2_new"}}, {"Sp3_assigned_to_R1"},
+    )
+
+    assert placed == {"Sp1_new", "Sp2_new", "Sp3_assigned_to_R1"}
+    assert round_yield(len(placed), 10) == 0.3
+    assert should_stop_iterating([0.0, round_yield(len(placed), 10)], Config()) is False
 
 
 def test_a_round_below_the_threshold_stops_the_loop():

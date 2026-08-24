@@ -428,6 +428,26 @@ def test_build_profiles_reuses_valid_cache_and_rebuilds_on_member_change(
     assert (hmm_dir / "FamA.members").exists()
 
 
+def test_build_profiles_rebuilds_when_alignment_bytes_change_but_ids_do_not(
+    tmp_path, monkeypatch,
+):
+    # A corrected sequence can retain its gene id.  A membership-only cache
+    # key reused the HMM built from the old residues without any warning.
+    calls = []
+    _fake_hmm_tools(monkeypatch, calls)
+    aln = tmp_path / "fam.afa"
+    aln.write_text(">Sp1_g1\nMOLD\n")
+    families = {"FamA": {"Sp1_g1"}}
+    hmm_dir = tmp_path / "hmm_profiles"
+    cfg = Config(n_workers=1)
+
+    build_profiles(families, lambda fid: aln, hmm_dir, cfg)
+    aln.write_text(">Sp1_g1\nMNEW\n")
+    build_profiles(families, lambda fid: aln, hmm_dir, cfg)
+
+    assert calls == ["FamA", "FamA"]
+
+
 def test_build_profiles_rebuilds_zero_byte_cached_hmm(tmp_path, monkeypatch):
     # Arrange: zero-byte .hmm with a matching sidecar (the hmmer_rescue
     # cache bug treated any existing file as built)
@@ -439,7 +459,9 @@ def test_build_profiles_rebuilds_zero_byte_cached_hmm(tmp_path, monkeypatch):
     hmm_dir.mkdir()
     families = {"FamA": {"Sp1_g1"}}
     (hmm_dir / "FamA.hmm").write_text("")  # zero bytes
-    (hmm_dir / "FamA.members").write_text(pa._member_digest({"Sp1_g1"}) + "\n")
+    (hmm_dir / "FamA.members").write_text(
+        pa._profile_digest({"Sp1_g1"}, aln) + "\n"
+    )
 
     # Act
     db = build_profiles(families, lambda fid: aln, hmm_dir, Config(n_workers=1))
@@ -537,6 +559,70 @@ def test_run_profile_assignment_empty_pool_is_noop(tmp_path):
     # Assert
     assert assigned == {}
     assert still_unplaced == set()
+
+
+def test_profile_assignment_retry_removes_stale_rows_before_a_noop(tmp_path):
+    # Arrange: a prior attempt wrote an assignment, then the round was retried.
+    # Replaying this stale file after the retry completed would move a gene that
+    # the retry left in outlier_pool.fa.
+    outdir = tmp_path / "pa"
+    outdir.mkdir()
+    stale = outdir / "profile_assignments.tsv"
+    stale.write_text("gene_id\tfamily_id\nSp9_old\tFamA\n")
+
+    # Act: the empty-pool path returns before building profiles.
+    run_profile_assignment(
+        {"FamA": {"Sp1_g1"}}, {}, lambda fid: None, outdir, Config(),
+    )
+
+    # Assert
+    assert not stale.exists()
+
+
+def test_run_profile_assignment_refuses_hits_for_an_unsubmitted_gene(
+    tmp_path, monkeypatch,
+):
+    # Arrange: a stale domtblout can contain a perfectly plausible assignment
+    # for a gene absent from this round's pool. The old code added that gene to
+    # a family, inventing placed state outside the conservation equation.
+    db = tmp_path / "all_families.hmm"
+    db.write_text("stub")
+    monkeypatch.setattr(pa, "build_profiles", lambda *a, **k: db)
+    monkeypatch.setattr(pa, "_hmmsearch_domtblout", lambda *a, **k: a[2])
+    monkeypatch.setattr(
+        pa, "parse_domtblout",
+        lambda path: {"Sp9_stale": [_hit("Sp9_stale", "FamA")]},
+    )
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="Sp9_stale"):
+        run_profile_assignment(
+            {"FamA": {"Sp1_a"}}, {"Sp2_u": "MPEP"}, lambda f: None,
+            tmp_path / "pa", Config(),
+        )
+
+
+def test_run_profile_assignment_refuses_an_unknown_target_profile(
+    tmp_path, monkeypatch,
+):
+    # Arrange: this is the signature of reusing a profile DB from another
+    # family table. Unknown targets used to be returned as assignments and only
+    # skipped later by the pipeline caller.
+    db = tmp_path / "all_families.hmm"
+    db.write_text("stub")
+    monkeypatch.setattr(pa, "build_profiles", lambda *a, **k: db)
+    monkeypatch.setattr(pa, "_hmmsearch_domtblout", lambda *a, **k: a[2])
+    monkeypatch.setattr(
+        pa, "parse_domtblout",
+        lambda path: {"Sp2_u": [_hit("Sp2_u", "Ghost")]},
+    )
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="Ghost"):
+        run_profile_assignment(
+            {"FamA": {"Sp1_a"}}, {"Sp2_u": "MPEP"}, lambda f: None,
+            tmp_path / "pa", Config(),
+        )
 
 
 # ---------------------------------------------------------------------------
