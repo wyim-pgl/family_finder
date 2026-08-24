@@ -646,7 +646,10 @@ raw 단독으로 종간 비교하지 않는다(§1.5).
 - **foldseek CUDA 빌드** — 위키 `guide/installs.md` 갱신(`969a95f`)
 - 테스트 **449 → 749**
 
-### 폐기 결정 (2026-08-22)
+### 폐기 결정 (2026-08-22) — **2026-08-24 물리 격리 완료**
+
+폐기 판정물은 전부 `RETIRED_DO_NOT_USE/`(pronghorn·gpu)로 이동했다. **대장: `retired_data.md`.**
+
 **`data_12sp` / `data_14sp` / `data_17sp` 패널을 폐기한다** — 셋 다 더미 종트리로 돌아
 프루닝이 비활성이었다. 15sp(#35)가 유일한 프로덕션 런이다. **예외**: #43-2의 Ppc2 라벨
 판정은 `output_12sp_portulacineae`에서 나왔지만 근거가 **라운드-1 클러스터링의 orthogroup
