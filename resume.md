@@ -593,132 +593,129 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 
 ---
 
-## 7. /clear 후 세션 재개 가이드 (2026-08-24 저녁 기준)
+## 7. /clear 후 세션 재개 가이드 (2026-08-24 밤 기준)
 
-**정본 문서**: 이 파일 + `results_15sp.md`(v2) + `retired_data.md` + #47(완결 경로) + #26.
-⚠️ **모니터·백그라운드 waiter는 /clear와 함께 전부 죽는다** — 아래 잡들은 손으로 확인해야 한다.
+**정본**: 이 파일 · `results_15sp.md` · `AGENTS.md` · `retired_data.md` · #47 · #26.
+⚠️ **모니터·백그라운드 waiter는 /clear와 함께 전부 죽는다** — 손으로 확인할 것.
 
-### 즉시 확인할 것 — 돌고 있는 잡 3갈래
+### 지금 돌고 있는 것 — 한 갈래
 
 ```bash
-# 1) 병합 검증 캠페인 (prep 6099221 완료 → 배열 6099222 → 집계 6099223 afterany 체인)
-ssh pronghorn 'sacct -j 6099222,6099223 -X -n --format=JobID%18,State | tail -4;
-  ls ~/scratch/merge_validate/verdicts/*.rows.tsv 2>/dev/null | wc -l'   # /clear 시점 2,635/5,618, 실패 0
-# 집계 완료 표지: output_15sp_v2/cluster_verdicts.tsv 존재 + mv_agg 로그에 AGG_DONE
-
-# 2) codeml gapped 6체인 (6097933-38) — 95-taxa 1,428코돈, /clear 시점 반복 322-326, lnL 0/6
-ssh pronghorn 'grep -h "^lnL" ~/scratch/pepc_branchsite_20260823/gapped_*/results.txt | wc -l'
-# 판정은 exit code가 아니라 lnL 줄로 (§5). nogap 감도축(599코돈)은 완료: LRT 0.33, p 1.0 — 정본 아님
-
-# 3) fast46 예비 (6099193) — 🔴 1시간+ 반복 0으로 정체. 처분 필요 (아래)
-ssh pronghorn 'wc -l < ~/scratch/pepc_branchsite_20260823/fast46/alt/rub'
+# 전수 재스캔 6099988 (S2, 24×8코어) — 459,398 유전자 × 23,744 프로파일, cov 0.2
+ssh pronghorn 'ls ~/scratch/vote_rescan/dom/*.domtblout | wc -l'   # /clear 시점 23/24
+# 24개가 차면 build_edges.py 가 자동 실행된다 (run_when_done.sh, setsid로 분리)
+ssh pronghorn 'cat ~/scratch/vote_rescan/edges_run.log'
 ```
 
-### 결정·조치가 필요한 것
+`build_edges.py`가 내는 것: uncut 간선 + **컷별 클러스터 프로파일**(0.0/0.2/0.4/0.6의
+간선 수·클러스터 수·최대 성분·커버리지). **여기서 임계값을 골라야 한다** — 커버리지 단독은
+목적함수가 아니다(cut 0이면 거대 성분 하나로 100%가 된다). 최대 성분이 판정 비용을
+지배한다(119잎 클러스터 40–53초).
 
-1. ~~fast46 정체~~ **정정: 정체가 아니었다.** stdbuf 진단이 150초에 lnL0 = -56141.59(반복 시작점)까지
-   도달 — 정상 계산 중이었고 rub 0은 **파일 버퍼링**(np=82, 줄이 길어 flush 지연)이었다. 4차(6099193)는
-   그 오판으로 scancel했고 **5차 재제출됨** (`squeue --name=fast46`로 확인). ⚠️ **교훈: 진행 판정은
-   rub이 아니라 results.txt의 lnL 줄로** — 이 프로젝트가 codeml exit code에 대해 이미 세운 규칙과 같은
-   이유다. gapped가 먼저 수렴하면 예비는 scancel
-2. ~~캠페인~~ ✅ **완료**: 5,618/5,618 실패 0. INTERLEAVED 9,228 → 병합군 2,410 적용,
-   **`summary_v3.tsv` = 20,133 families**(−3,611), 유전자 459,398 보존·중복 0.
-   `results_15sp.md` **v3** 발행(`a85bb03`). MONOPHYLETIC 6,833은 미판정 유지
-3. **codeml lnL 8/8 되면**: LRT·p·BEB(BEB 헤더 이후만 파싱) → 폐기 수치(LRT 15.3631)와 비교 →
-   **HyPhy 삼중 발사**: `ssh gpu 'bash ~/pepc_hyphy_corrected/run_hyphy.sh'` (스테이징 완료:
-   교정 정렬 + fgA 10잎 {FG} 트리) → methods.md 반영 → #47 닫기
+**확인할 것**: `R2_OG0000359`(Mcry flagship, frac 2/9=0.22)가 **cut 0.2에서 들어오는가.**
+그게 재스캔이 메우려던 커버리지 구멍의 직접 증거다.
 
-### 이 세션(08-23~24)에서 확정된 것
+### 이 세션에서 뒤집힌 것 — 먼저 읽을 것
 
-- **results_15sp.md v2** (`e85606d`): comparable 배치율 인용 가능 / family 경계 2층 주석
-  (상호 쌍 3,614 = 하한 · 이웃 클러스터 5,618 = 상한) / rescue 확정 9,298 (HIGH 8,159 · PROV 1,139)
-- **rescue 게이트 보정** (`91dc96c`): 프로파일 커버리지 게이트는 rescue에서 판별력 0
-  (comparable 96% vs 깨진 모델 99% 거부, 전장 멤버 profile_cov 중앙값 0.22) → 기본 off
-- **클러스터 트리 검증 방법론** (`a5f44ed`): INTERLEAVED만 병합, MONOPHYLETIC은 명시적 미판정
-- **HyPhy-first 정책** (`84f54b8`): 가설 검정은 HyPhy, codeml은 legacy 수치·BEB 대조 전용 + fast-track만
-- **격리 완료 + 사건**: 폐기물 전부 `RETIRED_DO_NOT_USE/`(대장 `retired_data.md`).
-  ⚠️ 격리가 15sp 입력 24개(심볼릭 링크)를 끊었음 — 실파일 복사로 수리, pep 484,752 재검증
-  (`85ec6d9`). **격리/이동 직후 `find <활성 트리> -xtype l` 필수**
-- PEPC known-answers: 서브패밀리 정본은 `mM_repair/clan_corrected`(1E1 62 [95/91] · 1E2 15 [100/76],
-  둘 다 PROVISIONAL) — **15sp family 테이블은 서브패밀리 분리가 아니라 계통 축 파편화**
-- 테스트 449 → **881**
+1. **🔴 무근 트리 결함 (#51)** — `fragment_verdict`가 rooted 질문을 했다. 캠페인 트리
+   5,618개 재판정 시 **3,536개(62.9%) 판정이 바뀌고 전부 한 방향**(INTERLEAVED →
+   MONOPHYLETIC). 옛 규칙은 **과병합만** 할 수 있었다. **두 번 고쳤다**: `5231b2f`가 split
+   양쪽을 보게 했고(status는 불변이 됨), `ca2507f`가 "가장 작은 포함 split"이 여전히 루트
+   의존임을 잡아 pairwise 규칙으로 바꿨다. family **20,133 → 20,726**.
+2. **🔴 커버리지 구멍** — 트리를 본 family는 **16,061/23,744 = 67.6%**뿐. 나머지 7,683개는
+   "별개로 판정된" 게 아니라 **심판대에 오르지 못했다**(frac 0.600 컷).
+3. **`merge_min_profile_cov` 0.5 → 0.2** (`5c50a3e`) — 발행된 `vote_edges.tsv`가 실은 0.2로
+   만들어졌다(스윕 191/200 vs 0.5의 84/200). 게이트는 표를 **버리는 게 아니라 돌린다**.
+4. **20,133도 20,726도 확정이 아니다** — 두 결함이 **반대 방향**이라 스칼라로 상쇄하면
+   안 된다. `results_15sp.md`의 절차를 따를 것(원본 23,744에서 새로, 델타 덧붙이기 금지).
 
-### 알려진 정체·함정 (이 세션분, §5에도 등재)
+### PEPC — 목표는 달성됐고 형태가 바뀌었다
 
-- vote-inflation: domtblout은 프로파일 정렬 — 유전자 연속 가정 금지, 간선 ≤ family 수 불변식
-- `write_newick`이 이름 없는 내부 노드를 문자열 "None"으로 직렬화 → codeml `#1` 파싱 실패
-  (fast46 3차 실패 원인. `utils/newick.py` 수정 후보)
-- codeml ctl은 **한 줄에 옵션 하나**
-- `find ~/scratch`는 심볼릭 링크 시작점을 안 내려간다 (§5)
+- **파편화 확정**: clan이 **6조각 128유전자**. 15종 **전부가 3–5조각에 분산** → 파편화 축이
+  계통이 아니라 **서브패밀리**다. 서브패밀리는 정의상 단계통이라 **트리 규칙이 원리적으로
+  병합 못 한다**(6조각 중 2개만).
+- **외군으로 해결**: PPC4(BTPC)를 외군으로 주자 5개 PTPC 조각이 `SAME_FAMILY` →
+  **111유전자 한 family, 40초**. **두 CAM flagship이 처음으로 같은 family**
+  (`Ococ_OcoChr03G21370` + `Mcry_Mcr8G11630`).
+- **외군 정당화는 15sp만으로 된다**: 128유전자를 ATH 앵커 4개에 점수 매기면 **부호가 딱 한 번**
+  뒤집힌다(5조각 PPC1/2/3 쪽 700–1,000 bits, `R1_OG0009826` PPC4 쪽 812).
+- **채택된 구조 (사용자 결정)**: PTPC/BTPC를 **가르지 않고 한 family로 묶고 내부에서 나눈다.**
+  128잎 트리에서 **간선 하나로 깨끗이 분리**됨을 확인(둘 다 단일 clade). 그러면 경계 판정
+  축을 찾는 문제가 사라지고 **커버리지 문제만** 남는다.
 
+```
+family     PEPC (6조각 128)
+  ├ class  PTPC (111)   ← 트리 간선 하나
+  │   └ subfamily  1E1 / 1E2 / 2 / 3   ← Possvm + TreeCluster + HOG
+  └ class  BTPC (17)
+```
 
-### 선택압 검정 정책 (2026-08-24 사용자 결정)
-**HyPhy-first.** 가설 검정은 HyPhy(RELAX/MEME/aBSREL)로. codeml은 (1) 기존 발표 수치 재생성
-(2) BEB 문헌 대조가 필요할 때만 — 그것도 fast-track 서브셋으로, full clan 금지(102-taxa
-23h/100회 미수렴, 95-taxa 약 2일 실측). CLAUDE.md에 명문화.
+### 기각된 축 — 재제안 금지 (전부 실측)
 
-### 2026-08-22 세션에서 끝난 것
-- **#40 닫힘** — §1.6. 교정 세트 재추정 + methods.md §2.X.6 전면 갱신
-- **#39 닫힘** — 리팩터 4건(전부 바이트 동일 증명), 도구 버전 9개, 구조 응집도 통제
-- **#42 코드** — 좌표 검증 배선 · ID 통일 · `extract_signal_windows.py` 반입 · 불변코어 억제 보고 ·
-  잔기 공간 널 · 레퍼런스 자동 선정 · `region_disorder` 26개 정체 확정
-- **#38 두 축** — `steps/gene_structure.py`(**모델 품질 축**) · `steps/expression.py`, known-answer 통과
-- **#44 신설** — codeml 미설정 + 정본 산출물 부재
-- **foldseek CUDA 빌드** — 위키 `guide/installs.md` 갱신(`969a95f`)
-- 테스트 **449 → 749**
-
-### 폐기 결정 (2026-08-22) — **2026-08-24 물리 격리 완료**
-
-폐기 판정물은 전부 `RETIRED_DO_NOT_USE/`(pronghorn·gpu)로 이동했다. **대장: `retired_data.md`.**
-
-**`data_12sp` / `data_14sp` / `data_17sp` 패널을 폐기한다** — 셋 다 더미 종트리로 돌아
-프루닝이 비활성이었다. 15sp(#35)가 유일한 프로덕션 런이다. **예외**: #43-2의 Ppc2 라벨
-판정은 `output_12sp_portulacineae`에서 나왔지만 근거가 **라운드-1 클러스터링의 orthogroup
-배정**이고 라운드-1은 종트리를 쓰지 않으므로 유효하다.
-
-**5sp는 Helixer로 재실행하지 않는다** — 15sp가 이미 Helixer(27,583)다. 5sp는 MAKER(29,163,
-151 aa 하한)로 남기고 caveat만 명시한다.
-
-
-### 재사용할 도구
-| 도구 | 용도 |
+| 축 | 기각 근거 |
 |---|---|
-| `steps/gene_structure.py` | 인트론 위치 → **유전자-모델 품질 플래그**. 주석 프로그램 공변량 필수, 미상이면 수치 미출력 |
-| `steps/expression.py` | 종 **내부** 발현 점유율. 매트릭스 없는 종은 `expression unavailable`, 종간 합계는 산출하지 않음 |
-| `steps/gff_join.py` | pep ID ↔ GFF ID 조인, `match_ids` 경유 + 미매칭 상한 |
-| `extract_signal_windows.py` | DeepLoc 주의창 → 정렬 컬럼, 모든 행에 `aln_stamp` |
-| `config.resolve_tool()` | 도구 경로 해석 — 없으면 **설정 키 이름을 대며 실패**. 맨 이름은 재현 불가를 설정에 넣는 것 |
-| `~/bin/foldseek-cuda/bin/foldseek` (gpu) | CUDA 빌드(`cudaMalloc` 심볼 39건). ⚠️ CPU 빌드와 `version` 문자열이 같다. ⚠️⚠️ **ProstT5 `createdb`에서는 `--gpu 1`이 조용히 무시된다** — 37.6배는 여기 해당하지 않고 CPU로 떨어진다(§5, 2026-08-24 재측정) |
-| `build_supermatrix.py` | 런 자체의 단일카피 마커로 코돈 supermatrix. `--markers genecount`는 **프루닝·종트리와 독립** |
-| `classify_unplaced.py` | 미배치 유전자를 5판정으로 분류 (§1.5) |
-| `utils/alignment.py` | 컬럼 점유율·**그룹 인지 선택**·`column_map` |
-| `steps/subfamily.coverage_suppressed()` | `min_cover`가 조용히 스킵한 컬럼 보고 |
-| `steps/subfamily.sdp_core_relationship()` | 레퍼런스 없는 코어 판정. `no_interpretation_available` 명시 출력 |
-| `steps/esmfold_chunks.py` | **tier-3 채택 경로.** PDB 산출물 5조건 검증 + `.done` 센티넬 + `estimate_runtime` (측정 상수 내장, `MAX_LEN=1100`의 근거 포함) |
-| `steps/prostt5_chunks.py` | 3Di DB 분할 + `verify_3di_db` 5조건 하드 실패 (ProstT5는 미채택, 패턴은 유효) |
-| `utils/gene_ids.py` | `canon_gene_id` / `strip_isoform` / `match_ids` — 매칭 실패율 상한, 충돌 감지 |
-| `utils/alignment.alignment_id()` / `translate_columns()` | 잔기 좌표계 stamp + 다리 서열 경유 번역 |
-| `steps/subfamily.anchor_transferability()` | 레퍼런스 서브패밀리 이름이 전이 가능한지 사전 판정 |
-| `annotation_matrix.py` / `annotate_stack.py` | 6축 병합 / 전 축 1커맨드 |
-| `region_disorder.py` | 영역 pLDDT를 **비-focal 대조군**과 비교 |
-| `beb_cross.py` | codeml BEB × 신호 윈도우 |
-| `measure_v2.py` | 종별 미배치율 — **`--pep-dir`로 길이 층화 필수** |
-| `steps/hmm_chunks.py` | SLURM 청크 실행 + 실패 시 병합 거부 |
-| `fs_transfer.py` | foldseek AFDB 히트 → UniProt 기능 전이 |
+| **Pfam 도메인** | PPC1/2/3/4가 **아키텍처 동일**(PEPcase + PEPcase_2). family 경계는 흔히 도메인 층위 **아래**에 있다 |
+| **구조 — AFDB TM** | PTPC−BTPC 중앙값 **+0.033**(최대 0.079). 절단 모델에 오염(411 aa ppc-1E2가 BTPC에 TM 0.943) |
+| **구조 — ProstT5 3Di** | within-PTPC 4,290 vs cross 3,882, **비 1.11**. 독립 두 표현이 같은 결론 |
+| **Ks/Ka 거리로 경계** | 단일카피는 종분화에서 갈라지고 family는 더 오래된 파랄로그를 담는다 → **하한만** 준다. Ka/Ks는 전 쌍 0.311로 평탄(거리가 아님) |
+| **아래-컷 간선에서 외군** | 클러스터가 **연결성분**이라 나가는 간선이 없다. C0297의 4간선 전부 내부 |
+| **HOG를 family 계층으로** | OG 28,150 → N0 HOG 28,161, **여러 OG를 담은 HOG 0건**. 세분만 하고 라운드별이다 |
+| **`prune.py` 통계량 승격** | family별 중앙값 정규화 + **동종 파랄로그 스킵** → 척도가 family 내부에서만 의미 |
 
-### 데이터가 어디 있는가 (오래 못 찾았던 것)
-`~/scratch/data/opuntia_coche/revision/` = **Opuntia 원고 프로젝트**. family_finder에는 파생
-`pep/`·`cds/`만 오므로 유전체·좌표·출처는 전부 여기서 찾을 것.
-- `jcvi/` — **121개 쌍 synteny** (`.bed`/`.cds`/`.anchors`/`.lifted.anchors`/`.pdf`)
-- `species_annotation_table.tsv` — 11종 메타데이터 (**Ccac·Dcar·Sof·Sole 누락**)
-- `method.md` — **Ccac = *Cistanthe cachinalensis*, Montiaceae, 통성 CAM** (Chomentowska
-  et al. 2025 *New Phytologist* 247:388-407, PRJNA1181828). 선인장이 **아니다**
-- `gff_external/`, `genome_external/` — Dcar, Sof, Sole
+### 남은 축 하나 — "general하게 이용"
 
-`~/scratch/data/lab_reference_genome/` — Mcry 유전체+GFF(`iceplant_*`), Ococ, Pitaya(=Sund),
-Bvul, 그리고 **Mcry 발현 시계열**(`iceplant_*.featurecounts.tpm.tsv*`).
-`~/scratch/data/opuntia_coche/annotation/purged.fa.mod.EDTA.TElib.fa` — EDTA TE 라이브러리
-(***Opuntia* 유래 — 종간 비교에 쓰지 말 것**, §5 표 참조)
+**참조 DB 라벨을 자동으로 읽는 것.** 사람이 "PPC4는 BTPC"임을 안 게 아니라
+**AFDB 헤더에 적혀 있었다**(`Phosphoenolpyruvate carboxylase 4`). 파일을 읽는 건
+큐레이션이 아니라 자동화다. 그리고 **명명 규약이 계층을 담는다** — 어간이 family,
+접미 숫자가 서브패밀리.
+
+- 1·2단계(AFDB 검색 → UniProt `protein_name` 전이)는 **`fs_transfer.py`에 이미 있다**
+  (PEPC clan 100개 중 99개 EC 4.1.1.31)
+- 3·4단계(어간=family, 접미=subfamily)만 새로 필요
+- **상한은 참조 커버리지**이고 잴 수 있다 — `~/scratch/vote_rescan/family_reps.py`가
+  family당 대표(가장 긴 멤버)를 뽑아 둔다. AFDB 검색해 `protein_name` 커버리지를 보면
+  이 방법의 가부가 결정된다
+
+### ⚠️ foldseek — 로그가 아니라 시계로 판정할 것
+
+`--gpu`는 파싱되지만(`--gpu 999`는 거부) ProstT5 경로에 닿지 않는다. `Use GPU 0`은 **다른
+mmseqs 노브**이고 실제 구동은 ggml의 `CUDA0` 백엔드다. **이 로그를 믿고 다섯 번 오진했다.**
+
+```
+112서열, 동일 커밋 18478813, 동일 심볼(39), 둘 다 "Use GPU 0"
+  기존 ~/bin/foldseek-cuda        497초
+  -DENABLE_CUDA=1 재빌드           12초    ← 41배
+```
+
+재빌드본: `~/scratch/bin/foldseek_src/build/src/foldseek`.
+전수 459K: **23일 → 약 14시간.** 재빌드 함정 2건(`rust` 누락, CUDA 11.5/12.6 혼재)은
+`steps/prostt5_chunks.py` 상단.
+
+### codeml vs HyPhy — 충돌, HyPhy 채택
+
+fast46(40 taxa, 이름과 달리 46 아님) 완주: LRT **27.11**, p 9.6e-08, BEB 5사이트.
+**실행은 유효**(`#1`이 depth-10 내부 노드, 잎 10개가 fgA와 일치). 그런데 MEME은 FDR 통과 0,
+aBSREL은 stem 비유의, RELAX는 **이완**(p 5.9e-13). branch-site Model A의 ω₂≥1이 이완을
+흡수한 것으로 읽고 **HyPhy를 채택**. **BEB 사이트는 인용하지 않는다.**
+gapped 6체인(6097933-38)은 정책 위반이라 scancel.
+
+### 닫은 이슈 5건 / 남은 것
+
+닫음: **#48**(resume 유전자 소실 3경로) · **#35**(15sp v2 프로덕션 런) · **#49**(실패가
+completed) · **#51**(무근 판정 등 3건) · **#50**(캠페인 3건).
+남음: #47 #44 #43 #38 #34 #33 #26 #25.
+
+### 테스트 881 → 1,019, 커밋 23건
+
+새 모듈: `validate_families.py`(캠페인 CLI) · `steps/hog.py`(서브패밀리 축) ·
+`steps/domain.py`(Pfam 음성) · `measure_ks.py` · `data/ks_baseline_15sp.tsv`(105 종쌍).
+
+### 이 세션의 방법 교훈
+
+**재보지 않고 단언해서 다섯 번 틀렸다** — `Dcar`를 약어로 종 추정(실제 *Dianthus*,
+종트리가 이미 반증하고 있었다), Ks 포화 강도 두 번, ESMFold chunk_size 미설정 가정
+(이미 설정돼 있었다), foldseek GPU를 로그로 판정. **AGENTS.md의 "조용한 실패" 규칙이
+도구 사용에도 그대로 적용된다.**
 
 ## 8. 재현 정보
 
