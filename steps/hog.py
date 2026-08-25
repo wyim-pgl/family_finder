@@ -87,6 +87,14 @@ def parse_hog_table(path) -> Dict[str, str]:
             if not line.strip():
                 continue
             parts = line.rstrip("\n").split("\t")
+            # A truncated row (killed writer, format shift) silently drops
+            # its trailing species columns — those genes would vanish from
+            # the partition instead of the file being refused.
+            if len(parts) != len(header):
+                raise ValueError(
+                    f"{path}:{lineno}: row has {len(parts)} columns, header "
+                    f"has {len(header)}"
+                )
             hog = parts[0]
             for cell in parts[_FIXED_COLUMNS:]:
                 for gene in cell.split(","):

@@ -167,3 +167,17 @@ def test_nested_partitions_returns_one_partition_per_level():
 def test_nested_partitions_is_empty_for_an_empty_family():
     # Arrange / Act / Assert
     assert nested_partitions([], [("N0", {"a": "H1"})]) == [("N0", {})]
+
+
+def test_truncated_row_is_refused_not_silently_shortened(tmp_path):
+    import pytest
+
+    from steps.hog import parse_hog_table
+
+    p = tmp_path / "N1.tsv"
+    p.write_text(
+        "HOG\tOG\tGene Tree Parent Clade\tSpA\tSpB\n"
+        "N1.HOG0000001\tOG0000001\tn0\tSpA_g1\n"   # SpB column lost
+    )
+    with pytest.raises(ValueError, match="columns"):
+        parse_hog_table(p)

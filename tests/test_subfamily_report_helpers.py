@@ -338,3 +338,46 @@ def test_read_groups_skips_a_header_row(tmp_path):
 
     assert groups == {"SF_A": ["Ococ_g1", "Ococ_g2"]}
     assert "subfamily" not in groups
+
+
+def test_read_groups_rejects_a_gene_in_two_subfamilies(tmp_path):
+    from subfamily_report import read_groups
+
+    p = tmp_path / "groups.tsv"
+    p.write_text("Ococ_g1\tSF_A\nOcoc_g1\tSF_B\n")
+
+    with pytest.raises(ValueError, match="both"):
+        read_groups(p)
+
+
+def test_read_groups_tolerates_an_identical_duplicate_row(tmp_path):
+    from subfamily_report import read_groups
+
+    p = tmp_path / "groups.tsv"
+    p.write_text("Ococ_g1\tSF_A\nOcoc_g1\tSF_A\n")
+
+    assert read_groups(p) == {"SF_A": ["Ococ_g1"]}
+
+
+def test_cross_tree_membership_requires_support_qualified_recovery(monkeypatch):
+    # A replicate that finds the same leaf set at 40/60, or behind a rival,
+    # did not establish the membership there and must not count as agreement.
+    import subfamily_report as sr
+
+    rows = [
+        {"label": "SF_A", "members": ["g1", "g2"], "transferable": True,
+         "sh_alrt": 100.0, "ufboot": 98.0},
+        {"label": "SF_B", "members": ["g3", "g4"], "transferable": True,
+         "sh_alrt": 40.0, "ufboot": 60.0},
+        {"label": "SF_C", "members": ["g5", "g6"], "transferable": False,
+         "sh_alrt": 100.0, "ufboot": 99.0},
+        {"label": "SF_D", "members": ["g7"], "transferable": True,
+         "sh_alrt": None, "ufboot": None},
+    ]
+    monkeypatch.setattr(sr, "anchor_transferability",
+                        lambda newick, anchors, query_prefixes=None: rows)
+    monkeypatch.setattr(sr.Path, "read_text", lambda self: "(fake);")
+
+    out = sr._cross_tree_memberships(["rep1=fake.nwk"], anchors={}, query_prefixes=None)
+
+    assert out == {"rep1": {"SF_A": ["g1", "g2"]}}

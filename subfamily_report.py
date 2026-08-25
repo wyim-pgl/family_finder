@@ -52,6 +52,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from steps.subfamily import (  # noqa: E402
+    GRADE_MIN_SH_ALRT,
+    GRADE_PROVISIONAL_MIN_UFBOOT,
     anchor_transferability,
     load_taxonomy,
     parse_pair_identities,
@@ -81,6 +83,7 @@ from utils.seqio import read_fasta  # noqa: E402
 
 def read_groups(path: Path) -> dict:
     groups: dict = {}
+    seen: dict = {}
     for line in Path(path).read_text().splitlines():
         if not line.strip() or line.startswith("#"):
             continue
@@ -89,6 +92,16 @@ def read_groups(path: Path) -> dict:
         # data invents a gene named "gene_id" in a phantom subfamily.
         if gene in ("gene", "gene_id"):
             continue
+        if gene in seen and seen[gene] != subfamily:
+            raise ValueError(
+                f"{path}: gene {gene!r} is assigned to both {seen[gene]!r} "
+                f"and {subfamily!r} — a combined groups file carrying two "
+                "labels for one gene must be resolved, not split across "
+                "subfamilies"
+            )
+        if gene in seen:
+            continue
+        seen[gene] = subfamily
         groups.setdefault(subfamily, []).append(gene)
     return groups
 
@@ -256,7 +269,14 @@ def _cross_tree_memberships(specs, anchors, query_prefixes) -> dict:
     """`NAME=tree.nwk` -> {NAME: {label: members}}.
 
     The same clade rule is run on each independent dataset, so "consistent"
-    means the membership was RECOVERED there, not asserted by hand.
+    means the membership was RECOVERED there, not asserted by hand — and
+    "recovered" requires the replicate's OWN clade to be transferable and
+    support-qualified. A replicate that finds the same leaf set at 40/60,
+    or behind a blocking rival, did not establish the membership in that
+    dataset; counting it as agreement would let it promote the main tree's
+    grade to HIGH on evidence the second dataset never provided. Filtered
+    labels are simply absent from that dataset's dict, which the agreement
+    check already reads as "not recovered" (disagreeing).
     """
     out: dict = {}
     for spec in specs or []:
@@ -265,7 +285,13 @@ def _cross_tree_memberships(specs, anchors, query_prefixes) -> dict:
             raise ValueError(f"--cross-tree wants NAME=path, got {spec!r}")
         rows = anchor_transferability(Path(path).read_text(), anchors,
                                       query_prefixes=query_prefixes)
-        out[name] = {r["label"]: r["members"] for r in rows if r["label"]}
+        out[name] = {
+            r["label"]: r["members"] for r in rows
+            if r["label"] and r["transferable"]
+            and r["sh_alrt"] is not None and r["ufboot"] is not None
+            and r["sh_alrt"] >= GRADE_MIN_SH_ALRT
+            and r["ufboot"] >= GRADE_PROVISIONAL_MIN_UFBOOT
+        }
     return out
 
 

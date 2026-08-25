@@ -1065,6 +1065,12 @@ def structure_coherence(
     member_of = {}
     for group_id, members in groups.items():
         for m in members:
+            if m in member_of and member_of[m] != group_id:
+                raise ValueError(
+                    f"gene {m!r} belongs to both {member_of[m]!r} and "
+                    f"{group_id!r} — overlapping groups would silently "
+                    "assign it to whichever was processed last"
+                )
             member_of[m] = group_id
 
     fit, diagnostics = None, None
