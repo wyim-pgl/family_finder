@@ -83,6 +83,9 @@ class Config:
     # a merge needs tree validation. Off by default: it costs one hmmsearch of
     # every placed gene against every family profile.
     merge_scan: bool = False
+    # Budget cap for nomination clusters handed to the tree arbiter. This is a
+    # cost guard, not a family boundary: the tree decides what merges.
+    max_cluster_genes: int = 500
     # Rescue-specific profile-coverage floor (issue #47). 0.0 = off, on purpose:
     # measured on the 15-species rescue, healthy full-length members cover a
     # median 0.22 of their family profile (profile length = alignment columns,
