@@ -41,12 +41,15 @@ def index_families(families: Dict[str, Set[str]]) -> Dict[str, str]:
     return index
 
 
+def _bases(gene: str, species: Optional[str]) -> List[str]:
+    return ([gene, f"{species}_{gene}"]
+            if species and not gene.startswith(f"{species}_")
+            else [gene])
+
+
 def _candidates(gene: str, species: Optional[str]) -> Iterable[str]:
     """Deterministic id variants: as-is, prefixed, +/- isoform suffixes."""
-    bases = [gene]
-    if species and not gene.startswith(f"{species}_"):
-        bases.append(f"{species}_{gene}")
-    for base in bases:
+    for base in _bases(gene, species):
         yield base
         for suffix in _ISOFORM_SUFFIXES:      # annotation locus, pipeline isoform
             yield base + suffix
@@ -58,12 +61,36 @@ def _candidates(gene: str, species: Optional[str]) -> Iterable[str]:
 def match_gene(
     gene: str, index: Dict[str, str], species: Optional[str] = None
 ) -> Optional[Tuple[str, str]]:
-    """Resolve an annotation gene id to (pipeline_gene_id, family_id)."""
+    """Resolve an annotation gene id to (pipeline_gene_id, family_id).
+
+    An exact match (as given, or species-prefixed) always wins. Suffix
+    variants are only accepted when they resolve to ONE pipeline gene: a run
+    holding both Mcry_g3.t1 and Mcry_g3.1 makes a bare `g3` ambiguous, and
+    first-hit order would silently pick whichever suffix is tried first —
+    possibly a different family. Ambiguous ids are reported and treated as
+    unmatched so they surface in unmatched_genes.txt instead of landing on
+    the wrong family.
+    """
+    bases = _bases(gene, species)
+    for base in bases:
+        family = index.get(base)
+        if family is not None:
+            return base, family
+    hits: Dict[str, str] = {}
     for candidate in _candidates(gene, species):
         family = index.get(candidate)
-        if family is not None:
-            return candidate, family
-    return None
+        if family is not None and candidate not in hits:
+            hits[candidate] = family
+    if not hits:
+        return None
+    if len(hits) > 1:
+        logger.warning(
+            f"annotation id {gene!r} matches {len(hits)} distinct pipeline "
+            f"genes ({sorted(hits)}) — ambiguous, treated as unmatched"
+        )
+        return None
+    ((candidate, family),) = hits.items()
+    return candidate, family
 
 
 def map_annotations(
@@ -145,19 +172,31 @@ def map_orthology(
 
 def combine_sources(
     direct_rows: List[dict], ortho_rows: List[dict]
-) -> List[dict]:
+) -> Tuple[List[dict], List[dict]]:
     """Merge the two evidence layers; per gene, direct suppresses orthology.
 
     A gene annotated directly already has curated evidence — its orthology
-    transfer would only echo (or contradict) it with weaker support, so it
-    is dropped rather than double-counted.
+    transfer would only echo it with weaker support, so it is dropped rather
+    than double-counted. But a suppressed row that CONTRADICTS the direct
+    description is not an echo: it is the two naming methods disagreeing on
+    the same gene, and dropping it silently hides that. Returns
+    (rows, conflicts) — each conflict is the suppressed orthology row plus a
+    `direct_description` column carrying what it disagreed with.
     """
-    directly_annotated = {row["pipeline_gene"] for row in direct_rows}
-    kept = [
-        row for row in ortho_rows
-        if row["pipeline_gene"] not in directly_annotated
-    ]
-    return list(direct_rows) + kept
+    direct_desc: Dict[str, Set[str]] = {}
+    for row in direct_rows:
+        direct_desc.setdefault(row["pipeline_gene"], set()).add(
+            row["description"])
+    kept: List[dict] = []
+    conflicts: List[dict] = []
+    for row in ortho_rows:
+        descs = direct_desc.get(row["pipeline_gene"])
+        if descs is None:
+            kept.append(row)
+        elif row["description"] not in descs:
+            conflicts.append(
+                {**row, "direct_description": ";".join(sorted(descs))})
+    return list(direct_rows) + kept, conflicts
 
 
 def name_groups(

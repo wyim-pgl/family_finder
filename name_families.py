@@ -60,7 +60,14 @@ def read_orthology_tsv(path: Path) -> dict:
         fields = line.rstrip("\n").split("\t")
         if len(fields) < 3 or fields[0] == "gene_id":
             continue
-        out[fields[0]] = (fields[1], fields[2])
+        value = (fields[1], fields[2])
+        if fields[0] in out and out[fields[0]] != value:
+            raise ValueError(
+                f"{path}: duplicate gene id {fields[0]!r} with conflicting "
+                f"rows {out[fields[0]]} vs {value} — last-wins would hide "
+                "the disagreement"
+            )
+        out[fields[0]] = value
     return out
 
 
@@ -72,6 +79,13 @@ def read_two_col_tsv(path: Path) -> dict:
         fields = line.rstrip("\n").split("\t")
         if len(fields) < 2:
             continue
+        if fields[0] in out and out[fields[0]] != fields[1]:
+            raise ValueError(
+                f"{path}: duplicate key {fields[0]!r} with conflicting "
+                f"values {out[fields[0]]!r} vs {fields[1]!r} — a combined "
+                "subfamily file carrying two labels for one gene must be "
+                "resolved, not last-wins"
+            )
         out[fields[0]] = fields[1]
     return out
 
@@ -132,11 +146,16 @@ def main():
             orthology, families, groups=groups, species=args.species
         )
         n_before = len(rows)
-        rows = combine_sources(rows, ortho_rows)
+        rows, conflicts = combine_sources(rows, ortho_rows)
         unmatched = unmatched + ortho_unmatched
         print(f"{len(orthology)} orthology genes -> "
               f"{len(rows) - n_before} rows kept "
               f"(direct suppresses same-gene orthology)")
+        write_tsv(conflicts, outdir / "naming_conflicts.tsv")
+        if conflicts:
+            print(f"  WARNING: {len(conflicts)} suppressed orthology row(s) "
+                  "CONTRADICT the direct annotation for the same gene — "
+                  "see naming_conflicts.tsv")
 
     write_tsv(rows, outdir / "gene_to_family.tsv")
     (outdir / "unmatched_genes.txt").write_text(
@@ -156,6 +175,19 @@ def main():
         named_sub = name_groups(rows, key="subfamily", weights=weights,
                                 group_sizes=sub_sizes)
         write_tsv(named_sub, outdir / "subfamily_names.tsv")
+        # Subfamily coverage divides by LABELED members only, so partial
+        # labeling is invisible in the coverage column: a 20-member family
+        # with 12 labels can show coverage 1.0 on every subfamily. Count the
+        # unlabeled members and say so.
+        all_members = {g for members in families.values() for g in members}
+        unlabeled = sorted(all_members - set(groups))
+        (outdir / "unlabeled_subfamily_members.txt").write_text(
+            "\n".join(unlabeled) + ("\n" if unlabeled else ""))
+        if unlabeled:
+            print(f"  WARNING: {len(unlabeled)}/{len(all_members)} family "
+                  "members carry no subfamily label — subfamily coverage "
+                  "denominators count labeled members only; the unlabeled "
+                  "are listed in unlabeled_subfamily_members.txt")
         thin = [n for n in named_sub
                 if n["coverage"] is not None and n["coverage"] < 0.5]
         if thin:

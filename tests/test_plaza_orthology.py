@@ -72,12 +72,17 @@ def test_combine_sources_direct_wins_per_gene():
         {"Mcry_g1": ("AT1G53310", "PPC1"), "Ococ_x1": ("AT1G53310", "PPC1")},
         FAMILIES,
     )
-    combined = combine_sources(direct, ortho)
+    combined, conflicts = combine_sources(direct, ortho)
     by_gene = {r["pipeline_gene"]: r for r in combined}
     # Mcry_g1 keeps only its direct annotation; Ococ_x1 orthology survives
     assert by_gene["Mcry_g1"]["source"] == "direct"
     assert by_gene["Ococ_x1"]["source"] == "orthology"
     assert len(combined) == 2
+    # The suppressed Mcry_g1 orthology row DISAGREES with the direct
+    # description, so it must surface as a conflict, not vanish.
+    assert len(conflicts) == 1
+    assert conflicts[0]["pipeline_gene"] == "Mcry_g1"
+    assert conflicts[0]["direct_description"] == "PEPC kinase"
 
 
 def test_name_groups_weighted_direct_outweighs_orthology():

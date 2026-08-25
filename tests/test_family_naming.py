@@ -85,3 +85,49 @@ def test_name_groups_by_subfamily_skips_blank():
     ]
     named = name_groups(rows, key="subfamily")
     assert len(named) == 1 and named[0]["group_id"] == "SF_A"
+
+
+def test_ambiguous_suffix_match_is_unmatched_not_first_hit(caplog):
+    # Both Mcry_g9.t1 and Mcry_g9.1 exist, in DIFFERENT families; a curated
+    # table saying just g9 must not be resolved by suffix trial order.
+    families = {
+        "R1_OG0000010": {"Mcry_g9.t1"},
+        "R1_OG0000011": {"Mcry_g9.1"},
+    }
+    index = index_families(families)
+
+    import logging
+    with caplog.at_level(logging.WARNING, logger="family_finder"):
+        assert match_gene("g9", index, species="Mcry") is None
+    assert any("ambiguous" in rec.message for rec in caplog.records)
+
+
+def test_exact_match_beats_suffix_ambiguity():
+    families = {
+        "R1_OG0000010": {"Mcry_g9"},
+        "R1_OG0000011": {"Mcry_g9.1"},
+    }
+    index = index_families(families)
+    assert match_gene("g9", index, species="Mcry") == ("Mcry_g9", "R1_OG0000010")
+
+
+def test_combine_sources_surfaces_contradicting_orthology():
+    from steps.family_naming import combine_sources
+
+    direct = [{"pipeline_gene": "Mcry_g1", "description": "PEPC",
+               "source": "direct"}]
+    ortho_agree = {"pipeline_gene": "Mcry_g1", "description": "PEPC",
+                   "source": "orthology"}
+    ortho_conflict = {"pipeline_gene": "Mcry_g1", "description": "PTPC",
+                      "source": "orthology"}
+    ortho_other = {"pipeline_gene": "Mcry_g2", "description": "MYB",
+                   "source": "orthology"}
+
+    rows, conflicts = combine_sources(
+        direct, [ortho_agree, ortho_conflict, ortho_other])
+
+    assert ortho_other in rows                       # unsuppressed passes through
+    assert ortho_agree not in rows                   # echo is dropped quietly
+    assert len(conflicts) == 1                       # contradiction is surfaced
+    assert conflicts[0]["description"] == "PTPC"
+    assert conflicts[0]["direct_description"] == "PEPC"
