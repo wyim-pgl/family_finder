@@ -330,7 +330,7 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 | **`.hmm` glob이 hmmpress 인덱스를 삼킴** | `*.hmm*`로 쓰면 `.h3i`/`.h3m`까지 연결된다. 그리고 정렬이 사전순이라 **`R10_`이 `R1_`보다 앞선다**(`'0' < '_'`) | E-value 타이브레이크(CLAUDE.md)와 같은 함정이 연결 순서에도 있다. 테스트로 고정할 것 |
 |---|---|---|
 | foldseek `createdb`가 **0.00초**에 끝남 | 3Di 없이 **아미노산 DB**를 뱉는다(로그엔 경로가 정상 출력됨). ⚠️ **2026-08-22 정정: 원인이 `.gguf` 파일 경로가 아니다.** 같은 바이너리·가중치·머신에서 `.gguf`를 줘도 72.75초 동안 정상 3Di를 만든다. 원 관측은 **불완전한 `.gguf` 다운로드**를 잡았을 가능성이 크다(소급 확인 불가) | 원인과 무관하게 **상태**로 판정: `steps/prostt5_chunks.py`의 `verify_3di_db()` — `_ss` 없음/빈 파일/인덱스 없음/**AA DB와 바이트 동일**/엔트리 수 불일치를 전부 하드 실패 |
-| **foldseek GPU 여부를 로그로 판정하지 말 것 — 시계로 판정하라 (2026-08-24 확정)** | `--gpu`는 파싱되지만(`--gpu 999`는 거부) ProstT5 경로에 닿지 않는다. `Use GPU 0`은 **다른 mmseqs 노브**이고, 실제 구동은 ggml이 등록하는 `CUDA0` 백엔드다. 이 로그를 믿고 **다섯 번 오진**했다 | **실행 시간으로 판정.** 112서열, 동일 커밋(`18478813`)·동일 심볼(39)·둘 다 `Use GPU 0`: 기존 `~/bin/foldseek-cuda` **497초** vs `-DENABLE_CUDA=1` 재빌드 **12초** = **41배**. 도구 표의 37.6배는 맞았고 우리가 못 쓰고 있었을 뿐. 전수 459K: 23일 → **약 14시간** |
+| **foldseek GPU 여부를 로그로 판정하지 말 것 — 시계로 판정하라 (2026-08-24 확정)** | ~~`--gpu`는 파싱되지만 ProstT5 경로에 닿지 않는다~~ **2026-08-25 정정: 재빌드 바이너리에서는 플래그가 경로를 결정한다** — `--gpu 1` 없이는 CPU ProstT5ForkRunner(fork 워커가 각자 ~3GB 모델 로드 → 62GB×16 전멸 → 부모가 SysV 큐 msgsnd에 영원히 블록, CPU 0초·에러 0). `Use GPU 0`은 **다른 mmseqs 노브**이고, 실제 구동은 ggml이 등록하는 `CUDA0` 백엔드다. 이 로그를 믿고 **다섯 번 오진**했다 | **실행 시간으로 판정.** 112서열, 동일 커밋(`18478813`)·동일 심볼(39)·둘 다 `Use GPU 0`: 기존 `~/bin/foldseek-cuda` **497초** vs `-DENABLE_CUDA=1` 재빌드 **12초** = **41배**. 도구 표의 37.6배는 맞았고 우리가 못 쓰고 있었을 뿐. 전수 459K: 23일 → **약 14시간** |
 | **재빌드 함정 2건** | ① `rust`가 위키 conda 목록에 없는데 mmseqs corrosion이 요구 → 없으면 cmake `Configuring incomplete`. ② 이 호스트에 CUDA 런타임 3벌(11.5 `/usr/lib`, 12.6 `/usr/local`, 12.6 conda)이고 맨 `nvcc`는 **11.5**가 잡힌다 → `CUDA_CUDART`를 12.x로 명시 안 하면 `undefined reference to cudaGetDeviceProperties_v2`(CUDA 12 심볼)로 링크 실패 | 레시피는 `steps/prostt5_chunks.py` 상단 |
 | ~~`--gpu 1`을 줬는데 GPU 0%~~ ~~기각 2026-08-22~~ **← 이 기각이 틀렸다 (위 행 참조)** | ~~`No GPU devices found`로 exit 1, 빌드에 CUDA 없음~~ | 재측정에서 exit 0이고 CUDA 심볼 39건. `ldd` 대신 `strings`를 쓰라는 §5의 다른 규칙은 유효하나, 그 규칙으로 내린 결론이 반대로 갔다 |
 | codeml 잡이 SLURM에 **FAILED** | `error: end of tree file` — 결과를 다 쓴 **뒤** exit 1. **3회 재현** | SLURM 상태 말고 `lnL` 줄 + BEB 블록 존재로 판정 |
@@ -678,8 +678,13 @@ family     PEPC (6조각 128)
 
 ### ⚠️ foldseek — 로그가 아니라 시계로 판정할 것
 
-`--gpu`는 파싱되지만(`--gpu 999`는 거부) ProstT5 경로에 닿지 않는다. `Use GPU 0`은 **다른
-mmseqs 노브**이고 실제 구동은 ggml의 `CUDA0` 백엔드다. **이 로그를 믿고 다섯 번 오진했다.**
+~~`--gpu`는 파싱되지만 ProstT5 경로에 닿지 않는다~~ — **2026-08-25 정정: 재빌드 바이너리에서는
+`--gpu 1`이 경로를 결정한다.** 플래그 없이는 CUDA 빌드도 CPU ProstT5ForkRunner로 들어가고, 그
+러너는 스레드 수만큼 fork해 **워커마다 ~3GB 모델을 로드**한다(62GB 박스 × 16 = 워커 전멸,
+부모는 가득 찬 SysV 큐에 msgsnd로 영원히 블록 — CPU 0초, 에러 없음, `Use GPU 0`은 그대로 찍힘).
+진단: `ps` TIME 0초 + wchan `do_msgsnd` + GPU 0%; 정리: `ipcrm -q`. `--gpu 1` 실측
+**0.034 s/서열**(10K 청크 340초). `Use GPU 0`은 **다른 mmseqs 노브**이고 실제 구동은 ggml의
+`CUDA0` 백엔드다. **이 로그를 믿고 다섯 번 오진했다** — 시계 판정 원칙은 그대로다.
 
 ```
 112서열, 동일 커밋 18478813, 동일 심볼(39), 둘 다 "Use GPU 0"
@@ -688,7 +693,7 @@ mmseqs 노브**이고 실제 구동은 ggml의 `CUDA0` 백엔드다. **이 로�
 ```
 
 재빌드본: `~/scratch/bin/foldseek_src/build/src/foldseek`.
-전수 459K: **23일 → 약 14시간.** 재빌드 함정 2건(`rust` 누락, CUDA 11.5/12.6 혼재)은
+전수 459K: **23일 → 실측 약 4.4시간**(config.prostt5_gpu, 5ab7f4c). 재빌드 함정 2건(`rust` 누락, CUDA 11.5/12.6 혼재)은
 `steps/prostt5_chunks.py` 상단.
 
 ### codeml vs HyPhy — 충돌, HyPhy 채택
