@@ -38,6 +38,7 @@ Axis tool paths are the installed locations recorded in the lab wiki
 """
 
 import argparse
+import hashlib
 import re
 import shlex
 import subprocess
@@ -118,7 +119,13 @@ def build_plan(
     q = qpath
     fa, wd = q(family_fasta), q(workdir)
     clean_fa = f"{wd}/input.clean.fa"
-    clean_tag = re.sub(r"[^A-Za-z0-9_]", "_", Path(workdir).name) or "family"
+    # Basename alone still collides (~/runA/pepc and ~/runB/pepc are both
+    # "pepc"); a short digest of the FULL workdir makes the tag unique
+    # per workdir while staying deterministic across reruns.
+    clean_tag = (
+        (re.sub(r"[^A-Za-z0-9_]", "_", Path(workdir).name) or "family")
+        + "_" + hashlib.sha1(workdir.encode()).hexdigest()[:8]
+    )
 
     # Every tool here chokes on trailing '*' (SignalP/DeepLoc tokenizers,
     # DIAMOND); clean once, up front, and let the axes read the clean copy.
@@ -254,17 +261,28 @@ def fetch_plan(plan: List[Axis], local_dir: str) -> List[Axis]:
     return out
 
 
-def fetch_outputs(plan: List[Axis], host: str, local_dir: str) -> List[Axis]:
-    """scp each axis output back, returning the plan with local paths."""
-    fetched = fetch_plan(plan, local_dir)
-    for remote, local_axis in zip(plan, fetched):
+def fetch_outputs(plan: List[Axis], host: str,
+                  local_dir: str) -> "tuple[List[Axis], List[str]]":
+    """scp each axis output back -> (axes with local paths, failed names).
+
+    A failed fetch must NOT stay in the merge plan: the printed merge
+    command would reference a nonexistent local file — or worse, a stale
+    copy from a previous run — and a matrix missing a declared axis reads
+    exactly like an intentionally partial run.
+    """
+    fetched: List[Axis] = []
+    failed: List[str] = []
+    for remote, local_axis in zip(plan, fetch_plan(plan, local_dir)):
         dest = Path(local_axis.output)
         dest.parent.mkdir(parents=True, exist_ok=True)
         r = subprocess.run(["scp", "-q", f"{host}:{remote.output}", str(dest)])
         if r.returncode != 0:
-            print(f"could not fetch {remote.name} from {host}:{remote.output} "
-                  "— the merge tolerates a missing axis", file=sys.stderr)
-    return fetched
+            failed.append(remote.name)
+            print(f"fetch FAILED for {remote.name} from "
+                  f"{host}:{remote.output}", file=sys.stderr)
+        else:
+            fetched.append(local_axis)
+    return fetched, failed
 
 
 def _pairs(parser, flag: str, values: List[str]) -> Dict[str, str]:
@@ -354,7 +372,8 @@ def main():
     runnable = [a for a in plan
                 if a.name not in blocked and a.name not in failed]
     print(f"\n=== fetching outputs to {args.outdir} ===", file=sys.stderr)
-    fetched = fetch_outputs(runnable, args.host, args.outdir)
+    fetched, unfetched = fetch_outputs(runnable, args.host, args.outdir)
+    failed += unfetched
     print("\n## merge (local, fetched paths)")
     print(local_merge_command(fetched, args.outdir, args.expected_ec))
     if failed:

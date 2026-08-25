@@ -243,3 +243,16 @@ def test_two_distinct_genes_colliding_on_canonical_id_raise(tmp_path):
                       "Sp_X_1": {"ec": "2.2.2.2", "confidence": "0.9"}}}
     with pytest.raises(ValueError, match="canonicalize"):
         build_matrix(axes)
+
+
+def test_cross_axis_collision_between_verbatim_axes_raises(tmp_path):
+    # emapper and clean both read FASTA headers verbatim — neither renames —
+    # so Sp_X.1 and Sp_X_1 are two real genes, not one gene respelled.
+    import pytest
+
+    from annotation_matrix import build_matrix
+
+    axes = {"emapper": {"Sp_X.1": {"ec": "1.1.1.1"}},
+            "clean": {"Sp_X_1": {"ec": "2.2.2.2", "confidence": "0.9"}}}
+    with pytest.raises(ValueError, match="foldseek"):
+        build_matrix(axes)

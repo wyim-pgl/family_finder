@@ -214,9 +214,9 @@ def test_clean_axis_is_namespaced_by_workdir():
     # to overwrite each other; the basename must carry the workdir identity.
     plan = _plan(workdir="~/annot/pepc_clan")
     clean = next(a for a in plan if a.name == "clean")
-    assert "pepc_clan.fasta" in clean.command
-    assert "--fasta_data pepc_clan" in clean.command
-    assert clean.output.endswith("pepc_clan_maxsep.csv")
+    assert "--fasta_data pepc_clan_" in clean.command
+    assert "/pepc_clan_" in clean.output
+    assert clean.output.endswith("_maxsep.csv")
     assert "family.fasta" not in clean.command
 
 
@@ -224,3 +224,32 @@ def test_clean_axis_tags_from_different_workdirs_differ():
     a = next(x for x in _plan(workdir="~/annot/fam_a") if x.name == "clean")
     b = next(x for x in _plan(workdir="~/annot/fam_b") if x.name == "clean")
     assert a.output != b.output
+
+
+def test_clean_axis_tags_differ_even_for_same_basename_workdirs():
+    # ~/runA/pepc and ~/runB/pepc share a basename; the tag must still
+    # differ or concurrent runs overwrite each other's CLEAN files.
+    a = next(x for x in _plan(workdir="~/runA/pepc") if x.name == "clean")
+    b = next(x for x in _plan(workdir="~/runB/pepc") if x.name == "clean")
+    assert a.output != b.output
+    assert a.command != b.command
+
+
+def test_failed_fetch_is_excluded_and_reported(tmp_path, monkeypatch):
+    import annotate_stack as mod
+
+    plan = _plan(axes=["signalp", "emapper"], workdir="~/annot/clan")
+
+    def fake_scp(cmd, **kw):
+        class R:
+            returncode = 1 if "signalp" in cmd[-2] else 0
+        return R()
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_scp)
+
+    fetched, failed = mod.fetch_outputs(plan, "gpu", str(tmp_path))
+
+    assert failed == ["signalp"]
+    assert [a.name for a in fetched] == ["emapper"]
+    cmd = mod.local_merge_command(fetched, str(tmp_path), None)
+    assert "signalp" not in cmd

@@ -168,21 +168,34 @@ def build_matrix(axes: dict) -> Dict[str, dict]:
     display: Dict[str, str] = {}
     emapper_full = {_canon(g): v for g, v in axes.get("emapper_full", {}).items()}
     # Folding '.' to '_' assumes the two spellings are the SAME gene renamed
-    # by a tool (foldseek PDB filenames). Two DISTINCT ids inside one axis
-    # landing on one canonical key would silently merge two real genes into
-    # one row, so that is refused; across axes the assumption is inherent
-    # and cannot be checked.
+    # by a tool. Only foldseek actually renames (PDB filenames cannot carry
+    # dots); every other axis reads the FASTA headers verbatim. So two
+    # distinct raw ids landing on one canonical key are a real-gene
+    # collision whenever neither spelling came from foldseek — within one
+    # axis or across two non-foldseek axes alike — and merging them would
+    # fabricate one row of mixed evidence. Only a foldseek/other pairing is
+    # the legitimate renamed-same-gene case the fold exists for.
+    seen_verbatim: Dict[str, str] = {}   # canon -> raw id, non-foldseek axes
     for key in ("emapper", "clean", "foldseek", "deeploc", "signalp",
                 "gene_structure", "expression"):
-        seen: Dict[str, str] = {}
+        seen_axis: Dict[str, str] = {}
         for g, data in axes.get(key, {}).items():
             c = _canon(g)
-            if c in seen and seen[c] != g:
+            if c in seen_axis and seen_axis[c] != g:
                 raise ValueError(
-                    f"axis {key}: {seen[c]!r} and {g!r} both canonicalize to "
-                    f"{c!r} — two distinct genes would merge into one row"
+                    f"axis {key}: {seen_axis[c]!r} and {g!r} both canonicalize "
+                    f"to {c!r} — two distinct genes would merge into one row"
                 )
-            seen[c] = g
+            seen_axis[c] = g
+            if key != "foldseek":
+                if c in seen_verbatim and seen_verbatim[c] != g:
+                    raise ValueError(
+                        f"{seen_verbatim[c]!r} and {g!r} (axis {key}) both "
+                        f"canonicalize to {c!r}, and neither comes from "
+                        "foldseek's PDB renaming — two distinct genes would "
+                        "merge into one row"
+                    )
+                seen_verbatim[c] = g
             by_canon.setdefault(c, {})[key] = data
             # prefer a dotted original id for display
             if c not in display or ("." in g and "." not in display[c]):
