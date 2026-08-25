@@ -326,3 +326,15 @@ def test_the_written_table_keeps_the_grade_columns(tmp_path):
                    "n_consistent_datasets", "consistent_datasets",
                    "inconsistent_datasets", "transferable"):
         assert column in header
+
+
+def test_read_groups_skips_a_header_row(tmp_path):
+    from subfamily_report import read_groups
+
+    p = tmp_path / "groups.tsv"
+    p.write_text("gene_id\tsubfamily\nOcoc_g1\tSF_A\nOcoc_g2\tSF_A\n")
+
+    groups = read_groups(p)
+
+    assert groups == {"SF_A": ["Ococ_g1", "Ococ_g2"]}
+    assert "subfamily" not in groups

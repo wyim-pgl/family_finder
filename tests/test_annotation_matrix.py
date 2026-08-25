@@ -230,3 +230,16 @@ def test_both_new_axes_merge_alongside_the_existing_ones(tmp_path):
     assert row["emapper_ec"] == "4.1.1.31"
     assert row["gs_source"] == "Helixer"
     assert row["expr_mean_tpm"] == "4776.8"
+
+
+def test_two_distinct_genes_colliding_on_canonical_id_raise(tmp_path):
+    # Species_X.1 and Species_X_1 as two REAL genes in one axis must not
+    # silently merge into one fabricated row.
+    import pytest
+
+    from annotation_matrix import build_matrix
+
+    axes = {"clean": {"Sp_X.1": {"ec": "1.1.1.1", "confidence": "0.9"},
+                      "Sp_X_1": {"ec": "2.2.2.2", "confidence": "0.9"}}}
+    with pytest.raises(ValueError, match="canonicalize"):
+        build_matrix(axes)

@@ -167,10 +167,22 @@ def build_matrix(axes: dict) -> Dict[str, dict]:
     by_canon: Dict[str, dict] = {}   # canon -> {axis: data}
     display: Dict[str, str] = {}
     emapper_full = {_canon(g): v for g, v in axes.get("emapper_full", {}).items()}
+    # Folding '.' to '_' assumes the two spellings are the SAME gene renamed
+    # by a tool (foldseek PDB filenames). Two DISTINCT ids inside one axis
+    # landing on one canonical key would silently merge two real genes into
+    # one row, so that is refused; across axes the assumption is inherent
+    # and cannot be checked.
     for key in ("emapper", "clean", "foldseek", "deeploc", "signalp",
                 "gene_structure", "expression"):
+        seen: Dict[str, str] = {}
         for g, data in axes.get(key, {}).items():
             c = _canon(g)
+            if c in seen and seen[c] != g:
+                raise ValueError(
+                    f"axis {key}: {seen[c]!r} and {g!r} both canonicalize to "
+                    f"{c!r} — two distinct genes would merge into one row"
+                )
+            seen[c] = g
             by_canon.setdefault(c, {})[key] = data
             # prefer a dotted original id for display
             if c not in display or ("." in g and "." not in display[c]):

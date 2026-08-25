@@ -85,6 +85,10 @@ def read_groups(path: Path) -> dict:
         if not line.strip() or line.startswith("#"):
             continue
         gene, subfamily = line.rstrip("\n").split("\t")[:2]
+        # A Possvm/TreeCluster export often carries a header; parsing it as
+        # data invents a gene named "gene_id" in a phantom subfamily.
+        if gene in ("gene", "gene_id"):
+            continue
         groups.setdefault(subfamily, []).append(gene)
     return groups
 
