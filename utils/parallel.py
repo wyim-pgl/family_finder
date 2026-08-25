@@ -53,7 +53,20 @@ def parallel_map(
     # Relay worker log records to the parent's handlers (fall back to the
     # root logger's handlers when family_finder has none of its own).
     handlers = logger.handlers or logging.getLogger().handlers
-    log_queue = multiprocessing.Manager().Queue(-1)
+    # Manager-backed queue by preference: it is server-mediated, so a worker
+    # SIGKILLed mid-write (OOM kills are routine on the HPC runs) cannot
+    # leave a lock held. A plain multiprocessing.Queue wraps send_bytes in a
+    # cross-process writelock on POSIX; a dying feeder thread can wedge that
+    # lock, after which listener.stop()'s sentinel never reaches the pipe and
+    # parallel_map hangs in the finally block. Some sandboxes forbid the
+    # manager's server socket, so fall back to the plain queue there and
+    # accept the narrower hazard.
+    manager = None
+    try:
+        manager = multiprocessing.Manager()
+        log_queue = manager.Queue(-1)
+    except (OSError, PermissionError):
+        log_queue = multiprocessing.Queue(-1)
     listener = QueueListener(log_queue, *handlers, respect_handler_level=True)
     listener.start()
 
@@ -73,5 +86,7 @@ def parallel_map(
                     results.append(None)
     finally:
         listener.stop()
+        if manager is not None:
+            manager.shutdown()
 
     return results
