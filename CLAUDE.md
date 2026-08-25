@@ -147,12 +147,18 @@ coverage merging, Fitch) take plain dicts precisely so they test without depende
 
 ## Investigation record
 
-**Read `resume.md` before re-diagnosing any clustering problem.** It records the
-completed Mcry investigation with verdicts: pep/CDS integrity ✗, DIAMOND sensitivity ✗,
-pruning ✗ (for Mcry), taxon sampling ✗ — the confirmed cause is MCL/graph fragmentation
-(90% of failures had strong DIAMOND hits or splinter OGs). It maps every finding to a
-GitHub issue. Diagnostic scripts live on the cluster (`forensics_r8.py`,
-`score_recluster.py`, `task*.py` under `~/scratch/bin/family_finder/`).
+**Read `resume.md` before re-diagnosing any clustering problem — start at §1.5.**
+The early verdicts stand (pep/CDS integrity ✗, DIAMOND sensitivity ✗, pruning ✗ for
+Mcry, taxon sampling ✗), but the blanket conclusion this file used to carry — "the
+confirmed cause is MCL/graph fragmentation" — was overturned on 2026-08-22 for the
+RESIDUAL unplaced pool: classified exhaustively, Mcry's unplaced genes are mostly
+model-quality artifacts and true orphans (graph cuts 15.8%, the LOWEST of the four
+species), and among comparable models Mcry's orphan rate equals Cgig's. MCL
+fragmentation remains the valid diagnosis for SPLIT FAMILIES (the PEPC clan in six
+fragments) — a different set than the unplaced pool; resume.md "서로 다른 집합을
+잰 것이다" is the reconciliation. Diagnostic scripts live on the cluster
+(`forensics_r8.py`, `score_recluster.py`, `classify_unplaced.py`, `task*.py` under
+`~/scratch/bin/family_finder/`).
 
 ## HPC Environment
 
