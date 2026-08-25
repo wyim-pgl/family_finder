@@ -179,3 +179,23 @@ def test_missing_metrics_are_undecided_not_passing():
     d = decision_rules({"safe_pct": 90.0})
     assert d["a_full_panel_diamond"]["go"] is None
     assert d["b_arath_download"]["go"] is None
+
+
+def test_reverse_best_stores_the_panel_gene_not_the_ath_query():
+    # Storing qseqid (the ATH id itself) made every RBH fail against itself
+    # and produced SAFE=0 over 25,131 queries on the first real run.
+    from plaza_pilot import reverse_best_from_hits
+
+    hits = {"AT1G53310.1": [
+        {"qseqid": "AT1G53310.1", "sseqid": "Mcry_g1",
+         "bitscore": 500.0, "evalue": 1e-80},
+        {"qseqid": "AT1G53310.1", "sseqid": "Mcry_g9",
+         "bitscore": 100.0, "evalue": 1e-10},
+    ], "AT1G53310.2": [
+        {"qseqid": "AT1G53310.2", "sseqid": "Mcry_g1",
+         "bitscore": 510.0, "evalue": 1e-82},
+    ]}
+
+    out = reverse_best_from_hits("Mcry", hits)
+
+    assert out == {("Mcry", "AT1G53310"): "Mcry_g1"}

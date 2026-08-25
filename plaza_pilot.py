@@ -416,14 +416,34 @@ def _cmd_cohort(args) -> int:
     return 0
 
 
+def reverse_best_from_hits(species: str,
+                           hits_by_ath_query: Dict[str, List[dict]]
+                           ) -> Dict[Tuple[str, str], str]:
+    """(species, AGI) -> the PANEL gene that AGI's reverse search ranks first.
+
+    The value must be the subject (sseqid, a panel gene), never the query
+    (the ATH id itself) — storing qseqid made every RBH comparison fail
+    against itself and returned SAFE = 0 across 25,131 queries on the first
+    real run. An AGI with several transcripts keeps the strongest hit.
+    """
+    best_row: Dict[Tuple[str, str], dict] = {}
+    for ath_query, rows in hits_by_ath_query.items():
+        agi = strip_transcript(ath_query)
+        top = max(rows, key=lambda h: (h["bitscore"], -h["evalue"]))
+        key = (species, agi)
+        cur = best_row.get(key)
+        if cur is None or top["bitscore"] > cur["bitscore"]:
+            best_row[key] = top
+    return {key: row["sseqid"] for key, row in best_row.items()}
+
+
 def _cmd_qc_orthology(args) -> int:
     hits = parse_diamond_tsv(open(args.forward))
     reverse_best: Dict[Tuple[str, str], str] = {}
     for path in args.reverse:
         species = Path(path).stem.split(".")[0]
-        for agi_query, rows in parse_diamond_tsv(open(path)).items():
-            best = max(rows, key=lambda h: (h["bitscore"], -h["evalue"]))
-            reverse_best[(species, strip_transcript(agi_query))] = best["qseqid"]
+        reverse_best.update(reverse_best_from_hits(
+            species, parse_diamond_tsv(open(path))))
 
     gates = Gates(evalue=args.evalue, pident=args.pident,
                   qcov=args.qcov, scov=args.scov, margin=args.margin)
