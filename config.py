@@ -206,6 +206,15 @@ class Config:
     esm_embed_cmd: str = ""    # e.g. "esm-extract esm2_t33_650M_UR50D {fasta} {outdir} --include mean"
     esmfold_cmd: str = ""      # e.g. "esm-fold -i {fasta} -o {outdir}"
     foldseek_bin: str = "foldseek"
+    # ProstT5 createdb device. True passes --gpu 1: on a -DENABLE_CUDA=1
+    # foldseek this is the only way onto the CUDA path (measured 0.034 s/seq
+    # vs 4.3 CPU); on a CPU-only build it fails loudly ("No GPU devices
+    # found", exit 1) — preferable to the CPU ProstT5ForkRunner, which can
+    # OOM its forked workers and hang forever in msgsnd with no error.
+    # Deliberately hashed in the manifest: GPU and CPU 3Di are not
+    # byte-identical (~0.15% of residues differ), so the device is part of
+    # what produced a run.
+    prostt5_gpu: bool = True
     plddt_flag_below: float = 50.0    # mean pLDDT below this -> pseudogene-evidence flag
     tier3_min_tmscore: float = 0.5    # min alntmscore for a tier-3 structural assignment
     tier3_margin_tm: float = 0.05     # best-vs-second alntmscore margin (ties -> ambiguous)

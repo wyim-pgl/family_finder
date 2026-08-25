@@ -1,8 +1,9 @@
 """steps/prostt5_chunks.py — chunked ProstT5 3Di DB construction (issue #34).
 
-ProstT5 conversion is CPU-only in this foldseek build (`--gpu 1` is ignored by
-createdb), runs at ~4.3 s/sequence, and createdb has no internal checkpoint, so
-a genome-scale screen must be chunked.
+ProstT5 conversion runs at ~4.3 s/sequence on CPU and 0.034 s/seq with
+`--gpu 1` on a -DENABLE_CUDA=1 build (2026-08-25 measurement; the flag decides
+the path there), and createdb has no internal checkpoint, so a genome-scale
+screen must be chunked.
 
 The correctness rule is the trap this module exists for: **passing a `.gguf`
 FILE to `--prostt5-model` produces no 3Di at all.** createdb exits in 0.00 s
@@ -139,7 +140,7 @@ def test_build_chunk_db_verifies_3di_after_running_createdb(tmp_path, monkeypatc
     src.write_text(">a\nMK\n")
     calls = []
 
-    def fake_createdb(fasta, db, model_dir, foldseek_bin, threads):
+    def fake_createdb(fasta, db, model_dir, foldseek_bin, threads, gpu=False):
         calls.append((Path(fasta).name, Path(db).name, str(model_dir), threads))
         _db(tmp_path, name=Path(db).name)
 
@@ -156,7 +157,7 @@ def test_build_chunk_db_fails_loudly_when_the_chunk_produced_no_3di(tmp_path, mo
     src = tmp_path / "c.fa"
     src.write_text(">a\nMK\n")
 
-    def fake_createdb(fasta, db, model_dir, foldseek_bin, threads):
+    def fake_createdb(fasta, db, model_dir, foldseek_bin, threads, gpu=False):
         _db(tmp_path, name=Path(db).name, ss=None)  # the trap
 
     monkeypatch.setattr("steps.prostt5_chunks.run_createdb", fake_createdb)
@@ -229,3 +230,55 @@ def test_a_chunk_that_legitimately_found_nothing_still_merges(tmp_path):
 
     assert merge_search_results(tmp_path, out) == 2
     assert out.read_text() == "c\td\t1e-8\t90\n"
+
+
+def test_run_createdb_gpu_flag_reaches_the_command(monkeypatch):
+    # Without --gpu 1 a CUDA build silently takes the CPU ProstT5ForkRunner
+    # (which can hang forever in msgsnd); the flag must reach the argv.
+    import steps.prostt5_chunks as pc
+
+    captured = {}
+
+    def fake_run(cmd, capture_output, text):
+        captured["cmd"] = cmd
+
+        class R:
+            returncode = 0
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(pc.subprocess, "run", fake_run)
+
+    pc.run_createdb("in.fa", "db", "/w/weights", "foldseek", 16, gpu=True)
+    gpu_cmd = captured["cmd"]
+    assert gpu_cmd[gpu_cmd.index("--gpu") + 1] == "1"
+
+    pc.run_createdb("in.fa", "db", "/w/weights", "foldseek", 16)
+    assert "--gpu" not in captured["cmd"]
+
+
+def test_config_entry_point_forwards_the_device_choice(tmp_path, monkeypatch):
+    # The reviewer's point: a dead `gpu` parameter changes nothing. The
+    # config entry point must forward config.prostt5_gpu into the argv.
+    import steps.prostt5_chunks as pc
+    from config import Config
+
+    src = tmp_path / "c.fa"
+    src.write_text(">a\nMK\n")
+    seen = {}
+
+    def fake_createdb(fasta, db, model_dir, foldseek_bin, threads, gpu=False):
+        seen["gpu"] = gpu
+        seen["threads"] = threads
+        seen["bin"] = foldseek_bin
+        _db(tmp_path, name=Path(db).name)
+
+    monkeypatch.setattr("steps.prostt5_chunks.run_createdb", fake_createdb)
+
+    pc.build_chunk_db_from_config(src, tmp_path / "db", "/w/prostt5_weights",
+                                  Config(n_workers=7))
+    assert seen == {"gpu": True, "threads": 7, "bin": "foldseek"}
+
+    pc.build_chunk_db_from_config(src, tmp_path / "db2", "/w/prostt5_weights",
+                                  Config(prostt5_gpu=False))
+    assert seen["gpu"] is False

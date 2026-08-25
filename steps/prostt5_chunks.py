@@ -39,8 +39,18 @@ measured properties of this foldseek build shape the module:
   /usr/local, 12.6 in conda) and plain `nvcc` resolves to 11.5. Without
   `CUDA_CUDART` pointed at a 12.x runtime the link dies on `undefined
   reference to cudaGetDeviceProperties_v2`, a symbol CUDA 12 introduced.
-- **~4.3 s/sequence at 16 threads** (PEPC, ~950 aa, so near the upper bound).
-  Ten thousand sequences is roughly twelve hours.
+
+  ⚠️ 2026-08-25 correction, measured on the rebuilt binary: `--gpu 1` DOES
+  decide the path there. Without it, createdb enters the CPU
+  ProstT5ForkRunner even on a CUDA build — one forked worker per thread,
+  EACH loading the ~3 GB model (16 workers on a 62 GB box: the children die,
+  the parent blocks forever in msgsnd on a full SysV message queue, 0 s of
+  CPU time, no error). With `--gpu 1`: ggml CUDA0 engaged, 0.034 s/seq on
+  the 15sp panel (10,000-seq chunk in 340 s). The clock rule above stands —
+  the msgsnd hang also logs `Use GPU 0`.
+- **~4.3 s/sequence at 16 CPU threads** (PEPC, ~950 aa, so near the upper
+  bound); ten thousand sequences is roughly twelve hours. On GPU
+  (`--gpu 1`): 0.034 s/seq measured — the same ten thousand in ~6 minutes.
 - **No internal checkpoint.** A createdb killed at hour eleven leaves nothing.
 
 Hence chunking, in the shape of steps/hmm_chunks.py: split the FASTA, build one
@@ -164,10 +174,23 @@ def verify_3di_db(db_path: Union[str, Path]) -> int:
 
 def run_createdb(fasta: Union[str, Path], db: Union[str, Path],
                  model_dir: Union[str, Path], foldseek_bin: str,
-                 threads: int) -> None:
-    """foldseek createdb with ProstT5. Module-level so tests can replace it."""
+                 threads: int, gpu: bool = False) -> None:
+    """foldseek createdb with ProstT5. Module-level so tests can replace it.
+
+    `gpu=True` passes `--gpu 1`, which is the ONLY way onto the CUDA path of
+    a -DENABLE_CUDA=1 build (37.6x measured, wiki installs.md 2026-08-22).
+    Without it createdb takes the CPU ProstT5ForkRunner, which forks one
+    worker per thread and loads the ~3 GB model in EACH: on a 62 GB box with
+    --threads 16 the children die and the parent blocks forever in msgsnd on
+    a full SysV message queue — 0 s of CPU time, no error, indistinguishable
+    from a slow run except by the clock. A CPU-only build rejects --gpu 1
+    with "No GPU devices found" (exit 1), which is the loud failure we want.
+    """
     cmd = [str(foldseek_bin), "createdb", str(fasta), str(db),
-           "--prostt5-model", str(model_dir), "--threads", str(threads)]
+           "--prostt5-model", str(model_dir)]
+    if gpu:
+        cmd += ["--gpu", "1"]
+    cmd += ["--threads", str(threads)]
     logger.info(f"Running foldseek createdb: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -179,7 +202,7 @@ def run_createdb(fasta: Union[str, Path], db: Union[str, Path],
 
 def build_chunk_db(fasta: Union[str, Path], db: Union[str, Path],
                    model_dir: Union[str, Path], foldseek_bin: str = "foldseek",
-                   threads: int = 16) -> Path:
+                   threads: int = 16, gpu: bool = False) -> Path:
     """Build one chunk's ProstT5 database and refuse to return without 3Di."""
     model_dir = Path(model_dir)
     if model_dir.exists() and not model_dir.is_dir():
@@ -189,10 +212,25 @@ def build_chunk_db(fasta: Union[str, Path], db: Union[str, Path],
             "acids and no 3Di, without reporting an error"
         )
     db = Path(db)
-    run_createdb(fasta, db, model_dir, foldseek_bin, threads)
+    run_createdb(fasta, db, model_dir, foldseek_bin, threads, gpu=gpu)
     n = verify_3di_db(db)
     logger.info(f"Chunk database {db.name}: 3Di verified, {n} entries")
     return db
+
+
+def build_chunk_db_from_config(fasta: Union[str, Path], db: Union[str, Path],
+                               model_dir: Union[str, Path], config) -> Path:
+    """Config-driven entry point for chunk builds.
+
+    Callers (screen drivers, the planned tier-3 step) go through here so the
+    device choice comes from `config.prostt5_gpu` and lands in the run
+    manifest, instead of each driver hard-coding its own argv and silently
+    defaulting onto the CPU fork path.
+    """
+    return build_chunk_db(fasta, db, model_dir,
+                          foldseek_bin=config.foldseek_bin,
+                          threads=config.n_workers,
+                          gpu=config.prostt5_gpu)
 
 
 # ------------------------------------------------------------------ merge --
