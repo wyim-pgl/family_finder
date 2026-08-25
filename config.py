@@ -210,6 +210,15 @@ class Config:
     tier3_min_tmscore: float = 0.5    # min alntmscore for a tier-3 structural assignment
     tier3_margin_tm: float = 0.05     # best-vs-second alntmscore margin (ties -> ambiguous)
     embed_tiebreak_min_delta: float = 0.02  # mean-cosine margin for the #13 ambiguous tie-break
+    # Structural merge-candidate scan (standalone, issue #17 follow-on). This
+    # is a NOMINATION layer only: structural co-clustering proposes families to
+    # inspect, and the later EPA-ng + anchor tree judge decides whether any
+    # merge is real. The defaults are deliberately stricter than a permissive
+    # foldseek sweep because structure is known to over-merge PTPC/BTPC.
+    merge_candidate_evalue: float = 1e-5      # foldseek cluster -e threshold
+    merge_candidate_min_coverage: float = 0.8  # foldseek cluster -c coverage floor
+    merge_candidate_min_seq_id: float = 0.3    # foldseek cluster --min-seq-id floor
+    merge_candidate_max_cluster_size: int = 150  # oversize foldseek clusters are overflowed, not nominated
     glm_score_cmd: str = ""    # plant gLM adapter (PlantCaduceus/AgroNT/Evo 2), issue #18
     ecforest_cmd: str = ""     # ESM-ECForest wrapper (own conda env), issue #20
 
