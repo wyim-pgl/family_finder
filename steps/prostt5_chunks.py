@@ -4,18 +4,41 @@ ProstT5 turns a protein sequence into a 3Di structural alphabet without folding
 it, which is how tier-3 reaches the unplaced pool at genome scale. Three
 measured properties of this foldseek build shape the module:
 
-- **CPU only, and silently so.** `--gpu 1` is accepted by `--help` and ignored
-  by createdb: the log prints `Use GPU 0`, nvidia-smi stays idle wherever the
-  flag is placed, and the command **exits 0**. Re-measured 2026-08-24 on
-  foldseek commit 18478813 at ~/bin/foldseek-cuda: the binary DOES carry CUDA
-  (`strings | grep -c cudaMalloc` = 39), the card IS visible (`nvidia-smi -L`
-  lists the 4090), and `--gpu 1` before or after the positional arguments
-  changes nothing. So this is not a missing-CUDA build and not a missing
-  device - the flag is accepted and dropped without a word.
+- **Judge GPU use by the CLOCK, not by the log.** `--gpu 1` is parsed (a bad
+  value is rejected: `--gpu 999` errors out) but never reaches this path: the
+  log prints `Use GPU 0` and the flag is absent from the echoed command line
+  whether or not you passed it. That line belongs to a different mmseqs knob.
+  What actually drives ProstT5 is ggml, which registers its own `CUDA0`
+  backend and says so one line later.
 
-  Cost of not noticing: 112 sequences took 8 minutes on CPU, which extrapolates
-  to roughly 23 days for the 459,398-gene panel. The 37.6x figure recorded
-  elsewhere for this binary is NOT what a ProstT5 createdb currently gets.
+  So `Use GPU 0` tells you nothing, and it cost this project a wrong diagnosis
+  five times over. The measurement that matters is elapsed time. On 112
+  sequences, same commit (18478813), same `cudaMalloc` symbol count (39), both
+  logging `Use GPU 0` and `CUDA0`:
+
+      ~/bin/foldseek-cuda (provenance unknown)   497 s
+      rebuilt with -DENABLE_CUDA=1               12 s     41x
+
+  The 37.6x recorded elsewhere for this binary was right; it was simply never
+  being obtained. Rebuilding turns the 459,398-gene panel from ~23 days into
+  ~14 hours, which is the difference between impossible and overnight.
+
+  Rebuild recipe (foldseek wiki, plus two traps it omits):
+
+      micromamba create -n fsbuild -c conda-forge -c nvidia \
+        cmake ninja cuda-nvcc cuda-cudart-dev libcublas-dev \
+        libcublas-static cuda-version=12.6 rust
+      cmake -DCMAKE_BUILD_TYPE=RELEASE -DENABLE_CUDA=1 \
+        -DCMAKE_CUDA_ARCHITECTURES=native \
+        -DCUDAToolkit_ROOT=$E -DCUDA_CUDART=$E/lib/libcudart.so \
+        -DCMAKE_EXE_LINKER_FLAGS="-L$E/lib -Wl,-rpath,$E/lib" ..
+
+  Trap 1: `rust` is not in the wiki's conda list but mmseqs' corrosion needs
+  it, otherwise cmake stops at `Configuring incomplete`.
+  Trap 2: this host carries three CUDA runtimes (11.5 in /usr/lib, 12.6 in
+  /usr/local, 12.6 in conda) and plain `nvcc` resolves to 11.5. Without
+  `CUDA_CUDART` pointed at a 12.x runtime the link dies on `undefined
+  reference to cudaGetDeviceProperties_v2`, a symbol CUDA 12 introduced.
 - **~4.3 s/sequence at 16 threads** (PEPC, ~950 aa, so near the upper bound).
   Ten thousand sequences is roughly twelve hours.
 - **No internal checkpoint.** A createdb killed at hour eleven leaves nothing.
