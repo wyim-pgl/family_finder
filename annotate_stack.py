@@ -38,6 +38,7 @@ Axis tool paths are the installed locations recorded in the lab wiki
 """
 
 import argparse
+import re
 import shlex
 import subprocess
 import sys
@@ -117,6 +118,7 @@ def build_plan(
     q = qpath
     fa, wd = q(family_fasta), q(workdir)
     clean_fa = f"{wd}/input.clean.fa"
+    clean_tag = re.sub(r"[^A-Za-z0-9_]", "_", Path(workdir).name) or "family"
 
     # Every tool here chokes on trailing '*' (SignalP/DeepLoc tokenizers,
     # DIAMOND); clean once, up front, and let the axes read the clean copy.
@@ -145,10 +147,16 @@ def build_plan(
         ),
         "clean": Axis(
             "clean",
-            f"{prep} && cp {clean_fa} {CLEAN_APP}/data/inputs/family.fasta && "
+            # CLEAN reads data/inputs/<name>.fasta and writes
+            # results/inputs/<name>_maxsep.csv inside its OWN app directory,
+            # shared by every invocation on the host. Namespace <name> by the
+            # workdir's basename, or two families annotated concurrently
+            # overwrite each other's input in place and one silently fetches
+            # the other's EC calls.
+            f"{prep} && cp {clean_fa} {CLEAN_APP}/data/inputs/{clean_tag}.fasta && "
             f"cd {CLEAN_APP} && {MICROMAMBA} run -n clean python "
-            f"CLEAN_infer_fasta.py --fasta_data family",
-            f"{CLEAN_APP}/results/inputs/family_maxsep.csv",
+            f"CLEAN_infer_fasta.py --fasta_data {clean_tag}",
+            f"{CLEAN_APP}/results/inputs/{clean_tag}_maxsep.csv",
         ),
         "foldseek": Axis(
             "foldseek",
@@ -329,6 +337,7 @@ def main():
             print("\n(no --host given: nothing executed)", file=sys.stderr)
         return 0
 
+    failed: List[str] = []
     for a in plan:
         if a.name in blocked:
             print(f"skipping blocked axis: {a.name}", file=sys.stderr)
@@ -336,13 +345,23 @@ def main():
         print(f"\n=== running {a.name} on {args.host} ===", file=sys.stderr)
         r = subprocess.run(["ssh", args.host, a.command])
         if r.returncode != 0:
-            print(f"axis {a.name} failed (exit {r.returncode}) — continuing; "
-                  "the merge tolerates missing axes", file=sys.stderr)
+            failed.append(a.name)
+            print(f"axis {a.name} FAILED (exit {r.returncode})", file=sys.stderr)
+    # A failed axis must not fetch (a stale file from a previous run would be
+    # indistinguishable from this run's output) and must not appear in the
+    # merge command — a normal-looking matrix that is silently missing a
+    # declared axis reads exactly like an intentionally partial run.
+    runnable = [a for a in plan
+                if a.name not in blocked and a.name not in failed]
     print(f"\n=== fetching outputs to {args.outdir} ===", file=sys.stderr)
-    fetched = fetch_outputs([a for a in plan if a.name not in blocked],
-                            args.host, args.outdir)
+    fetched = fetch_outputs(runnable, args.host, args.outdir)
     print("\n## merge (local, fetched paths)")
     print(local_merge_command(fetched, args.outdir, args.expected_ec))
+    if failed:
+        print(f"\nFAILED axes: {', '.join(failed)} — the merge command above "
+              "EXCLUDES them. Rerun those axes before treating the matrix "
+              "as the declared stack.", file=sys.stderr)
+        return 1
     return 0
 
 

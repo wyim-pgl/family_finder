@@ -207,3 +207,20 @@ def test_drop_unavailable_drops_every_blocked_axis_not_only_foldseek():
     names = {a.name for a in build_plan("clan.fa", "~/wd",
                                         drop_unavailable=True)}
     assert names == {"signalp", "deeploc", "emapper", "clean"}
+
+
+def test_clean_axis_is_namespaced_by_workdir():
+    # CLEAN's app-shared input/results paths caused two concurrent families
+    # to overwrite each other; the basename must carry the workdir identity.
+    plan = _plan(workdir="~/annot/pepc_clan")
+    clean = next(a for a in plan if a.name == "clean")
+    assert "pepc_clan.fasta" in clean.command
+    assert "--fasta_data pepc_clan" in clean.command
+    assert clean.output.endswith("pepc_clan_maxsep.csv")
+    assert "family.fasta" not in clean.command
+
+
+def test_clean_axis_tags_from_different_workdirs_differ():
+    a = next(x for x in _plan(workdir="~/annot/fam_a") if x.name == "clean")
+    b = next(x for x in _plan(workdir="~/annot/fam_b") if x.name == "clean")
+    assert a.output != b.output
