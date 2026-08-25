@@ -245,6 +245,36 @@ def test_resume_with_changed_config_names_the_settings(tmp_path):
     assert stored["resume_count"] == 0
 
 
+def test_config_field_added_after_the_run_started_resumes_at_its_default(tmp_path):
+    """A run predating a Config field must resume without --allow-config-change.
+
+    The stored manifest cannot name a field that did not exist when the run
+    started; as long as the resume runs it at the dataclass default, nothing
+    the stored rounds computed depended on it. A NON-default value for the
+    new field is still a real difference and still refuses.
+    """
+    pep, cds = _inputs(tmp_path)
+    tree = _tree(tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+    mf.start_manifest(out, Config(), str(tree), pep, cds, resume=False)
+
+    # Age the stored manifest: drop a field, as if it were written by code
+    # from before that field existed.
+    stored_path = out / mf.MANIFEST_FILE
+    stored = json.loads(stored_path.read_text())
+    del stored["config"]["max_cluster_genes"]
+    stored_path.write_text(json.dumps(stored))
+
+    resumed = mf.start_manifest(out, Config(), str(tree), pep, cds, resume=True)
+    assert resumed["resume_count"] == 1
+
+    with pytest.raises(mf.ConfigMismatchError) as exc:
+        mf.start_manifest(out, Config(max_cluster_genes=900), str(tree),
+                          pep, cds, resume=True)
+    assert "max_cluster_genes" in str(exc.value)
+
+
 def test_resume_after_species_tree_edit_is_refused(tmp_path):
     pep, cds = _inputs(tmp_path)
     tree = _tree(tmp_path)

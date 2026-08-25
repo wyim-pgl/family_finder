@@ -31,7 +31,7 @@ import logging
 import os
 import subprocess
 import uuid
-from dataclasses import asdict, fields
+from dataclasses import MISSING, asdict, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -251,10 +251,24 @@ def _config_differences(stored: dict, config, tree_sha: str) -> list:
     """Per-setting (setting, old, new) between a stored manifest and now."""
     old_cfg = stored.get("config") or {}
     new_cfg = asdict(config)
+    # A field added to Config after a run started is absent from the stored
+    # manifest. As long as the resume still runs it at the dataclass default,
+    # nothing the stored rounds computed could have depended on it — the old
+    # code had no such knob — so it is compatible. Only a NON-default value
+    # for a new field is a real difference. Without this, every new Config
+    # field would force --allow-config-change on every pre-existing run.
+    defaults = {}
+    for f in fields(config):
+        if f.default is not MISSING:
+            defaults[f.name] = f.default
+        elif f.default_factory is not MISSING:  # type: ignore[misc]
+            defaults[f.name] = f.default_factory()  # type: ignore[misc]
     diffs = []
     for name in sorted(set(hashed_config_fields(config))):
         new = _normalize(new_cfg.get(name))
         if name not in old_cfg:
+            if name in defaults and new == _normalize(defaults[name]):
+                continue
             diffs.append({"setting": name, "old": None, "new": new,
                           "note": "absent from the stored manifest"})
             continue
