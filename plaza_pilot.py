@@ -466,7 +466,7 @@ def _cmd_qc_orthology(args) -> int:
     summary["safe_pct_of_hits"] = (100.0 * summary.get("SAFE", 0) / with_hit
                                    if with_hit else None)
     if args.direct and args.descriptions:
-        direct = {p[0]: p[1] for p in
+        direct = {p[0]: p[1].rstrip("\n") for p in
                   (l.split("\t") for l in open(args.direct))
                   if len(p) >= 2}
         descriptions = {strip_transcript(p[0]): p[1].rstrip("\n") for p in

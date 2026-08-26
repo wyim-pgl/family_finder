@@ -199,3 +199,43 @@ def test_reverse_best_stores_the_panel_gene_not_the_ath_query():
     out = reverse_best_from_hits("Mcry", hits)
 
     assert out == {("Mcry", "AT1G53310"): "Mcry_g1"}
+
+
+# ------------------------------------------------------- CLI file paths --
+
+def test_direct_table_newlines_do_not_manufacture_conflicts(tmp_path):
+    """qc-orthology read --direct values without rstrip: every curated
+    description carried its newline, so conflict_rate reported 100%
+    disagreement against the rstripped ATH descriptions (Mcry curated
+    calibration, 2026-08-26: rate 1.0 on all 36 grid cells while the
+    AGI-level agreement was 175/188)."""
+    from plaza_pilot import main
+
+    row = ("Mcry_g1\tAT1G01000.1\t80.0\t400\t400\t400\t1\t400\t1\t400"
+           "\t1e-100\t500\t90.0\t90.0\n")
+    rev = ("AT1G01000.1\tMcry_g1\t80.0\t400\t400\t400\t1\t400\t1\t400"
+           "\t1e-100\t500\t90.0\t90.0\n")
+    (tmp_path / "forward.tsv").write_text(row)
+    (tmp_path / "Mcry.tsv").write_text(rev)
+    (tmp_path / "cohort.tsv").write_text(
+        "family_id\tgene_id\tspecies\n" "F1\tMcry_g1\tMcry\n")
+    (tmp_path / "direct.tsv").write_text("Mcry_g1\tPPC1\n")
+    (tmp_path / "desc.tsv").write_text("AT1G01000\tPPC1\n")
+
+    out = tmp_path / "qc"
+    main(["qc-orthology",
+          "--cohort", str(tmp_path / "cohort.tsv"),
+          "--forward", str(tmp_path / "forward.tsv"),
+          "--reverse", str(tmp_path / "Mcry.tsv"),
+          "--direct", str(tmp_path / "direct.tsv"),
+          "--descriptions", str(tmp_path / "desc.tsv"),
+          "--outdir", str(out)])
+
+    lines = (out / "gate_calibration.tsv").read_text().splitlines()
+    header = lines[0].split("\t")
+    i_over = header.index("n_overlap")
+    i_conf = header.index("n_conflict")
+    for line in lines[1:]:
+        parts = line.split("\t")
+        assert parts[i_over] == "1"
+        assert parts[i_conf] == "0"
