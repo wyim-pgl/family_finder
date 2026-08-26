@@ -593,7 +593,80 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 
 ---
 
-## 7. /clear 후 세션 재개 가이드 (2026-08-24 밤 기준)
+## 7. /clear 후 세션 재개 가이드 (2026-08-26 기준 — v3 테이블·subfamily 카탈로그 세션)
+
+이 섹션이 최신이다. 아래 7.1(2026-08-24 밤)은 이전 세션의 기록으로 보존한다.
+
+### 끝난 것 (전부 이슈에 기록됨 — #47, #25, #34, #38)
+
+- **v3 family 테이블**: uncut `vote_edges.tsv`(50,961 엣지, 21,260/23,744 family 커버)
+  → `nominate_clusters`(54760a9; 클러스터 2,774·pairwise 12,394·deferred 221, cap 500)
+  → 심판 배치(SLURM 6101783, 2,774/2,774 실패 0) → `validate_families --apply` =
+  **23,744 → 13,431 families**, 유전자 전량 보존. **PEPC 5조각+양 flagship이 111유전자
+  단일 family, PPC4(BTPC)는 분리 유지** — 트리 심판이 서열·구조가 못 긋던 경계를 그었다.
+  산출: pronghorn `~/scratch/arbiter_v3/{summary_v3.tsv,cluster_verdicts.tsv}`.
+- **구조 채널 판정**: 15종 전수 ProstT5 3Di(46청크 병합 DB, gpu `~/prostt5_15sp/merged/all_3di`)
+  → foldseek cluster 153초 → 후보 10,070(`~/prostt5_15sp/merge_out/structural_merge_*.tsv`).
+  사전 등록 rubric 판정(#47): **OrthoFinder 대체 기각 · Tier-0 기각 · 지명/주석 전용 채택**
+  (PTPC/BTPC co-cluster + 최대 1,165 초과).
+- **PLAZA/AFDB 파일럿 판정**(#47): (b) ARATH tar 다운로드 **NO-GO**(addressable 12.2%<15%),
+  comparable 고아의 구조 명명 전이 **0/1,387**('고아는 iteration으로' 확정), SAFE orthology
+  22.7%(QCOV 지배 — 게이트 보정 전 전수 DIAMOND 무의미). RBH 버그 수정 47800ce
+  (역방향 맵이 qseqid 저장 → SAFE=0 전멸했었다).
+- **subfamily 카탈로그 v2** (gpu `~/subfam/subfamily_catalog_v2.tsv`): 소형 541 family(≤200
+  유전자)의 IQ-TREE 쌍(codon123+codon12, `-alrt 1000 -B 1000`) → Possvm×2 + TreeCluster
+  → HOG(파일럿 20 → 전수 1,014) 5중 검증 = **HIGH 690 / PROVISIONAL 390 / UNRESOLVED 2,575**
+  (전 건 사유 기록, 무앵커 — 라벨은 후속 버전드 레이어). 등급 규칙·판정 임계는 #25에 사전
+  등록돼 있고 결과보다 먼저 커밋됐다.
+- **주석 캐시 3축 전수** (gpu `~/annot_panel/<axis>/<종>/`): SignalP(GPU 변환, 전수 ~30분)
+  · emapper(~1시간) · DeepLoc Accurate(~7시간). DeepLoc 캐시는 neofunctionalization 모듈
+  입력 겸용.
+- 코드 커밋 2c950c9..47800ce (전부 push): nominate_clusters(+테스트), structural merge
+  candidates, plaza_pilot(게이트 계약·abstention·사전 결정규칙), prostt5 GPU 노브
+  (`config.prostt5_gpu`), subfamily/naming 리뷰 수정 2라운드, manifest 신필드 호환.
+  테스트 1,075+ green.
+
+### 돌고 있는 것 (/clear 시점)
+
+- **대형 473 family(201–500 유전자) 트리 배치**: 어레이 6102594(%60) + 역순 보조 6104456(%40),
+  family당 `LOCK/`(mkdir 원자 락)으로 협동. 진행 ~572/1,014, 실패 1
+  (`R1_OG0000042` — pal2nal 불일치, 디렉터리 정리됨, 패치본으로 백필 대상).
+  48h 한도 도달 시 **같은 sbatch 재제출이 곧 재개**(DONE 스킵).
+- HOG 축은 **1,014 전수 완료**(pronghorn `~/scratch/hog_pilot/*/N_root.tsv`, 실패 0).
+
+### 재개 계약 — 트리 완주(또는 한도) 신호 후 자동 진행 순서
+
+1. 백필: `sbatch ~/scratch/subfam_trees/subfam_array2.sbatch` 재제출(DONE/LOCK 스킵이 잔여만 잡는다)
+2. 신규 treefile → gpu `~/subfam/subfam_trees/` 전송(tar 파이프) + `convert_supports.py`
+   (이중 지지도 → min 단일값 `.possvm.nwk`)
+3. `~/subfam/run_subfam_axes.sh` (axes.done 스킵 — 신규 family만 돈다)
+4. 신규 `N_root.tsv` → gpu `~/subfam/hog/<fam>/` 전송
+5. `freeze_catalog.py` — 출력 파일명을 `subfamily_catalog_v3.tsv`로 바꿔 1,014 전체 동결
+   (등급 규칙 변경 금지 — 사전 등록분 그대로)
+6. 분포 보고(v2 대비 대형 family의 HIGH율 변화가 관전점) + #25 기록
+
+### 이번 세션의 신규 함정 (코드/위키에 반영됨)
+
+- **pal2nal은 all-or-nothing**: 불일치 유전자 1개가 family 전체를 죽인다 →
+  `subfam_tree.py`가 사전 translate 검증으로 `cds_mismatch`만 격리 (그리고 `-nogap`은
+  다서열 정렬에서 전 컬럼을 지운다 — 빈 서열 dict는 truthy)
+- **IQ-TREE 이중 지지도(`96.9/100`)를 ete3가 파싱 불가** → min(aLRT,UFBoot) 변환본 사용
+- **단일 family OrthoFinder는 종 트리 추론이 exit 0으로 침묵 사망** → `-s`로 루팅 종
+  트리 공급(무근이면 거부; Mcry 외군 루팅 + family별 가지치기), 이때 HOG 레벨은 **N1부터**
+- **`--gpu 1` 없이는 CUDA foldseek도 CPU ProstT5ForkRunner**로 가서 msgsnd에 영원히
+  블록될 수 있다(§5의 시계 판정 원칙 유지) — installs.md 2026-08-25
+- **`vote_rescan/members.fa`(459,398)는 placed 유전자만**이다. 패널 총계는 484,752
+  (+unplaced 25,354). '전체 패널'로 읽지 말 것(#47에 종결 기록)
+- SignalP 6도 GPU가 된다(env torch가 +cpu였을 뿐) — 변환 레시피 installs.md
+
+### 사용자 입력 대기 (자동 불가)
+
+- **큐레이션 direct 주석 테이블**(Mcry 기능 주석) 위치 — conflict 축 정식 계산 + PLAZA
+  게이트 보정 + 라벨 레이어의 선행 조건
+- gpu 박스 `~/scratch` 7.3TB(sda1) 복구 마운트 — sudo 필요, 안전 절차 installs.md
+- 앵커 라벨 레이어 착수 판단 (멤버십은 라벨과 무관하게 이미 동결)
+
+## 7.1 (구) /clear 후 세션 재개 가이드 (2026-08-24 밤 기준)
 
 **정본**: 이 파일 · `results_15sp.md` · `AGENTS.md` · `retired_data.md` · #47 · #26.
 ⚠️ **모니터·백그라운드 waiter는 /clear와 함께 전부 죽는다** — 손으로 확인할 것.
