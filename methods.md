@@ -108,6 +108,8 @@ All analyses were performed on the PGL computing cluster. The software tools, ve
 | PAL2NAL | v14.1 (its banner prints v14) | Protein-guided codon alignment | Default parameters |
 | FastTree | 2.1 | Maximum-likelihood gene tree inference | -nt -gtr -gamma (nucleotide); -gamma (protein) |
 | HMMER | 3.2.1 | Profile-based sequence search and rescue | hmmbuild defaults; hmmsearch E < 1 x 10^-5 |
+| PAML (codeml) | 4.10.10 (29 Jan 2026 build) | Branch-site test regeneration and BEB posteriors (legacy-comparison use only, per the HyPhy-first policy) | Pinned via `codeml_bin`; run success judged by output artifacts, not exit code; `cleandata = 0` |
+| HyPhy | 2.5.100 | Hypothesis tests: RELAX, MEME, aBSREL, BUSTED | Defaults; adjudicates whenever codeml and HyPhy disagree |
 | ete4 | 4.3.0 | Phylogenetic tree manipulation and distance computation | --- |
 | Biopython | 1.86 (Python 3.14.0) | Sequence file I/O | --- |
 | IQ-TREE | 2.3.6 | Species-tree branch-length estimation; alternative gene tree builder | -m GTR+G -B 1000 (species tree); not used for gene trees by default |
