@@ -593,9 +593,92 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 
 ---
 
-## 7. /clear 후 세션 재개 가이드 (2026-08-26 기준 — v3 테이블·subfamily 카탈로그 세션)
+## 7. /clear 후 세션 재개 가이드 (2026-08-27 기준 — 카탈로그 완주 직전 · 전수 확장 준비 세션)
 
-이 섹션이 최신이다. 아래 7.1(2026-08-24 밤)은 이전 세션의 기록으로 보존한다.
+이 섹션이 최신이다. 아래 7.05(2026-08-26)·7.1(2026-08-24)은 이전 세션 기록으로 보존한다.
+⚠️ **모니터·백그라운드 waiter는 /clear와 함께 전부 죽는다** — 재개 즉시 아래 "돌고 있는 것"을 손으로 확인할 것.
+
+### 끝난 것 (전부 이슈/커밋에 기록됨)
+
+- **① Mcry direct 주석 테이블 확보 + PLAZA 게이트 보정 완결** (#47 코멘트):
+  정본은 `pronghorn:~/scratch/data/opuntia_coche/revision/cam_results/<종>/iceplant_*.tsv`
+  (16 CAM 모듈, 507행/467 유전자, 컬럼 McrID·심볼·설명·EC·AGI·UniProt·IPR·위치; 패널 매칭
+  460/467, 결측 7=수작업 모델). 보정 결과: **margin이 conflict 지배**(pident/cov 평평),
+  운영셀 25/60/0.1에서 SAFE 178, conflict 10/178=5.62%, Wilson 10.03% → 사전 등록 기준
+  (≤2%/5%)에 전 셀 미달 = **(a) 전수 DIAMOND 형식 NO-GO 확정**. 충돌 10건 중 7건은 같은
+  family 파랄로그 번호 교체, 교차-family는 3건(≈1.7%) → **어간(family) 전이는 안전, 접미
+  (subfamily)는 트리 심판 소관**이 정량 확정. 산출물 `pronghorn:~/scratch/mcry_direct/`.
+  버그: `plaza_pilot.py --direct`가 개행을 안 벗겨 conflict 100% 아티팩트 → `97ffc95` 수정.
+- **② sda1 복구 종결** (wiki installs.md `2492205`): 포맷 금지(사용자 지시), NTFS 유지로
+  `/data/sda1` ntfs3 rw 마운트 + fstab(UUID 6AF1D3192ABDD7FE, nofail). 콜드 294G 이관
+  (Deschampsia 174/opuntia 60/eggnog_data 48/temp 12) — rsync 검증→원본 삭제→심링크,
+  **루트 99%→82%(여유 322G)**. 심링크는 각 사본의 `SYMLINKS.tsv`로 보존(19/2,439).
+  구 NTFS 잔존물은 `/data/sda1/LEGACY_DO_NOT_USE/`로 격리, 신·구 혼합 금지 규칙을
+  README+위키에 명시. 추가 회수 후보: jlomas 288G(타 사용자, 조율 필요).
+- **subfam_tree.py 결함 2건 수정·실증** (#25 코멘트): pal2nal이 translate 사전 검증(≤max(2,1%))
+  보다 엄격 → **stderr ERROR 블록에서 문제 ID 파싱해 격리·재정렬 재시도(≤6회)**,
+  `MISSING.txt`에 `pal2nal_rejected` 기록. 실패 시 LOCK 잔류 → `atexit` 해제.
+  `SUBFAM_THREADS` env 오버라이드 추가. OG87 백필로 실증(316잎, `Sole_..._575` 정확히
+  격리), OG42도 완료. 스크립트는 `pronghorn:~/scratch/subfam_trees/subfam_tree.py`(repo 밖).
+- **대형 473 트리 — 사실상 완주**: 3-어레이 협동(전방 6102594 %60 / 역순 6104456 %40 /
+  **중앙 s1 6104681 %16** — cpu-48/49 idle 활용, 57→84 슬롯). /clear 시점 **471/473**,
+  잔여 `R1_OG0000383`(UFBoot ~29분)·`R1_OG0000403`(~42분). gpu 증분 **967/1,014 축 완료**
+  (전송→convert_supports→run_subfam_axes 루프, 실패 0).
+- **이슈 라운드** (Codex 트리아지 + 내 gh 분업 — Codex 샌드박스 gh 토큰 무효라 로컬 판정
+  파일 산출 후 게시만 내가): **#34 닫음**(tier-3 판정 완결). #44 → **Sund 복구 1건으로 압축**
+  (fast46 완주·HyPhy 채택 판정, methods PAML 4.10.10/HyPhy 2.5.100 행 `1cce79d`).
+  #47 사유 해소(results_15sp.md 최상단 정본 블록 `164d2cb` — arbiter_v3 13,431이 정본,
+  20,133/20,726 인용 금지). #38 사유 해소(methods §2.X.8 인트론=주석 프로그램 교란 명문화
+  `afa33a1`, cis-element만 남음). **#43 실측 3건**: 15sp Cgig=Helixer(27,583) 확인 ·
+  🔴 **"Ppc2" 라벨 판정 (b)** — 12sp `R1_OG0000168`(Ococ 17, Chr3 tandem, `Ccac_g11025`)은
+  교정 clan 트리의 **ppc-1E1(Ppc1형)**이고, 진짜 ppc-1E2(`OcoChr10G09070`·`Ccac_g9957`)는
+  `R1_OG0014645`에 있다 → **원고의 "Cactaceae Ppc2 tandem 확장"은 Ppc1형 확장** (개명 권고) ·
+  더미 종트리 서술은 이미 정정돼 있었음(잔여: (Tfru,Ccac) 의존 하류 목록화+추정트리 채택 결정).
+
+### 돌고 있는 것 (/clear 시점)
+
+- 트리 마지막 2개(383·403) — 러닝 태스크 3개가 LOCK 잡고 마무리 중. 확인:
+  `ssh pronghorn 'cd ~/scratch/subfam_trees; d=0; for f in $(cut -f1 slate2.txt); do [ -e "$f/DONE" ] && d=$((d+1)); done; echo $d/473'`
+- 실패 감시 기준선: FAILED 고유줄 **4** (OG42/OG87 구건, 전부 해소됨). 5 이상이면 신규.
+
+### 재개 계약 — 473/473 확인 후 순서 (사용자 승인 완료: "전체 진행" + "완주 후 나머지 전체")
+
+1. 최종 증분: `ssh pronghorn 'cd ~/scratch/subfam_trees && for f in $(cut -f1 slate2.txt); do [ -e "$f/DONE" ] && printf "%s/codon123.treefile\n%s/codon12.treefile\n%s/DONE\n" "$f" "$f" "$f"; done | tar cf - -T -' | ssh gpu 'tar xf - -C ~/subfam/subfam_trees && cd ~/subfam && python3 convert_supports.py && bash run_subfam_axes.sh'`
+   → gpu 1,014/1,014 확인
+2. **Codex 검토**(사용자 지시): `freeze_catalog.py` 구현이 #25 사전 등록 등급 규칙과 일치하는지 + 입력 무결성 — 문제 있으면 먼저 수정
+3. `freeze_catalog.py` 출력명 `subfamily_catalog_v3.tsv`로 **1,014 전체 동결** (등급 규칙 변경 금지)
+4. 분포 보고(v2 대비 **대형 family HIGH율 변화**가 관전점) + #25 기록
+5. **slate3 발사** (전부 작성·검증 완료, 제출만 하면 됨):
+   `sbatch ~/scratch/subfam_trees/subfam_array3_fwd.sbatch` (S2 %60) + `..._rev.sbatch` (S2 %40)
+   + `..._s1.sbatch` (s1 %16, 13일) + `subfam_big6.sbatch` (s1 16코어/96g, >500 6개)
+   + `hog_full3.sbatch` (S2 %40, HOG 축 12,417). slate3.txt 12,411 + slate3_big.txt 6,
+   크기 내림차순. 이후 같은 증분 루프(모니터 재구성 필요 — 잡명 subfam_trees3*, 로그 t3f/t3r/t3s/t3big).
+   48h 한도 시 S2 어레이 재제출이 곧 재개(DONE/LOCK 스킵).
+6. slate3 완주 시 **전 커버리지 확장판(v4) 동결** — v3(1,014)와 버전 분리 유지(v2↔v3 비교 보존)
+
+### 이번 세션의 신규 함정
+
+- **pronghorn `~/scratch/bin/ff_arbiter`는 GitHub 클론이 아니다** — origin이 로컬
+  `~/scratch/bin/family_finder`(구판 0fdcfde)라 `git pull`이 "Already up-to-date"를 내며
+  **아무것도 안 가져온다.** 수정 반영은 직접 패치/scp.
+- **family ID는 런 스코프다**: `R1_OG0000168`을 11sp 표에서 찾으면 **다른 family**(Chr7/8/11)가
+  나온다. 원고가 인용하는 12sp ID는 반드시 `RETIRED_DO_NOT_USE/output_12sp_portulacineae/`에서.
+- **plaza_pilot `--direct` 값 개행** → conflict 100% 아티팩트 (`97ffc95`+회귀 테스트).
+- **sda1은 NTFS**: 심볼릭 링크 못 실음(SYMLINKS.tsv 매니페스트로 보존), conda env는 아카이브
+  전용(실행 불가). ntfs3 마운트 옵션은 fstab 참조.
+- **iqtree2는 GPU 옵션이 없다**(전 버전, ML 부트스트랩 계열 공통) — 가속 축은 파티션 폭
+  (s1 idle 노드). BEAGLE류는 지지도 통계가 달라 등급 규칙과 비교 불가.
+- Codex 샌드박스 gh 토큰 무효 → **로컬 트리아지 파일 + 내 gh 게시** 분업이 작동 패턴.
+
+### 사용자 입력 대기
+
+- **앵커 라벨 레이어 착수 판단(구 ③)** — 선행 조건(게이트 보정) 이번에 충족됨. 어간 전이
+  1.7% 오류/접미 5.6%라는 보정 결과가 설계 근거.
+- #43 원고 측 결정 2건: Chr3 tandem의 **Ppc1형 개명** 반영 여부 · 추정 종트리의 원고 채택
+  (+CAFE5/LSD2/divergence/branch-site 재검토 범위)
+- 5sp Cgig MAKER 유지의 공식 결정 기록(#43 ①, 현행 이원 운용이 사실상 결정)
+
+## 7.05 (구) /clear 후 세션 재개 가이드 (2026-08-26 기준 — v3 테이블·subfamily 카탈로그 세션)
 
 ### 끝난 것 (전부 이슈에 기록됨 — #47, #25, #34, #38)
 
