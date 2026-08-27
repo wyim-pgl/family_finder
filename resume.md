@@ -1,9 +1,17 @@
 # resume.md — Mcry(외군) 클러스터링 문제 조사 기록
 
+> 📌 **정본**: §7 (재개 가이드, 2026-08-27) · §1.5 (Mcry 원인 판정) · §1.6 (#40 Ppc1/Ppc2) ·
+> §5 (함정 목록 — 누적 유효). 그 밖의 절은 이력 보존용일 수 있다 — 각 절 머리의
+> ❌/⚠️/✏️ 격리 마커를 확인할 것. 표기 규약은 위키 `guide/handoff-hygiene.md`.
+
 작성일: 2026-08-19. 이 문서는 코드 조사 + 독립 검증(스트레스 테스트)을 거친 현재 상태 스냅샷이다.
 모든 `file:line` 은 커밋 `f1226aa` 기준으로 원문 대조 확인했다.
 
 ## 1. 문제 정의
+
+> ✏️ **PARTIAL (2026-08-22):** "원인은 클러스터링 상류" 추정은 §1.5에서 판정 완료 —
+> 입력 주석 품질 약 2/3 + taxon sampling 약 1.7배, 파이프라인 결함 아님.
+> 문제 정의 자체는 유효하나 아래 "핵심 결론" 문단은 인용 금지.
 
 5종 런(Mcry, Cgig, CgigH, Ococ, Obas; 143,961 단백질)에서 외군 *Mesembryanthemum
 crystallinum*(Mcry, Aizoaceae) 유전자가 **Round 1 OrthoFinder 클러스터링 단계에서부터**
@@ -176,6 +184,10 @@ untrimmed 1,428컬럼 / plant-type 77서열 기준. **trim 행렬은 트리 전�
 
 ## 2. 증상 지표
 
+> ❌ **SUPERSEDED (2026-08-21):** 아래 표는 v1 런 수치다. 정본은 §6 7차 라운드의
+> 5sp v2 (Mcry 13.4% 등, 전 종 개선), 15sp는 `results_15sp.md`(arbiter_v3 13,431).
+> 표 자체도 rescue 전/후 혼합 가능성이 있다(아래 provenance caveat).
+
 | 종 | 유전자 | R10 후 미배치 | 미배치율 | HMMER 구제 | 구제율 | 최종 배치율 |
 |---|---|---|---|---|---|---|
 | Cgig | 29,163 | 1,698 | 5.8% | 1,099 | 64.7% | 97.9% |
@@ -281,8 +293,9 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 (`run/process_args.py:672/775/861/406`).
 
 **유력 가설 (측정 필요) — 2026-08-22 기준 전부 해소됨, §1.5 참조:**
-> ⚠️ 아래는 8차 라운드까지의 상태다. 9차 라운드에서 미배치 풀 전수 분류로 결론이
-> 뒤집혔다. 그래프 포렌식 3분할·BUSCO OJR·inflation 스윕은 **다시 돌리지 말 것.**
+> ❌ **SUPERSEDED (2026-08-22):** 아래는 8차 라운드까지의 상태다. 9차 라운드에서
+> 미배치 풀 전수 분류로 결론이 뒤집혔다 — 정본은 §1.5. 그래프 포렌식 3분할·
+> BUSCO OJR·inflation 스윕은 **다시 돌리지 말 것.**
 
 - pep/CDS ID 불일치로 인한 Mcry 유전자의 조용한 소실 (§3 크기 게이트 절 — 최우선 확인)
 - Round-1 클러스터링에서의 실제 Mcry 오배정 (BUSCO OJR로 측정)
@@ -354,6 +367,11 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 | 미배치 유전자가 100% pseudogene 후보로 나옴 | 파이프라인이 **모든 미배치 유전자를 `is_orphan`으로 자동 플래그**한다. 순환 지표다 | `pseudogene_candidates.tsv`의 `is_orphan`·테이블 존재 여부를 미배치 질문의 증거로 쓰지 말 것. CDS를 직접 읽을 것 |
 
 ## 6. 다음 단계 — 열린 이슈 (2026-08-22 기준)
+
+> ⚠️ **CAUTION (2026-08-27):** 이슈 상태·다음 단계는 §7이 정본이다. 아래 이슈 표는
+> 2026-08-22 시점 (이후 #34 닫힘, #44 압축, #43 결정 완료 등 — §7 참조). 이 절의
+> "N차 라운드" 블록들은 라운드별 이력 기록으로 유효하나, 각 라운드 안의 결론은 후속
+> 라운드·§5에서 정정됐을 수 있다 — 수치 인용 전 §5·§7 대조 필수.
 
 `wyim-pgl/family_finder` (PUBLIC). **#1~#31 중 열린 것 없음** — 아래가 전부.
 
@@ -641,7 +659,26 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
   `ssh pronghorn 'cd ~/scratch/subfam_trees; d=0; for f in $(cut -f1 slate2.txt); do [ -e "$f/DONE" ] && d=$((d+1)); done; echo $d/473'`
 - 실패 감시 기준선: FAILED 고유줄 **4** (OG42/OG87 구건, 전부 해소됨). 5 이상이면 신규.
 
-### 재개 계약 — 473/473 확인 후 순서 (사용자 승인 완료: "전체 진행" + "완주 후 나머지 전체")
+### ✅ 재개 계약 1–5 완료 (2026-08-27 오후) — 현재 상태
+
+- **473/473 완주** (383·403은 UFBoot 미수렴 연장 끝에 완료, FAILED 신규 0) → 증분 전송 →
+  gpu **1,014/1,014 축 완료** (신규 47 전부 AXES_OK).
+- **freeze_catalog.py Codex 2라운드 검토·수정** (#25 코멘트 2건): 8건 수정(매니페스트
+  필수화·원자적 쓰기·HOG 관측 충돌 강등 등) + 수정이 만든 거부권 순서 회귀 1건 재수정.
+  등급 임계값 불변, v2 대비 멤버십 0·HIGH 0·등급 이동 정확히 80(전부 규칙 교정).
+  경화판은 `gpu:~/subfam/freeze_catalog.py` (구판 `freeze_catalog_v2impl.py.bak`).
+- **v3 동결**: `gpu:~/subfam/subfamily_catalog_v3.tsv` — 1,014/1,014 universe 통과,
+  14,580 OG. **HIGH 2,767(19.0%) / PROVISIONAL 1,294 / UNRESOLVED 10,515 / NOT_EVALUATED 4.**
+  관전점 답: 대형 473 HIGH율 19.0% = 소형 18.9% **동률**. 행 없는 family 2
+  (`R1_OG0000202`·`R1_OG0003665`, Possvm 전부 싱글턴). 보고는 #25.
+- **slate3 발사됨**: 6111378(fwd %60)·6111379(rev %40)·6111380(s1 %16)·6111381(big6)·
+  6111382(hog_full3 %40) — 12,411+6 family, 제출 직후 PENDING. 완주 시 v4 동결(버전 분리).
+- #43 원고 결정 기록(§ 사용자 입력 대기 참조), 격리 마커 규약은 위키
+  `guide/handoff-hygiene.md`로 병합·이 문서에 적용.
+
+### (구) 재개 계약 — 473/473 확인 후 순서 (사용자 승인 완료: "전체 진행" + "완주 후 나머지 전체")
+
+> ❌ **SUPERSEDED (2026-08-27):** 아래 1–5는 위 블록대로 전부 실행 완료. 6(v4 동결)만 남음.
 
 1. 최종 증분: `ssh pronghorn 'cd ~/scratch/subfam_trees && for f in $(cut -f1 slate2.txt); do [ -e "$f/DONE" ] && printf "%s/codon123.treefile\n%s/codon12.treefile\n%s/DONE\n" "$f" "$f" "$f"; done | tar cf - -T -' | ssh gpu 'tar xf - -C ~/subfam/subfam_trees && cd ~/subfam && python3 convert_supports.py && bash run_subfam_axes.sh'`
    → gpu 1,014/1,014 확인
@@ -674,11 +711,16 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 
 - **앵커 라벨 레이어 착수 판단(구 ③)** — 선행 조건(게이트 보정) 이번에 충족됨. 어간 전이
   1.7% 오류/접미 5.6%라는 보정 결과가 설계 근거.
-- #43 원고 측 결정 2건: Chr3 tandem의 **Ppc1형 개명** 반영 여부 · 추정 종트리의 원고 채택
-  (+CAFE5/LSD2/divergence/branch-site 재검토 범위)
+- ✅ ~~#43 원고 측 결정 2건~~ → **결정됨 (2026-08-27, #43 코멘트 게시)**: 원고 정정(Chr3
+  tandem Ppc1형 개명 + 추정 종트리 채택)은 **분석 전부 완료 후 착수** — 473 트리 완주 →
+  카탈로그 v3 동결 → slate3 전수 확장(v4)까지. 그 전에는 이슈에 사실만 축적, 원고 파일
+  불가침. 착수 시 OG id는 최종 summary 기준으로 재확인(`0000168` vs `0000165` 이력 참조).
 - 5sp Cgig MAKER 유지의 공식 결정 기록(#43 ①, 현행 이원 운용이 사실상 결정)
 
 ## 7.05 (구) /clear 후 세션 재개 가이드 (2026-08-26 기준 — v3 테이블·subfamily 카탈로그 세션)
+
+> ❌ **SUPERSEDED (2026-08-27):** 2026-08-26 스냅샷, 기록 보존용. 이 절의 재개 계약·
+> 진행 수치·대기 항목을 실행하지 말 것 — 정본은 §7.
 
 ### 끝난 것 (전부 이슈에 기록됨 — #47, #25, #34, #38)
 
@@ -750,6 +792,10 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 - 앵커 라벨 레이어 착수 판단 (멤버십은 라벨과 무관하게 이미 동결)
 
 ## 7.1 (구) /clear 후 세션 재개 가이드 (2026-08-24 밤 기준)
+
+> ❌ **SUPERSEDED (2026-08-26):** 2026-08-24 스냅샷, 기록 보존용 — 정본은 §7. 이 절의
+> "돌고 있는 것"(vote_rescan 등)은 전부 종료됐고, family 수 20,133/20,726 논의는
+> arbiter_v3 **13,431**로 종결됐다(`results_15sp.md` 정본 블록). 아래 "정본" 줄은 당시 기준이다.
 
 **정본**: 이 파일 · `results_15sp.md` · `AGENTS.md` · `retired_data.md` · #47 · #26.
 ⚠️ **모니터·백그라운드 waiter는 /clear와 함께 전부 죽는다** — 손으로 확인할 것.
