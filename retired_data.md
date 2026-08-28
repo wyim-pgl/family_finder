@@ -44,3 +44,21 @@
 
 - 격리물이 다시 필요하면(재현 검증 등) **읽기만** 하고, 결과에 인용할 때는 "폐기 산출물 재파싱"임을 명시한다
 - 새 폐기가 생기면 이 파일과 현장 `README.md`에 **같이** 기록한다 — 한 곳에만 적힌 사실이 이 프로젝트 오류의 공통 패턴이었다
+
+## 2026-08-28 추가 — 세대 구획(partition) 완결
+
+**무효 이관 2건**: `output_14sp/`, `output_17sp/` (+`output_14sp_launch.log`) →
+`RETIRED_DO_NOT_USE/`. 사유는 data_14sp/17sp와 동일 — **더미 종트리(전 가지 1.0) 런**.
+data만 격리되고 output이 활성 트리에 남아 있던 잔무. 이관 직후 `find -L` 깨진 심링크 0 확인.
+
+**상태 마커 체계 도입**: 활성 트리의 모든 분석 세대 디렉터리에 `_CANON_STATUS.txt`
+(CANON / SUPERSEDED / MIXED + 대체물 포인터) 배치 — pronghorn 11곳
+(output_15sp_v2·output_5sp_v2 = CANON, output_5sp·output_11sp* = SUPERSEDED,
+arbiter_v3·subfam_trees·hog_pilot·vote_rescan·mM_repair·mcry_direct = CANON),
+gpu 4곳 (subfam·prostt5_15sp·annot_panel = CANON, **pepc_pilot = MIXED** — canonical
+파일과 _M 오염 시대 파일이 공존, 개별 파일은 resume.md 대조).
+최상위 규칙 파일: `pronghorn:~/scratch/bin/family_finder/ANALYSIS_PARTITIONS.txt`.
+
+**구획 3계층**: ① `RETIRED_DO_NOT_USE/` = 무효(입력 금지, 이 대장이 사유 기록)
+② `SUPERSEDED` 마커 = 구세대(비교 기준선으로만, 새 분석 입력 금지)
+③ `CANON` 마커 = 현행 정본. 새 분석은 CANON만 소비하고, 산출 디렉터리에 자기 마커를 만든다.

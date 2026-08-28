@@ -702,9 +702,17 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 - **big6 재배선**: s1 원본 6111381 예상 시작 08-30(Priority 대기) → **S2 클론 6120178
   즉시 가동**(`subfam_big6_s2.sbatch`, 태스크 0·1 cpu-76/78 RUNNING, %2). S2 상한도
   14일이라 walltime 문제 없음. s1 원본은 LOCK/DONE 협동 백업으로 유지.
-- **남은 것**: 잔여 트리 완주 → 최종 증분+축 → `freeze_catalog.py --manifest
+- **남은 것**: big6 완주 → 최종 증분+축 → `freeze_catalog.py --manifest
   manifest_13431.txt --out ~/subfam/subfamily_catalog_v4.tsv` 정식 동결 → 코호트 분포
-  보고(#25). big6(>500 유전자 6개)는 family당 수일 예상 — 완주 대기가 병목.
+  보고(#25).
+- **v4 후속 계약 (사용자 지시 2026-08-28)**: v4 동결 후 **iceplant(Mcry) gene ID 매핑**
+  — Mcry direct 큐레이션 테이블(467 유전자, `opuntia_coche/revision/cam_results/`)을
+  v4 카탈로그의 Mcry 멤버십으로 조인해 family/subfamily 라벨 레이어(버전드, 멤버십
+  불변)를 만든다. 게이트 보정 결과대로 **어간(family) 전이는 자동**(오류 1.7%),
+  **접미(subfamily)는 `anchor_transferability()` 트리 게이트 경유**(conflict 5.6%).
+- **세대 구획 완결 (2026-08-28)**: output_14sp/17sp → RETIRED 이관, 전 분석 디렉터리에
+  `_CANON_STATUS.txt`(CANON/SUPERSEDED/MIXED) 15곳 배치, 규칙은
+  `ANALYSIS_PARTITIONS.txt` + retired_data.md 2026-08-28 절.
 - #43 원고 결정 기록(§ 사용자 입력 대기 참조), 격리 마커 규약은 위키
   `guide/handoff-hygiene.md`로 병합·이 문서에 적용.
 
