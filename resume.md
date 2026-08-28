@@ -673,6 +673,27 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
   (`R1_OG0000202`·`R1_OG0003665`, Possvm 전부 싱글턴). 보고는 #25.
 - **slate3 발사됨**: 6111378(fwd %60)·6111379(rev %40)·6111380(s1 %16)·6111381(big6)·
   6111382(hog_full3 %40) — 12,411+6 family, 제출 직후 PENDING. 완주 시 v4 동결(버전 분리).
+
+### v4 진행 상태 (2026-08-27 밤 — 발사 당일 대부분 소화)
+
+- **slate3 트리 12,375/12,411** (발사 2.5h 만에 99%+; 잔여 ~36은 대형급 UFBoot 연장,
+  fwd 태스크가 소화 중). FAILED 0.
+- **HOG 축 완결**: 산출 12,642 + **적용불가 790**(1종 501/2종 286/pep부재 2 — 종간
+  orthology 미정의라 OrthoFinder가 exit 0·테이블 없이 종료, §7.05 침묵사망 계열.
+  재실행 대상 아님, freeze가 기술 결손 처리) = 13,431 전체 커버, 갭 0 (#25 기록).
+- **gpu 증분 완료**: 트리 12,363 전송 + convert_supports + **8-way 병렬 축**
+  (`run_axes_list.sh`, /tmp/axes_chunk_*) 12,363/12,363 실패 0 — 직렬 10–20h를 ~2h로.
+  HOG N_root 전송 완료. ⚠️ 함정: 감시에서 `pgrep -fc run_axes_list.sh`가 **감시 자신의
+  ssh 명령줄을 매칭**해 영원히 2를 반환 (위키 pgrep -f 자기오살 규칙 그대로).
+- **v4 스모크 통과**: `manifest_13431.txt`(= 1,014+12,411+6, arbiter_v3 정본 수와 일치)
+  → 13,377 처리 / 플래그 54 = 미전송분과 일치. 인터림 HIGH 5,440 / PROV 4,286 /
+  UNRES 26,056.
+- **big6 재배선**: s1 원본 6111381 예상 시작 08-30(Priority 대기) → **S2 클론 6120178
+  즉시 가동**(`subfam_big6_s2.sbatch`, 태스크 0·1 cpu-76/78 RUNNING, %2). S2 상한도
+  14일이라 walltime 문제 없음. s1 원본은 LOCK/DONE 협동 백업으로 유지.
+- **남은 것**: 잔여 트리 완주 → 최종 증분+축 → `freeze_catalog.py --manifest
+  manifest_13431.txt --out ~/subfam/subfamily_catalog_v4.tsv` 정식 동결 → 코호트 분포
+  보고(#25). big6(>500 유전자 6개)는 family당 수일 예상 — 완주 대기가 병목.
 - #43 원고 결정 기록(§ 사용자 입력 대기 참조), 격리 마커 규약은 위키
   `guide/handoff-hygiene.md`로 병합·이 문서에 적용.
 
