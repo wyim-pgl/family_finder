@@ -674,7 +674,26 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
 - **slate3 발사됨**: 6111378(fwd %60)·6111379(rev %40)·6111380(s1 %16)·6111381(big6)·
   6111382(hog_full3 %40) — 12,411+6 family, 제출 직후 PENDING. 완주 시 v4 동결(버전 분리).
 
-### v4 진행 상태 (2026-08-28 아침 — big6만 남음)
+### ✅ v4 동결 + iceplant 라벨 레이어 v1 완결 (2026-08-29)
+
+- **big6 6/6 완주** (R1_OG0003670은 codon123에만 19.5h — 최난물, 실패 0) → 증분·축 →
+  **v4 동결**: `gpu:~/subfam/subfamily_catalog_v4.tsv` — 13,431/13,431, 36,150 OG,
+  플래그 32 = 트리 적용불가 목록과 정확 일치. **v3 대비 공통 1,014에서 등급·멤버십
+  diff 0** (결정론 실증). 코호트: v3 밴드 HIGH 19.0% / slate3 12.5%(HOG 적용불가가
+  PROVISIONAL 14.0%를 만듦) / big6 2.7%(3/110 — >500유전자는 codon12 재현 거의 불가,
+  30–500 밴드가 sweet spot이라는 사후 검증). 행 없는 family 1,101 = Possvm 전부-싱글턴.
+  버전 체계: v2(구현 구판 기준선)·v3(사전 등록 밴드 정본)·v4(전 커버리지). 보고 #25.
+- **iceplant 매핑 (사용자 지시 08-28) 완결**: `gpu:~/subfam/labels_mcry_direct_v1.tsv`
+  — 큐레이션 457/467 배치, family 366 라벨(stem_auto, 모듈 16/16), OG 294
+  suffix_needs_tree_gate(자동 전이 금지). **PEPC 검증: Ppc1+Ppc2 → R1_OG0000440(병합
+  PTPC 111), Ppc4 → R1_OG0009826(BTPC 분리)** — 채택 구조 합치. 다심볼 family 17개는
+  검토 목록. 조인 함정: summary_v3.tsv는 7컬럼 — 멤버는 `gene_list`(5번째), p[-1]은
+  cluster_id.
+- 남은 선택지: ATH 앵커·AFDB protein_name 축 추가(#33 연동), 다심볼 17 검토.
+
+### (구) v4 진행 상태 (2026-08-28 아침 — big6만 남음)
+
+> ❌ **SUPERSEDED (2026-08-29):** 위 블록으로 대체 — v4 동결·매핑까지 전부 완료.
 
 - **slate3 완전 해결 (12,411 수지 확정)**: DONE **12,379** + **적용불가 32**
   (`slate3_inapplicable.txt`, #25 기록). 32건은 fwd·rev 각 2회 시도 후 동일 에러 —
