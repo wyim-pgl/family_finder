@@ -1,0 +1,3 @@
+CANON — v4 정본 산출물의 로컬 읽기전용 사본 (2026-08-29 동기화).
+원격 정본: gpu:~/subfam/ + pronghorn:~/scratch/arbiter_v3/. 계산은 원격에서, 여기선 검증만.
+체크섬·재검증 결과는 README.md.

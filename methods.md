@@ -113,7 +113,7 @@ All analyses were performed on the PGL computing cluster. The software tools, ve
 | ete4 | 4.3.0 | Phylogenetic tree manipulation and distance computation | --- |
 | Biopython | 1.86 (Python 3.14.0) | Sequence file I/O | --- |
 | IQ-TREE | 2.3.6 | Species-tree branch-length estimation; alternative gene tree builder | -m GTR+G -B 1000 (species tree); not used for gene trees by default |
-| PAML/codeml | not recorded (see note) | Selection analysis on confirmed families | Site models (Yang 2007) |
+| PAML/codeml | 4.10.10 (29 Jan 2026 build) — *superseded the earlier "not recorded" entry* | Selection analysis on confirmed families | Site models (Yang 2007); pinned via `codeml_bin`, see the version table above |
 | Possvm | 1.2 (commit 1ee6113) | Duplication-aware subfamily partitioning | Species-overlap + MCL; -min_support_node 95; anchor leaves via -r |
 | TreeCluster | 1.0.5 | Support-constrained subfamily cross-check | max_clade mode; -s 0 -t 1.0 |
 | eggNOG-mapper | 2.1.15 | EC / gene symbol transfer by orthology | -m diamond |
@@ -123,7 +123,11 @@ All analyses were performed on the PGL computing cluster. The software tools, ve
 | DeepLoc | 2.1 | Subcellular localization + sorting signals | Full probability vectors retained; once per proteome |
 | SignalP | 6.0 | Secretory signal peptide prediction | Fast model |
 
-The codeml entry is deliberately blank. The pipeline's configuration files do not pin a codeml binary, so the default resolves to whichever `codeml` a shell happens to expose; no codeml is present on the cluster PATH the pipeline sets up, seven differing installations exist on the two hosts (PAML 4.9i through 4.10.10), and codeml prints no version banner, so a run cannot be attributed to a version after the fact. The branch-site results reported elsewhere were produced outside the pipeline path and their working directory has not been retained. A version will be stated here only once the binary is pinned in configuration and the analysis rerun from it.
+**Superseded (2026-08-27):** the codeml binary is now pinned at PAML 4.10.10 (29 Jan 2026 build)
+via `codeml_bin`, and run success is judged by output artifacts rather than exit code; see the
+version table above. The paragraph below records why the entry was blank until that pin landed.
+
+~~The codeml entry is deliberately blank.~~ The pipeline's configuration files do not pin a codeml binary, so the default resolves to whichever `codeml` a shell happens to expose; no codeml is present on the cluster PATH the pipeline sets up, seven differing installations exist on the two hosts (PAML 4.9i through 4.10.10), and codeml prints no version banner, so a run cannot be attributed to a version after the fact. The branch-site results reported elsewhere were produced outside the pipeline path and their working directory has not been retained. A version will be stated here only once the binary is pinned in configuration and the analysis rerun from it.
 
 Two entries in this table carry a caveat that a version number alone does not convey. Possvm is distributed as a git checkout and reports version 1.2 from two different commits; the analyses reported here used commit 1ee6113 (2024-07-19), and the commit rather than the version string identifies the code. CLEAN declares version 0.1 in its own setup file and publishes no tagged releases, so that string does not identify a code state either; the installation used here dates from 2026-08-20 and its source commit could not be recovered. ESMFold was not run as a standalone package: structures were predicted through the HuggingFace `transformers` implementation (`EsmForProteinFolding`) with the `facebook/esmfold_v1` checkpoint, not through `fair-esm`, whose folding path was unavailable in this environment. Structure prediction, structure search and subfamily partitioning ran on a GPU host separate from the CPU cluster used for the clustering pipeline.
 

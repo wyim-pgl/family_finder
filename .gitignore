@@ -9,3 +9,7 @@ build/
 *.swo
 *~
 .DS_Store
+
+# large result tables — canonical copies live on pronghorn/gpu (see results/*/README.md)
+results/**/*.tsv
+results/**/*.fa

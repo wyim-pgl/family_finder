@@ -73,7 +73,10 @@ After iterative clustering converges, genes that remain unplaced may still be tr
 
 1. Build HMM profiles from the protein alignments of all confirmed families (using `hmmbuild`)
 2. Search unplaced gene sequences against the profile database (using `hmmsearch`)
-3. Assign each gene to the best-matching family if E-value < threshold (default: 1e-5)
+3. Assign each gene to the family with the highest **bit score**, after an E-value floor
+   (default: 1e-5) removes weak hits. Selection never compares E-values — HMMER prints ties
+   (underflow to 0 and 2-significant-figure rounding), so bit score plus a best-vs-second
+   margin and coverage gate decides, and the margin/grade are recorded per assignment.
 4. Re-align and rebuild trees for affected families
 
 **Why HMMER succeeds where DIAMOND fails:** DIAMOND compares individual sequence pairs, so a divergent gene may not match any single family member well enough. HMM profiles capture position-specific conservation patterns across the entire family, detecting conserved domain architecture even in highly divergent sequences.

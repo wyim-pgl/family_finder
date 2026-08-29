@@ -1,0 +1,5 @@
+SUPERSEDED
+
+Reference-only copy of the retired 2026-05 15-species OrthoFinder tables.
+Do not use as input for new analyses. The documented replacement is
+pronghorn:~/scratch/arbiter_v3/summary_v3.tsv.

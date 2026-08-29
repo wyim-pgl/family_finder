@@ -1,0 +1,5 @@
+# ANALYSIS_PARTITIONS — 세대 구획 (2026-08-28)
+# 규칙: 각 분석 디렉터리의 _CANON_STATUS.txt가 상태를 말한다.
+# CANON = 현행 정본 / SUPERSEDED = 구세대(비교 기준선, 새 분석 입력 금지) / RETIRED_DO_NOT_USE = 무효(대장: repo retired_data.md)
+# 무효 이관 2026-08-28: output_14sp, output_17sp (더미 종트리 런 — data_14sp/17sp와 동일 사유)
+# gpu: ~/subfam(카탈로그 v2/v3/v4 버전 병존=CANON), ~/pepc_pilot(혼합 — resume.md 참조), ~/RETIRED_DO_NOT_USE
