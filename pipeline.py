@@ -684,6 +684,38 @@ def run(
         new_families = {}
         outlier_gene_ids = set()
 
+        # Preflight every confirmed result before mutating the in-memory
+        # family table. A worker/result bug can return the same OG more than
+        # once, and a resume/round-numbering bug can recreate a family already
+        # loaded from a completed round. Report every colliding ID and its
+        # actual count, then stop before any round result is persisted.
+        family_occurrences = {}
+        for result in results:
+            if result is None or result[1] is None:
+                continue
+            family_id = f"R{round_num}_{result[0]}"
+            family_occurrences[family_id] = (
+                family_occurrences.get(family_id, 0) + 1
+            )
+        collisions = {}
+        for family_id, new_count in family_occurrences.items():
+            occurrence_count = new_count + int(
+                family_id in all_confirmed_families
+            )
+            if occurrence_count > 1:
+                collisions[family_id] = occurrence_count - 1
+        if collisions:
+            details = "; ".join(
+                f"{family_id} collision_count={collision_count} "
+                f"occurrence_count={collision_count + 1}"
+                for family_id, collision_count in sorted(collisions.items())
+            )
+            raise RuntimeError(
+                "duplicate family IDs: " + details
+                + "; refusing to overwrite previously confirmed families "
+                  "(round-numbering, resume, or worker-result bug)"
+            )
+
         for r in results:
             if r is None:
                 continue
@@ -691,16 +723,6 @@ def run(
 
             if confirmed is not None:
                 family_id = f"R{round_num}_{og_id}"
-                # Defensive uniqueness check (issue #4): family ids are
-                # R{round}_{og_id}; a duplicate means the same round number
-                # ran twice (resume/round-numbering bug) and would silently
-                # overwrite a previously confirmed family.
-                if family_id in all_confirmed_families:
-                    logger.error(
-                        f"Duplicate family id {family_id}: overwriting a "
-                        f"previously confirmed family — this indicates a "
-                        f"round-numbering or resume bug"
-                    )
                 new_families[family_id] = confirmed
                 all_confirmed_families[family_id] = confirmed
 

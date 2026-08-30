@@ -329,6 +329,79 @@ def test_resume_accepts_an_empty_completed_outlier_pool(tmp_path):
     assert pipeline._load_completed_round_pool(tmp_path, round_num=1) == {}
 
 
+def test_a_duplicate_family_id_aborts_before_round_outputs_are_written(
+        tmp_path, monkeypatch):
+    # Arrange: a broken worker/result path returns the same OG id twice with
+    # different members. Last-write-wins would manufacture a plausible round
+    # while silently moving the first occurrence's genes back to the pool.
+    proteins = {
+        "Sp1_a": "MPEP", "Sp2_b": "MPEP",
+        "Sp3_c": "MPEP", "Sp4_d": "MPEP",
+        "Sp5_e": "MPEP", "Sp6_f": "MPEP",
+    }
+    cds = {gene: "ATGTAA" for gene in proteins}
+    pep_dir = tmp_path / "pep"
+    cds_dir = tmp_path / "cds"
+    outdir = tmp_path / "out"
+
+    monkeypatch.setattr(pipeline, "start_manifest", lambda *a, **k: None)
+    monkeypatch.setattr(
+        pipeline, "load_species_tree",
+        lambda path: SimpleNamespace(
+            leaves=lambda: [SimpleNamespace(name=f"Sp{i}")
+                            for i in range(1, 7)]),
+    )
+    monkeypatch.setattr(pipeline, "compute_pairwise_distances", lambda tree: {})
+    monkeypatch.setattr(pipeline, "validate_species_tree", lambda *a: [])
+    monkeypatch.setattr(pipeline, "_check_id_agreement", lambda *a: {})
+    monkeypatch.setattr(pipeline, "split_by_species", lambda *a, **k: None)
+    monkeypatch.setattr(pipeline, "run_orthofinder", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(
+        pipeline, "parse_orthogroups",
+        lambda path: {"OG0000001": list(proteins)},
+    )
+    monkeypatch.setattr(
+        pipeline, "parallel_map",
+        lambda *a, **k: [
+            ("OG0000001", {"Sp1_a", "Sp2_b"}, set()),
+            ("OG0000001", {"Sp3_c", "Sp4_d"}, set()),
+            ("OG0000001", {"Sp5_e", "Sp6_f"}, set()),
+        ],
+    )
+    monkeypatch.setattr(pipeline, "finish_manifest", lambda *a, **k: None)
+
+    from utils import seqio
+
+    def fake_seq_map(path):
+        return dict(cds if Path(path) == cds_dir else proteins)
+
+    monkeypatch.setattr(seqio, "build_seq_map", fake_seq_map)
+    config = Config(
+        max_rounds=1, n_workers=1, hmmer_rescue=False,
+        pseudogene_detection=False, merge_scan=False,
+    )
+
+    # Act / Assert: identify the exact family and collision count, and stop
+    # before any durable round/final result can make the run look completed.
+    with pytest.raises(
+            RuntimeError,
+            match=r"R1_OG0000001.*collision_count=2.*occurrence_count=3"):
+        pipeline.run(
+            protein_dir=str(pep_dir), cds_dir=str(cds_dir),
+            species_tree_path=str(tmp_path / "tree.nwk"),
+            outdir=str(outdir), config=config,
+        )
+
+    round_dir = outdir / "round_01"
+    assert not (round_dir / "confirmed_families.tsv").exists()
+    assert not (round_dir / "outlier_pool.fa").exists()
+    assert not (round_dir / "round_stats.json").exists()
+    assert not (outdir / "summary.tsv").exists()
+    # The diagnostic checkpoint remains "processing", so resume ignores this
+    # partial round and returns to the last genuinely completed checkpoint.
+    assert find_latest_checkpoint(outdir) is None
+
+
 # ---------------------------------------------------------------------------
 # pep/CDS ID-agreement report (issue #2)
 # ---------------------------------------------------------------------------

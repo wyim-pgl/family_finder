@@ -65,7 +65,7 @@ def parallel_map(
     try:
         manager = multiprocessing.Manager()
         log_queue = manager.Queue(-1)
-    except (OSError, PermissionError):
+    except (EOFError, OSError, PermissionError):
         log_queue = multiprocessing.Queue(-1)
     listener = QueueListener(log_queue, *handlers, respect_handler_level=True)
     listener.start()
