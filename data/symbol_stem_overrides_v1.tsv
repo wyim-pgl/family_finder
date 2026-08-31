@@ -1,0 +1,9 @@
+symbol_key	stem	suffix	scope_source	reason	added_in
+phyc	PHY	C	*	numeral-less family suffix (phytochrome C)	v1
+phyd	PHY	D	*	numeral-less family suffix (phytochrome D)	v1
+phya	PHY	A	*	numeral-less family suffix (phytochrome A)	v1
+phyb	PHY	B	*	numeral-less family suffix (phytochrome B)	v1
+phye	PHY	E	*	numeral-less family suffix (phytochrome E)	v1
+vha-a1	Vha-a	1	*	subunit letter is part of the stem (V-ATPase subunit a)	v1
+vha-a2	Vha-a	2	*	subunit letter is part of the stem (V-ATPase subunit a)	v1
+vha-a3	Vha-a	3	*	subunit letter is part of the stem (V-ATPase subunit a)	v1
