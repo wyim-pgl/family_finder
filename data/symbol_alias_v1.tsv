@@ -1,0 +1,241 @@
+stem_key_a	stem_key_b	n_evidence	example_family	source	added_in
+apg	atg	6	R1_OG0006478	UniProt:Q8RUS5(Arabidopsis thaliana) synonyms=ATG9|APG9 ;; Araport11:AT2G31260 synonyms=APG9|ATAPG9|ATG9	v1
+cop	csn	5	R1_OG0007289	UniProt:Q8L5U0(Arabidopsis thaliana) synonyms=CSN4|COP8|FUS4 ;; Araport11:AT5G42970 synonyms=ATS4|COP14|COP8|CSN4|EMB134|FUS4	v1
+npf	nrt	4	R1_OG0001931	Araport11:AT1G12110 synonyms=ATNRT1|AtNPF6.3|B-1|CHL1|CHL1-1|NPF6.3 ;; Araport11:AT1G69850 synonyms=AIT1|ATNRT1:2|AtNPF4.6|NPF4.6|NRT1.2|NRT1:2	v1
+cyp	fah	4	R1_OG0002280	UniProt:Q42600(Arabidopsis thaliana) synonyms=CYP84A1|FAH1 ;; Araport11:AT4G36220 synonyms=CYP84A1|FAH1	v1
+hb	zhd	4	R1_OG0005151	UniProt:Q9SB61(Arabidopsis thaliana) synonyms=ZHD1|HB22|MEE68 ;; Araport11:AT4G24660 synonyms=ATHB22|HB22|MEE68|ZHD2	v1
+med	rfr	4	R1_OG0005719	UniProt:Q9LUG9(Arabidopsis thaliana) synonyms=MED33A|MED24A|MED5_2|MED5A|RFR1 ;; Araport11:AT3G23590 synonyms=MED33A|RFR1	v1
+xt	xxt	4	R1_OG0007742	UniProt:Q9LZJ3(Arabidopsis thaliana) synonyms=XXT1|XT1 ;; Araport11:AT3G62720 synonyms=ATXT1|AtXXT1|XT1|XXT1	v1
+tbl	xoat	4	R1_OG0009285	UniProt:Q0D3C8(Oryza sativa subsp. japonica) synonyms=XOAT7|TBL14 ;; UniProt:Q0D3C8(Oryza sativa subsp. japonica) synonyms=XOAT7|TBL14	v1
+nup	sar	4	R1_OG0010556	UniProt:Q9C811-2(Arabidopsis thaliana) synonyms=NUP160|SAR1 ;; Araport11:AT1G33410 synonyms=ATNUP160|NUP160|SAR1	v1
+cgl	gnti	4	R1_OG0015921	UniProt:Q9XGM8(Arabidopsis thaliana) synonyms=GNTI|CGL1 ;; Araport11:AT4G38240 synonyms=CGL|CGL1|GNTI	v1
+csn	fus	3	R1_OG0002505	UniProt:Q8W207(Arabidopsis thaliana) synonyms=CSN2|FUS12 ;; Araport11:AT2G26990 synonyms=ATCSN2|COP12|CSN2|FUS12	v1
+dfb	fpgs	3	R1_OG0006811	UniProt:F4K2A1-2(Arabidopsis thaliana) synonyms=FPGS1|ATDFB|DFB|FPGS2|FPGSB ;; Araport11:AT5G05980 synonyms=ATDFB|DFB|FPGS1	v1
+nudt	nudx	3	R1_OG0012007	UniProt:Q9C6Z2(Arabidopsis thaliana) synonyms=NUDT25|NUDX25 ;; UniProt:P93740(Arabidopsis thaliana) synonyms=NUDT23|NUDX23	v1
+apum	pum	2	R1_OG0000059	Araport11:AT1G72320 synonyms=APUM23|PUM23 ;; Araport11:AT2G29190 synonyms=APUM2|PUM2	v1
+dnm	drp	2	R1_OG0000414	UniProt:O00429-3(Homo sapiens) synonyms=DNM1L|DLP1|DRP1 ;; UniProt:O00429-2(Homo sapiens) synonyms=DNM1L|DLP1|DRP1	v1
+ermo	sec	2	R1_OG0000610	UniProt:Q9SFU0(Arabidopsis thaliana) synonyms=SEC24A|ERMO2 ;; Araport11:AT3G07100 synonyms=AtSEC24A|ERMO2|SEC24A	v1
+ads	fad	2	R1_OG0000960	UniProt:Q949X0(Arabidopsis thaliana) synonyms=ADS3|FAD5|FADB ;; Araport11:AT3G15850 synonyms=ADS3|AtADS3|FAD5|FADB|JB67	v1
+cals	gsl	2	R1_OG0001319	UniProt:Q9S9U0(Arabidopsis thaliana) synonyms=CALS11|GSL1 ;; UniProt:Q9ZT82(Arabidopsis thaliana) synonyms=CALS12|GSL5|PMR4	v1
+del	e	2	R1_OG0001465	UniProt:Q8LSZ4(Arabidopsis thaliana) synonyms=E2FE|DEL1|E2L3|ELP2 ;; Araport11:AT3G48160 synonyms=DEL1|E2FE|E2L3	v1
+ats	rpn	2	R1_OG0001995	UniProt:Q9LP45(Arabidopsis thaliana) synonyms=RPN6|ATS9|RPN6A ;; Araport11:AT1G29150 synonyms=ATS9|RPN6	v1
+alpha-snap	asnap	2	R1_OG0002260	Araport11:AT3G56190 synonyms=ALPHA-SNAP2|ASNAP ;; Araport11:AT3G56190 synonyms=ALPHA-SNAP2|ASNAP	v1
+pol	til	2	R1_OG0002313	UniProt:F4HW04(Arabidopsis thaliana) synonyms=POL2A|ABO4|EMB142|EMB2284|EMB529|ESD7 ;; Araport11:AT1G08260 synonyms=ABO4|EMB142|EMB2284|EMB529|ESD7|POL2A	v1
+lpcat	lplat	2	R1_OG0002426	UniProt:F4IDU4(Arabidopsis thaliana) synonyms=LPCAT1|LPLAT1 ;; Araport11:AT1G12640 synonyms=AtLPLAT1|LPCAT1|LPLAT1	v1
+orth	vim	2	R1_OG0002722	UniProt:Q8VYZ0-2(Arabidopsis thaliana) synonyms=ORTH2|VIM1 ;; Araport11:AT1G57820 synonyms=ORTH2|VIM1	v1
+cdp	parc	2	R1_OG0002944	UniProt:Q8VY16(Arabidopsis thaliana) synonyms=CDP1|ARC6H|PARC6|SUBA2 ;; Araport11:AT3G19180 synonyms=ARC6H|ATCDP1|CDP1|PARC6	v1
+emb	tad	2	R1_OG0003172	UniProt:Q6IDB6(Arabidopsis thaliana) synonyms=TAD2|EMB2191 ;; Araport11:AT1G48175 synonyms=AtTAD2|TAD2|emb2191	v1
+pldp	plpzeta	2	R1_OG0003619	UniProt:Q9M9W8(Arabidopsis thaliana) synonyms=PLPZETA2|PLDP2 ;; UniProt:Q9M9W8(Arabidopsis thaliana) synonyms=PLPZETA2|PLDP2	v1
+atatg	atg	2	R1_OG0003660	Araport11:AT3G62770 synonyms=ATG18a|AtATG18a|PEUP2 ;; Araport11:AT3G62770 synonyms=ATG18a|AtATG18a|PEUP2	v1
+aero	ero	2	R1_OG0003806	UniProt:Q7X9I4(Arabidopsis thaliana) synonyms=AERO2|ERO2 ;; Araport11:AT2G38960 synonyms=AERO2|ERO2	v1
+fba	pde	2	R1_OG0004082	UniProt:Q9ZU52(Arabidopsis thaliana) synonyms=FBA3|PDE345 ;; Araport11:AT2G01140 synonyms=AtFBA3|FBA3|PDE345	v1
+fve	msi	2	R1_OG0004659	UniProt:O22607(Arabidopsis thaliana) synonyms=MSI4|ACG1|FVE ;; UniProt:O22607(Arabidopsis thaliana) synonyms=MSI4|ACG1|FVE	v1
+sat	serat	2	R1_OG0004860	Araport11:AT3G13110 synonyms=ATSERAT2;2|SAT-1|SAT-A|SAT-M|SAT3|SERAT2;2 ;; Araport11:AT5G56760 synonyms=ATSERAT1;1|SAT-52|SAT5|SERAT1;1	v1
+pok	vps	2	R1_OG0004981	UniProt:Q94KD3(Arabidopsis thaliana) synonyms=VPS52|POK|TTD8 ;; Araport11:AT1G71270 synonyms=ATVPS52|POK|TTD8|VPS52	v1
+pex	ted	2	R1_OG0005319	UniProt:Q9CA86(Arabidopsis thaliana) synonyms=PEX2|TED3 ;; Araport11:AT1G79810 synonyms=ATPEX2|PEX2|TED3	v1
+fla	sos	2	R1_OG0005441	UniProt:Q9SNC3(Arabidopsis thaliana) synonyms=FLA4|SOS5 ;; Araport11:AT3G46550 synonyms=FLA4|SOS5	v1
+oep	tpr	2	R1_OG0005445	UniProt:B7ZWR6(Arabidopsis thaliana) synonyms=OEP61|TPR7 ;; Araport11:AT5G21990 synonyms=AtTPR7|OEP61|TPR7	v1
+prp	sus	2	R1_OG0005827	UniProt:Q9SSD2(Arabidopsis thaliana) synonyms=PRP8A|EMB14|EMB177|EMB33|SOF81|SUS2 ;; Araport11:AT1G80070 synonyms=EMB14|EMB177|EMB33|PRP8|SUS2	v1
+kn	syp	2	R1_OG0006057	UniProt:Q42374(Arabidopsis thaliana) synonyms=KN|SYP111 ;; Araport11:AT1G08560 synonyms=ATSYP111|KN|KNOLLE|SYP111	v1
+emb	tic	2	R1_OG0006401	UniProt:Q8LPR8(Arabidopsis thaliana) synonyms=TIC100|EMB1211 ;; Araport11:AT5G22640 synonyms=TIC100|emb1211	v1
+ask	sk	2	R1_OG0006499	UniProt:Q96287(Arabidopsis thaliana) synonyms=ASK8|SK32 ;; UniProt:Q39019(Arabidopsis thaliana) synonyms=ASK10|HIR1|SK41	v1
+gata	zml	2	R1_OG0006569	UniProt:Q8GXL7-2(Arabidopsis thaliana) synonyms=GATA24|TIFY2B|ZML1 ;; Araport11:AT1G51600 synonyms=GATA28|TIFY2A|ZML2	v1
+pex	sse	2	R1_OG0006681	UniProt:Q8S8S1(Arabidopsis thaliana) synonyms=PEX16|SSE1 ;; Araport11:AT2G45690 synonyms=ATPEX16|PEX16|SSE|SSE1	v1
+snrk	srk	2	R1_OG0006752	UniProt:Q9C958(Arabidopsis thaliana) synonyms=SRK2B|OSKL6|SNRK2.10 ;; Araport11:AT1G10940 synonyms=ASK1|SNRK2.4|SRK2A	v1
+hsl	val	2	R1_OG0006895	UniProt:Q5CCK4(Arabidopsis thaliana) synonyms=VAL2|HSL1 ;; Araport11:AT4G32010 synonyms=HSI2-L1|HSL1|VAL2	v1
+antr	pht	2	R1_OG0006946	UniProt:Q3E9A0(Arabidopsis thaliana) synonyms=ANTR6|PHT4;5 ;; UniProt:Q9FKV1(Arabidopsis thaliana) synonyms=ANTR5|PHT4;6	v1
+cct	med	2	R1_OG0007191	UniProt:H3K2Y6(Arabidopsis thaliana) synonyms=MED12|CCT|CRP|MED12_1 ;; Araport11:AT4G00450 synonyms=CCT|CRP|MED12	v1
+dbe	isa	2	R1_OG0007218	UniProt:Q8L735(Arabidopsis thaliana) synonyms=ISA2|DBE1 ;; Araport11:AT1G03310 synonyms=ATISA2|AtBE2|BE2|DBE1|ISA2	v1
+med	sfr	2	R1_OG0007388	UniProt:F4JGZ1-2(Arabidopsis thaliana) synonyms=MED16|MED16_1|SFR6 ;; Araport11:AT4G04920 synonyms=AtSFR6|IEN1|MED16|SFR6|YID1	v1
+chr	ddm	2	R1_OG0008001	UniProt:Q9XFH4(Arabidopsis thaliana) synonyms=DDM1|CHA1|CHR1|SOM1|SOM4 ;; UniProt:Q9XFH4(Arabidopsis thaliana) synonyms=DDM1|CHA1|CHR1|SOM1|SOM4	v1
+emb	mterf	2	R1_OG0008274	UniProt:Q84X53(Arabidopsis thaliana) synonyms=MTERF1|EMB93|SOLDAT10 ;; UniProt:F4IHL3(Arabidopsis thaliana) synonyms=MTERF2|EMB2219	v1
+atx	sdg	2	R1_OG0008737	UniProt:Q8GZ42(Arabidopsis thaliana) synonyms=ATX5|SDG29|SET29 ;; Araport11:AT3G61740 synonyms=ATX3|SDG14	v1
+npf	ptr	2	R1_OG0008861	UniProt:Q9M390(Arabidopsis thaliana) synonyms=NPF8.1|PTR1 ;; Araport11:AT3G54140 synonyms=ATPTR1|AtNPF8.1|NPF8.1|PTR1	v1
+atxr	sdg	2	R1_OG0008916	UniProt:O23372(Arabidopsis thaliana) synonyms=ATXR3|SDG2|SET2 ;; Araport11:AT4G15180 synonyms=ATXR3|SDG2	v1
+lda	pu	2	R1_OG0009248	UniProt:Q8GTR4(Arabidopsis thaliana) synonyms=PU1|LDA ;; Araport11:AT5G04360 synonyms=ATLDA|ATPU1|LDA|PU1	v1
+eif	tif	2	R1_OG0009435	Araport11:AT4G33250 synonyms=ATTIF3K1|EIF3K|TIF3K1 ;; UniProt:P78795(Schizosaccharomyces pombe) synonyms=tif35|eif3g	v1
+fab	kas	2	R1_OG0009436	UniProt:Q9C9P4(Arabidopsis thaliana) synonyms=KAS2|FAB1 ;; Araport11:AT1G74960 synonyms=ATKAS2|FAB1|KAS2	v1
+apc	emb	2	R1_OG0009707	UniProt:Q9FFF9(Arabidopsis thaliana) synonyms=APC1|EMB2771 ;; Araport11:AT5G05560 synonyms=APC1|EMB2771	v1
+epc	gmt	2	R1_OG0010211	UniProt:Q9LY62(Arabidopsis thaliana) synonyms=GMT1|EPC1 ;; UniProt:Q9LY62(Arabidopsis thaliana) synonyms=GMT1|EPC1	v1
+apg	tatc	2	R1_OG0010289	UniProt:Q9SJV5(Arabidopsis thaliana) synonyms=TATC|APG2|UNE3 ;; Araport11:AT2G01110 synonyms=APG2|PGA2|TATC|UNE3	v1
+hit	vps	2	R1_OG0010296	UniProt:Q0WQF4-2(Arabidopsis thaliana) synonyms=VPS53|HIT1 ;; Araport11:AT1G50500 synonyms=ATVPS53|HIT1|VPS53	v1
+brn	nac	2	R1_OG0010366	UniProt:Q9SV87(Arabidopsis thaliana) synonyms=BRN2|NAC070 ;; Araport11:AT4G10350 synonyms=ANAC070|BRN2|NAC070	v1
+pde	ptac	2	R1_OG0010446	UniProt:F4JF21-2(Arabidopsis thaliana) synonyms=PTAC10|PAP3|PDE312|TAC10 ;; Araport11:AT3G48500 synonyms=PDE312|PTAC10|TAC10	v1
+cla	dxs	2	R1_OG0010649	Araport11:AT4G15560 synonyms=AtCLA1|CLA|CLA1|DEF|DXPS2|DXS ;; Araport11:AT4G15560 synonyms=AtCLA1|CLA|CLA1|DEF|DXPS2|DXS	v1
+crb	csp	2	R1_OG0010672	UniProt:Q9SA52(Arabidopsis thaliana) synonyms=CSP41B|CRB|HIP1.3 ;; Araport11:AT1G09340 synonyms=CRB|CSP41B|HIP1.3	v1
+hpy	mms	2	R1_OG0010813	UniProt:Q8GYH7(Arabidopsis thaliana) synonyms=MMS21|HPY2 ;; Araport11:AT3G15150 synonyms=ATMMS21|HPY2|MMS21	v1
+iput	pgsip	2	R1_OG0010841	UniProt:Q8GWB7(Arabidopsis thaliana) synonyms=IPUT1|PGSIP6 ;; Araport11:AT5G18480 synonyms=IPUT1|PGSIP6	v1
+pde	tgd	2	R1_OG0010892	UniProt:Q9M903(Arabidopsis thaliana) synonyms=TGD4|PDE320 ;; Araport11:AT3G06960 synonyms=PDE320|TGD4	v1
+ashr	sdg	2	R1_OG0010997	UniProt:Q949T8(Arabidopsis thaliana) synonyms=ASHR3|SDG4|SET4|SML ;; Araport11:AT4G30860 synonyms=ASHR3|SDG4	v1
+ozs	slac	2	R1_OG0011220	UniProt:Q9LD83(Arabidopsis thaliana) synonyms=SLAC1|CDI3|OZS1|RCD3 ;; Araport11:AT1G12480 synonyms=CDI3|OZS1|RCD3|SLAC1	v1
+cxip	grxs	2	R1_OG0011223	UniProt:Q8H7F6(Arabidopsis thaliana) synonyms=GRXS16|CXIP2 ;; UniProt:Q84Y95(Arabidopsis thaliana) synonyms=GRXS14|CXIP1|GRX5P|GRXCP	v1
+agd	ziga	2	R1_OG0011238	UniProt:Q8RXE7-2(Arabidopsis thaliana) synonyms=AGD14|ZIG4|ZIGA4 ;; Araport11:AT1G08680 synonyms=AGD14|ZIGA4	v1
+pbs	rar	2	R1_OG0011255	UniProt:Q9SE33(Arabidopsis thaliana) synonyms=RAR1|PBS2|RPR2 ;; Araport11:AT5G51700 synonyms=ATRAR1|PBS2|RAR1|RPR2	v1
+cyl	naglu	2	R1_OG0011370	UniProt:Q9FNA3(Arabidopsis thaliana) synonyms=NAGLU|CYL1 ;; Araport11:AT5G13690 synonyms=CYL1|N-ACETYL-GLUCOSAMINIDASE|NAGLU	v1
+pph	tap	2	R1_OG0012125	UniProt:P49599(Arabidopsis thaliana) synonyms=PPH1|PP2C57|TAP38 ;; Araport11:AT4G27800 synonyms=PPH1|TAP38	v1
+abci	tgd	2	R1_OG0012210	UniProt:Q8L4R0(Arabidopsis thaliana) synonyms=TGD1|ABCI14 ;; Araport11:AT1G19800 synonyms=ABCI14|TGD1	v1
+ahp	hop	2	R1_OG0012322	UniProt:Q9FX64(Arabidopsis thaliana) synonyms=HOP2|AHP2 ;; Araport11:AT1G13330 synonyms=AHP2|HOP2	v1
+arpc	dis	2	R1_OG0012362	UniProt:Q8LGI3(Arabidopsis thaliana) synonyms=ARPC2A|DIS2 ;; Araport11:AT1G30825 synonyms=ARPC2A|DIS2	v1
+elo	hag	2	R1_OG0012823	UniProt:Q93ZR1(Arabidopsis thaliana) synonyms=HAG3|EAST1|ELO3|ELP3 ;; Araport11:AT5G50320 synonyms=AtELP3|EAST1|ELO3|ELP3|HAC8|HAG3	v1
+dwa	tho	2	R1_OG0012848	UniProt:Q8L4M1(Arabidopsis thaliana) synonyms=THO6|DWA1|THOC6 ;; Araport11:AT2G19430 synonyms=AtTHO6|DWA1|THO6	v1
+arf	ett	2	R1_OG0012899	UniProt:O23661(Arabidopsis thaliana) synonyms=ARF3|ETT ;; Araport11:AT2G33860 synonyms=ARF3|ETT	v1
+chlh	gun	2	R1_OG0013158	UniProt:Q9FNB0(Arabidopsis thaliana) synonyms=CHLH|ABAR|CCH|GUN5|RTL1 ;; Araport11:AT5G13630 synonyms=ABAR|CCH|CCH1|CHLH|GUN5	v1
+eny	idd	2	R1_OG0013426	UniProt:Q9LVQ7(Arabidopsis thaliana) synonyms=ENY|IDD1 ;; Araport11:AT5G66730 synonyms=ENHYDROUS|ENY|IDD1	v1
+hisn	impl	2	R1_OG0013932	UniProt:Q6NPM8(Arabidopsis thaliana) synonyms=HISN7|IMPL2 ;; Araport11:AT4G39120 synonyms=HISN7|IMPL2	v1
+kis	tfca	2	R1_OG0014321	UniProt:O04350(Arabidopsis thaliana) synonyms=TFCA|KIS ;; Araport11:AT2G30410 synonyms=KIS|TFCA	v1
+suc	sut	2	R1_OG0014456	UniProt:Q9FE59(Arabidopsis thaliana) synonyms=SUC4|SUT4 ;; Araport11:AT1G09960 synonyms=ATSUC4|ATSUT4|SUC4|SUT4	v1
+abcb	tap	2	R1_OG0014490	UniProt:P36370(Rattus norvegicus) synonyms=Tap1|Abcb2|Mtp1 ;; Araport11:AT5G39040 synonyms=ABCB27|ALS1|ATTAP2|AtALS1|TAP2	v1
+cdc	php	2	R1_OG0014552	UniProt:Q9LJ87(Arabidopsis thaliana) synonyms=CDC73|PHP ;; Araport11:AT3G22590 synonyms=CDC73|PHP	v1
+ebs	hrd	2	R1_OG0014583	UniProt:Q9LM25(Arabidopsis thaliana) synonyms=HRD3A|EBS5 ;; Araport11:AT1G18260 synonyms=EBS5|HRD3A	v1
+lcmt	sbi	2	R1_OG0014619	UniProt:Q8VY08(Arabidopsis thaliana) synonyms=LCMT1|SBI1 ;; Araport11:AT1G02100 synonyms=LCMT1|SBI1	v1
+dyad	swi	2	R1_OG0015074	UniProt:Q9FGN8(Arabidopsis thaliana) synonyms=DYAD|SWI1 ;; Araport11:AT5G51330 synonyms=DYAD|SWI1	v1
+mpt	pht	2	R1_OG0015187	UniProt:Q7DNC3(Arabidopsis thaliana) synonyms=MPT1|AT2|PHT3;3 ;; Araport11:AT2G17270 synonyms=MPT1|PHT3;3	v1
+cax	ccx	2	R1_OG0015220	UniProt:O04034(Arabidopsis thaliana) synonyms=CCX5|CAX11 ;; Araport11:AT1G08960 synonyms=ATCAX11|AtCXX5|CAX11|CCX5	v1
+grl	nap	2	R1_OG0015253	UniProt:Q5S2C4-2(Arabidopsis thaliana) synonyms=NAP1|GRL|NAP|NAPP ;; Araport11:AT2G35110 synonyms=GRL|NAP1|NAPP	v1
+drl	tkpr	2	R1_OG0015256	UniProt:Q500U8(Arabidopsis thaliana) synonyms=TKPR1|DRL1 ;; Araport11:AT4G35420 synonyms=DRL1|TKPR1	v1
+mdo	ten	2	R1_OG0015321	UniProt:Q6NME7(Arabidopsis thaliana) synonyms=TEN1|MDO1 ;; Araport11:AT1G56260 synonyms=MDO1|TEN1	v1
+bam	bmy	2	R1_OG0015819	UniProt:Q9FH80(Arabidopsis thaliana) synonyms=BAM8|BMY2 ;; Araport11:AT5G45300 synonyms=BAM8|BMY2	v1
+cks	kdsb	2	R1_OG0016035	UniProt:Q9M4G3(Zea mays) synonyms=KDSB|CKS|KDO1 ;; Araport11:AT1G53000 synonyms=AtCKS|CKS|KDSB	v1
+glutrbp	pgr	2	R1_OG0016231	UniProt:Q9LU39(Arabidopsis thaliana) synonyms=GLUTRBP|PGR7 ;; Araport11:AT3G21200 synonyms=GluTRBP|PGR7	v1
+gas	taf	2	R1_OG0016607	UniProt:Q9FH40(Arabidopsis thaliana) synonyms=TAF14B|GAS41|YAF9A ;; Araport11:AT5G45600 synonyms=GAS41|TAF14B|YAF9a	v1
+mag	vps	2	R1_OG0017757	UniProt:Q9STT2(Arabidopsis thaliana) synonyms=VPS29|MAG1 ;; Araport11:AT3G47810 synonyms=ATVPS29|MAG1|VPS29	v1
+map	ple	2	R1_OG0017885	UniProt:Q9FHM4(Arabidopsis thaliana) synonyms=MAP65-3|PLE ;; Araport11:AT5G51600 synonyms=ATMAP65-3|MAP65-3|PLE	v1
+bud	samdc	2	R1_OG0018356	UniProt:Q3E9D5(Arabidopsis thaliana) synonyms=SAMDC4|BUD2 ;; Araport11:AT5G18930 synonyms=BUD2|SAMDC4	v1
+dfl	gh	2	R1_OG0018380	UniProt:Q9ZNS2(Arabidopsis thaliana) synonyms=GH3.10|DFL2 ;; Araport11:AT4G03400 synonyms=DFL2|GH3-10	v1
+mterf	shot	2	R1_OG0019798	UniProt:Q9M219(Arabidopsis thaliana) synonyms=MTERF18|SHOT1 ;; UniProt:Q9M219(Arabidopsis thaliana) synonyms=MTERF18|SHOT1	v1
+far	ms	2	R1_OG0020089	UniProt:Q08891(Arabidopsis thaliana) synonyms=FAR2|MS2 ;; Araport11:AT3G11980 synonyms=FAR2|MS2	v1
+chs	tt	1	R1_OG0000396	Araport11:AT5G13930 synonyms=ATCHS|CHS|TT4	v1
+tic	ycf	1	R1_OG0000568	UniProt:P12222(Nicotiana tabacum) synonyms=TIC214|ycf1	v1
+med	pft	1	R1_OG0001270	Araport11:AT1G25540 synonyms=MED25|PFT1	v1
+emb	fgt	1	R1_OG0001380	UniProt:F4IF36(Arabidopsis thaliana) synonyms=FGT1|EMB1135	v1
+erd	osca	1	R1_OG0001483	UniProt:Q9C8G5(Arabidopsis thaliana) synonyms=OSCA3.1|ERD4	v1
+din	rfs	1	R1_OG0001757	UniProt:Q8RX87(Arabidopsis thaliana) synonyms=RFS6|DIN10|RS6	v1
+pux	say	1	R1_OG0002021	UniProt:F4JPR7(Arabidopsis thaliana) synonyms=PUX8|SAY1	v1
+clpb	hsp	1	R1_OG0002131	UniProt:P42730(Arabidopsis thaliana) synonyms=CLPB1|DLT1|HOT1|HSP101	v1
+pen	pten	1	R1_OG0002300	Araport11:AT3G19420 synonyms=ATPEN2|PEN2|PTEN2A	v1
+tet	trn	1	R1_OG0002707	UniProt:Q9FIQ5(Arabidopsis thaliana) synonyms=TRN2|TET1	v1
+aprr	prr	1	R1_OG0002870	Araport11:AT5G24470 synonyms=APRR5|PRR5	v1
+cb	cytb	1	R1_OG0003221	UniProt:O48845(Arabidopsis thaliana) synonyms=CYTB5-B|CB5-B|CB5-E	v1
+gatl	lgt	1	R1_OG0003233	UniProt:O48684(Arabidopsis thaliana) synonyms=GATL8|LGT9	v1
+efl	elf	1	R1_OG0003361	UniProt:Q94BS8(Arabidopsis thaliana) synonyms=EFL2|ELF4-L2	v1
+fut	pofut	1	R1_OG0003687	UniProt:Q5F2L1(Rattus norvegicus) synonyms=Pofut3|Fut10	v1
+dgat	tag	1	R1_OG0003930	Araport11:AT2G19450 synonyms=ABX45|AS11|ATDGAT|AtDGAT1|DGAT1|RDS1	v1
+hdr	isph	1	R1_OG0004228	Araport11:AT4G34350 synonyms=CLB6|HDR|ISPH	v1
+cyp	dwf	1	R1_OG0004283	Araport11:AT3G50660 synonyms=AtDWF4|CLM|CLOMAZONE-RESISTANT|CYP90B1|DWF4|PSC1	v1
+hm	spp	1	R1_OG0004319	UniProt:Q8TCT9(Homo sapiens) synonyms=HM13|H13|IMP1|PSL3|SPP	v1
+lno	nup	1	R1_OG0004369	UniProt:F4I1T7(Arabidopsis thaliana) synonyms=NUP214|EMB1011|LNO1	v1
+tlp	tulp	1	R1_OG0004404	UniProt:Q8VY21(Arabidopsis thaliana) synonyms=TULP3|TLP3	v1
+cdf	cpp	1	R1_OG0004466	Araport11:AT5G23040 synonyms=CDF1|CPP1	v1
+gft	gonst	1	R1_OG0004495	UniProt:Q84L08(Arabidopsis thaliana) synonyms=GFT1|GONST4	v1
+cue	ppt	1	R1_OG0004677	Araport11:AT5G33320 synonyms=ARAPPT|CUE1|PPT	v1
+elf	vip	1	R1_OG0004759	UniProt:F4HQA1(Arabidopsis thaliana) synonyms=VIP2|ELF7	v1
+otld	otu	1	R1_OG0004940	UniProt:Q9XIP2(Arabidopsis thaliana) synonyms=OTU6|OTLD1	v1
+bac	mbac	1	R1_OG0005008	UniProt:Q84UC7(Arabidopsis thaliana) synonyms=BAC1|MBAC1	v1
+emb	fold	1	R1_OG0005248	UniProt:O65271(Arabidopsis thaliana) synonyms=FOLD4|DHC4|EMB3127	v1
+ampd	fac	1	R1_OG0005358	UniProt:O80452(Arabidopsis thaliana) synonyms=AMPD|FAC1	v1
+pigm	pnt	1	R1_OG0005361	UniProt:Q500W7(Arabidopsis thaliana) synonyms=PIGM|PNT1	v1
+ptac	vipp	1	R1_OG0005419	Araport11:AT1G65260 synonyms=PTAC4|VIPP1	v1
+fpg	mmh	1	R1_OG0005826	Araport11:AT1G52500 synonyms=ATFPG-1|ATFPG-2|ATMMH-1|ATMMH-2|FPG-1|FPG-2	v1
+alg	lew	1	R1_OG0005958	UniProt:Q9XEE9(Arabidopsis thaliana) synonyms=ALG11|LEW3	v1
+fma	map	1	R1_OG0005960	UniProt:O60085(Schizosaccharomyces pombe) synonyms=fma2|map2	v1
+cgs	mto	1	R1_OG0006021	Araport11:AT3G01120 synonyms=AtCGS1|AtCYS1|CGS|CGS1|MTO1	v1
+eno	los	1	R1_OG0006330	Araport11:AT2G36530 synonyms=ENO2|LOS2	v1
+gsa	heml	1	R1_OG0006426	UniProt:Q8FL16(Escherichia coli O6:H1) synonyms=hemL|gsa|popC	v1
+mak	naa	1	R1_OG0006662	UniProt:Q5ZHV2(Gallus gallus) synonyms=NAA35|MAK10	v1
+cop	fus	1	R1_OG0006760	Araport11:AT3G13550 synonyms=CIN4|COP10|EMB144|FUS9	v1
+arg	atj	1	R1_OG0007089	UniProt:Q9ZSY2(Arabidopsis thaliana) synonyms=ATJ15|ARG1|B15	v1
+cyp	pub	1	R1_OG0007115	UniProt:Q9FJX0(Arabidopsis thaliana) synonyms=CYP65|PUB49	v1
+apg	hisn	1	R1_OG0007155	Araport11:AT2G36230 synonyms=APG10|HISN3	v1
+dse	emb	1	R1_OG0007179	Araport11:AT4G29860 synonyms=ALT2|AtDSE1|DSE1|EMB2757|TAN|TANMEI	v1
+ats	lpat	1	R1_OG0007217	UniProt:Q8GXU8(Arabidopsis thaliana) synonyms=LPAT1|ATS2|EMB1995|LPAAT1	v1
+glo	gox	1	R1_OG0007551	UniProt:O49506(Arabidopsis thaliana) synonyms=GLO5|GOX3	v1
+bhlh	myc	1	R1_OG0007567	UniProt:Q9CAD0(Arabidopsis thaliana) synonyms=BHLH2|EGL1|EGL3|EN30|MYC146	v1
+agpl	apl	1	R1_OG0007590	UniProt:Q6AVT2(Oryza sativa subsp. japonica) synonyms=AGPL1|APL1	v1
+ahl	hl	1	R1_OG0007676	Araport11:AT5G54390 synonyms=AHL|ATAHL|HAL2-like|HL	v1
+adl	dek	1	R1_OG0008005	UniProt:Q6ZFZ4(Oryza sativa subsp. japonica) synonyms=ADL1|DEK1|ODM63|SHL3	v1
+gta	spt	1	R1_OG0008037	Araport11:AT4G08350 synonyms=GTA02|GTA2|SPT5-2	v1
+med	swp	1	R1_OG0008092	Araport11:AT3G04740 synonyms=ATMED14|MED14|SWP	v1
+hemd	uros	1	R1_OG0008095	UniProt:O48721(Arabidopsis thaliana) synonyms=UROS|HEMD	v1
+emb	tfcb	1	R1_OG0008181	UniProt:Q67Z52(Arabidopsis thaliana) synonyms=TFCB|EMB2804|TBCB	v1
+d-cdes	dcd	1	R1_OG0008193	Araport11:AT1G48420 synonyms=ACD1|ATACD1|AtDCD|D-CDES|DCD	v1
+cpz	trz	1	R1_OG0008696	UniProt:Q8L633(Arabidopsis thaliana) synonyms=TRZ2|CPZ	v1
+emb	rh	1	R1_OG0008874	Araport11:AT1G59990 synonyms=EMB3108|HS3|RH22	v1
+mos	nup	1	R1_OG0008878	UniProt:Q9FFK6(Arabidopsis thaliana) synonyms=NUP88|EMB2789|MOS7	v1
+dgp	emb	1	R1_OG0008886	UniProt:Q8H1F6(Arabidopsis thaliana) synonyms=DGP3|EMB3129	v1
+pump	ucp	1	R1_OG0009071	UniProt:Q9XI74(Arabidopsis thaliana) synonyms=PUMP3|UCP3	v1
+gwd	pwd	1	R1_OG0009129	UniProt:Q6ZY51(Arabidopsis thaliana) synonyms=GWD3|OK1|PWD	v1
+eif(iso)	lsp	1	R1_OG0009164	Araport11:AT5G35620 synonyms=EIF(ISO)4E|EIF4E2|LSP|LSP1|eIFiso4E	v1
+polz	rev	1	R1_OG0009175	UniProt:Q9GSR1(Drosophila melanogaster) synonyms=PolZ1|Dmpolzeta|DNApol-zeta|DNApolZ1|mus205|rev3	v1
+mterf	ptac	1	R1_OG0009344	UniProt:Q9FK23(Arabidopsis thaliana) synonyms=MTERF8|PTAC15	v1
+aox	im	1	R1_OG0009454	UniProt:Q56X52(Arabidopsis thaliana) synonyms=AOX4|IM|PTOX	v1
+gcp	tsad	1	R1_OG0009477	UniProt:Q11DF0(Chelativorans sp.) synonyms=tsaD|gcp	v1
+kt	kup	1	R1_OG0009503	Araport11:AT2G40540 synonyms=ATKT2|ATKUP2|KT2|KUP2|SHY3|TRK2	v1
+mk	mpk	1	R1_OG0009835	UniProt:Q9LKZ2(Capsicum annuum) synonyms=MK1|MAPK3|MPK3	v1
+rfs	sip	1	R1_OG0009934	UniProt:Q94A08(Arabidopsis thaliana) synonyms=RFS2|RS2|SIP2	v1
+cyp	rot	1	R1_OG0010080	UniProt:Q9M066(Arabidopsis thaliana) synonyms=CYP90C1|ROT3	v1
+met	mms	1	R1_OG0010183	UniProt:Q0WVF8(Arabidopsis thaliana) synonyms=MMS19|MET18	v1
+emb	sl	1	R1_OG0010269	UniProt:Q9SJ50(Arabidopsis thaliana) synonyms=SL1|EMB3114|MTERF3	v1
+npq	psbs	1	R1_OG0010299	Araport11:AT1G44575 synonyms=CP22|NPQ4|PSBS	v1
+hpd	pds	1	R1_OG0010300	Araport11:AT1G06570 synonyms=HPD|HPPD|PDS1	v1
+hds	ispg	1	R1_OG0010378	Araport11:AT5G60600 synonyms=CLB4|CSB3|GCPE|HDS|ISPG	v1
+chb	swi	1	R1_OG0010398	UniProt:Q8VY05(Arabidopsis thaliana) synonyms=SWI3D|CHB3	v1
+ahp	hp	1	R1_OG0010403	Araport11:AT1G80100 synonyms=AHP6|HP6	v1
+chlg	g	1	R1_OG0010448	UniProt:Q38833(Arabidopsis thaliana) synonyms=CHLG|G4	v1
+elo	elp	1	R1_OG0010476	UniProt:Q9C778(Arabidopsis thaliana) synonyms=ELP4|ELO1	v1
+emb	vps	1	R1_OG0010483	UniProt:Q8L5Y0-2(Arabidopsis thaliana) synonyms=VPS39|EMB2754	v1
+pde	psa	1	R1_OG0010501	UniProt:Q9M3C6(Arabidopsis thaliana) synonyms=PSA3|PDE329	v1
+mda	mterf	1	R1_OG0010593	UniProt:F4JVI3(Arabidopsis thaliana) synonyms=MTERF5|MDA1	v1
+abci	star	1	R1_OG0010710	UniProt:Q0D9V6(Oryza sativa subsp. japonica) synonyms=STAR1|ABCI12|ALS1	v1
+ahg	parn	1	R1_OG0010798	UniProt:Q9LG26(Arabidopsis thaliana) synonyms=PARN|AHG2	v1
+club	trs	1	R1_OG0010808	UniProt:F4K0C4(Arabidopsis thaliana) synonyms=TRS130|CLUB	v1
+bsm	mterf	1	R1_OG0010935	UniProt:Q9ZT96(Arabidopsis thaliana) synonyms=MTERF4|BSM|RUG2|TERF3	v1
+ku	mus	1	R1_OG0011275	UniProt:Q7RX73(Neurospora crassa) synonyms=mus-52|ku80	v1
+eir	pin	1	R1_OG0011586	Araport11:AT5G57090 synonyms=AGR|AGR1|ATPIN2|EIR1|MM31|PIN2	v1
+cobl	irx	1	R1_OG0012066	Araport11:AT5G15630 synonyms=COBL4|COBRA-LIKE4|IRX6	v1
+pitrm	prep	1	R1_OG0012217	UniProt:Q5JRX3-2(Homo sapiens) synonyms=PITRM1|KIAA1104|MP1|PREP	v1
+gut	irx	1	R1_OG0012262	UniProt:Q940Q8(Arabidopsis thaliana) synonyms=IRX10L|GUT1|GUT2	v1
+doa	ubp	1	R1_OG0012313	UniProt:Q6FQF0(Candida glabrata) synonyms=DOA4|UBP4	v1
+emb	ycf	1	R1_OG0012315	UniProt:Q9LVM3(Arabidopsis thaliana) synonyms=YCF54|EMB3143|LCAA	v1
+cdpmek	ispe	1	R1_OG0012368	Araport11:AT2G26930 synonyms=ATCDPMEK|CDPMEK|CMEK|CMK|ISPE|PDE277	v1
+atrad	rad	1	R1_OG0012445	Araport11:AT5G66130 synonyms=ATRAD17|RAD17	v1
+lap	ssl	1	R1_OG0012730	UniProt:Q9M1B4-2(Arabidopsis thaliana) synonyms=SSL13|LAP3|SS11	v1
+sd	tim	1	R1_OG0012826	UniProt:Q1G3L1(Arabidopsis thaliana) synonyms=TIM21|SD3	v1
+cfim	cfis	1	R1_OG0012863	UniProt:Q94AF0(Arabidopsis thaliana) synonyms=CFIS1|CFIM25	v1
+nac	xnd	1	R1_OG0012869	UniProt:Q8GWK6(Arabidopsis thaliana) synonyms=NAC104|XND1	v1
+nat	pde	1	R1_OG0012986	Araport11:AT2G26510 synonyms=NAT3|PDE135	v1
+cyp	tt	1	R1_OG0013022	Araport11:AT5G07990 synonyms=CYP75B1|D501|TT7	v1
+fib	pap	1	R1_OG0013122	UniProt:Q9LW57(Arabidopsis thaliana) synonyms=PAP6|FBN4|FIB4|HRBP1|PGL30.4	v1
+cyp	lut	1	R1_OG0013227	Araport11:AT3G53130 synonyms=CYP97C1|LUT1	v1
+cesa	irx	1	R1_OG0013424	Araport11:AT5G17420 synonyms=ATCESA7|CESA7|IRX3|MUR10	v1
+cuc	nac	1	R1_OG0013562	UniProt:O04017(Arabidopsis thaliana) synonyms=NAC098|CUC2	v1
+egc	pnp-a	1	R1_OG0013890	UniProt:Q9ZV52(Arabidopsis thaliana) synonyms=EGC2|EXPR3|PNP-A	v1
+gc	sula	1	R1_OG0013980	UniProt:Q9SJU9(Arabidopsis thaliana) synonyms=GC1|SULA	v1
+kco	tpk	1	R1_OG0013994	UniProt:Q9FL25(Arabidopsis thaliana) synonyms=TPK2|KCO2	v1
+tfcd	ttn	1	R1_OG0014236	UniProt:Q8L5R3(Arabidopsis thaliana) synonyms=TFCD|CHO|EMB133|TBCD|TTN1	v1
+org	pap	1	R1_OG0014313	UniProt:Q9LV04(Arabidopsis thaliana) synonyms=PAP14|FBN11|FIB11|ORG1	v1
+pde	terc	1	R1_OG0014334	UniProt:F4JZG9(Arabidopsis thaliana) synonyms=TERC|PDE149	v1
+sef	swc	1	R1_OG0014347	UniProt:Q9FHW2(Arabidopsis thaliana) synonyms=SWC6|SEF	v1
+gct	med	1	R1_OG0014381	UniProt:F4I096-2(Arabidopsis thaliana) synonyms=MED13|GCT|MAB2|MED13_1	v1
+cog	eye	1	R1_OG0014446	UniProt:Q9FGN0(Arabidopsis thaliana) synonyms=COG7|EYE	v1
+ata	ta	1	R1_OG0014473	Araport11:AT3G42960 synonyms=ASD|ATA1|TA1|TAPETUM1	v1
+atmyb	myb	1	R1_OG0014506	Araport11:AT1G63910 synonyms=AtMYB103|MYB103	v1
+gp alpha	gpa	1	R1_OG0014531	Araport11:AT2G26300 synonyms=ATGPA1|GPA1	v1
+por	tfcc	1	R1_OG0014650	UniProt:Q9SMR2(Arabidopsis thaliana) synonyms=TFCC|POR	v1
+pigc	seth	1	R1_OG0014674	UniProt:O64761(Arabidopsis thaliana) synonyms=PIGC|SETH1	v1
+pfi	tfce	1	R1_OG0015291	UniProt:Q8GRL7(Arabidopsis thaliana) synonyms=TFCE|PFI|TBCE	v1
+arf	mp	1	R1_OG0015341	Araport11:AT1G19850 synonyms=ARF5|IAA24|MP	v1
+nfu	nifu	1	R1_OG0015441	UniProt:Q84RQ7(Arabidopsis thaliana) synonyms=NIFU3|CNFU3|NFU3	v1
+emb	gr	1	R1_OG0015485	Araport11:AT3G54660 synonyms=ATGR2|EMB2360|GR	v1
+pmz	sap	1	R1_OG0015547	UniProt:Q67YE6(Arabidopsis thaliana) synonyms=SAP12|PMZ	v1
+emb	tha	1	R1_OG0016055	Araport11:AT3G27750 synonyms=EMB3123|THA8	v1
+atwhy	why	1	R1_OG0016126	Araport11:AT1G71260 synonyms=ATWHY2|WHY2	v1
+caph	emb	1	R1_OG0016589	UniProt:Q564K3(Arabidopsis thaliana) synonyms=CAPH|EMB2795	v1
+cxe	gid	1	R1_OG0016615	UniProt:Q940G6(Arabidopsis thaliana) synonyms=GID1C|CXE19|GID1L3	v1
+mterf	pde	1	R1_OG0016690	UniProt:Q9SZL6(Arabidopsis thaliana) synonyms=MTERF6|PDE191	v1
+ham	scl	1	R1_OG0016856	Araport11:AT4G00150 synonyms=ATHAM3|HAM3|LOM3|SCL6-IV	v1
+sot	st	1	R1_OG0018030	UniProt:Q8L5A7(Arabidopsis thaliana) synonyms=SOT15|ST2A	v1
+nad	nd	1	R1_OG0018602	UniProt:P27572(Triticum aestivum) synonyms=ND4|NAD4	v1
+nf-ya	nfya	1	R1_OG0019314	Araport11:AT5G12840 synonyms=ATHAP2A|AtNFYA1|EMB2220|HAP2A|NF-YA1|NFYA1	v1
+comt	omt	1	R1_OG0019462	Araport11:AT5G54160 synonyms=ATOMT1|AtCOMT|COMT1|OMT1|OMT3	v1
+cyp	io	1	R1_OG0021159	UniProt:W8JIS5(Catharanthus roseus) synonyms=IO|CYP76A26	v1
+abcg	pdr	1	R1_OG0021163	Araport11:AT1G15520 synonyms=ABCG40|ATABCG40|ATPDR12|PDR12	v1

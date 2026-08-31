@@ -49,7 +49,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from steps.label_symbols import (  # noqa: E402
-    KNOWN_SOURCES, Policy, adjudicate_family, load_overrides, stale_overrides)
+    KNOWN_SOURCES, Policy, adjudicate_family, load_aliases, load_overrides,
+    stale_overrides)
 
 PARSER_VERSION = "label_symbols_v2"
 
@@ -177,6 +178,9 @@ def main(argv=None):
     ap.add_argument("--families", required=True, type=Path)
     ap.add_argument("--calls", action="append", required=True, metavar="SOURCE=PATH")
     ap.add_argument("--overrides", required=True, type=Path)
+    ap.add_argument("--aliases", type=Path,
+                    help="evidence-backed stem equivalence TSV "
+                         "(data/symbol_alias_v1.tsv)")
     ap.add_argument("--catalog", type=Path)
     ap.add_argument("--tree-results", type=Path)
     ap.add_argument("--min-label-coverage", required=True, type=float)
@@ -185,6 +189,8 @@ def main(argv=None):
 
     args.out.mkdir(parents=True, exist_ok=True)
     inputs = [args.families, args.overrides]
+    if args.aliases:
+        inputs.append(args.aliases)
     inputs += [Path(s.split("=", 1)[1]) for s in args.calls]
     if args.catalog:
         inputs.append(args.catalog)
@@ -195,6 +201,8 @@ def main(argv=None):
     families = load_families(args.families)
     calls = load_calls(args.calls)
     overrides = load_overrides(args.overrides.read_text().splitlines())
+    aliases = (load_aliases(args.aliases.read_text().splitlines())
+               if args.aliases else None)
     catalog = load_catalog(args.catalog) if args.catalog else {}
     trees = load_tree_results(args.tree_results) if args.tree_results else None
     policy = Policy(min_label_coverage=args.min_label_coverage)
@@ -214,7 +222,7 @@ def main(argv=None):
             fam_calls = calls.get(family_id, [])
             res = adjudicate_family(
                 family_id, families[family_id], fam_calls,
-                overrides=overrides, policy=policy,
+                overrides=overrides, policy=policy, aliases=aliases,
                 catalog=catalog.get(family_id) or None, tree_results=trees)
             verdict_counts[res["verdict"]] = verdict_counts.get(res["verdict"], 0) + 1
             all_used_override_keys.update(tuple(k) for k in res["used_override_keys"])

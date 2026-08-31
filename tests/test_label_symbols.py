@@ -157,6 +157,54 @@ def test_source_scoped_override_applies_only_to_its_source():
     assert (other.stem, other.status) == ("AtPPa", "PARSED")
 
 
+# -------------------------------------------------------------------------- aliases
+
+
+ALIAS_PATH = Path(__file__).resolve().parents[1] / "data" / "symbol_alias_v1.tsv"
+
+
+def alias_lines(pairs):
+    lines = ["stem_key_a\tstem_key_b\tn_evidence\texample_family\tsource\tadded_in"]
+    lines += ["%s\t%s\t1\tF\ttest\tv1" % (a, b) for a, b in pairs]
+    return lines
+
+
+def test_alias_table_builds_transitive_classes():
+    from steps.label_symbols import load_aliases
+    aliases = load_aliases(alias_lines([("dnm", "drp"), ("drp", "adl")]))
+    assert aliases["dnm"] == aliases["drp"] == aliases["adl"] == "adl"
+
+
+def test_alias_keys_must_be_normalized():
+    from steps.label_symbols import load_aliases
+    with pytest.raises(ValueError, match="normalized"):
+        load_aliases(alias_lines([("DNM", "drp")]))
+
+
+def test_repo_alias_table_loads():
+    from steps.label_symbols import load_aliases
+    aliases = load_aliases(ALIAS_PATH.read_text().splitlines())
+    assert aliases["dnm"] == aliases["drp"]  # Homo sapiens dynamin evidence
+    assert aliases["apg"] == aliases["atg"]
+
+
+def test_alias_equivalence_collapses_a_cross_axis_conflict(overrides):
+    """TT/CHS-type case: without the alias it is a stem conflict, with the
+    alias it is one class and the curated spelling wins the display."""
+    from steps.label_symbols import load_aliases
+    members = {"g1", "g2"}
+    calls = [call("mcry_curated", "g1", "Drp3"), call("ath_diamond", "g2", "DNM1")]
+    without = adjudicate_family("F1", members, calls, overrides=overrides,
+                                policy=policy())
+    assert without["verdict"] == "NEEDS_REVIEW_MULTI_STEM"
+    aliases = load_aliases(alias_lines([("dnm", "drp")]))
+    with_alias = adjudicate_family("F1", members, calls, overrides=overrides,
+                                   policy=policy(), aliases=aliases)
+    assert with_alias["verdict"] == "SINGLE_STEM_MULTI_SUFFIX"
+    fam = [r for r in with_alias["rows"] if r["transfer_tier"] == "stem_auto"][0]
+    assert fam["stem"] == "Drp"  # curated spelling of the class
+
+
 # ---------------------------------------------------------------------- §4.2 parser
 
 

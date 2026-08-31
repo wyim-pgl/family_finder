@@ -208,6 +208,57 @@ def stale_overrides(overrides: Dict[Tuple[str, str], Override],
     return sorted(k for k in overrides if k not in used_keys)
 
 
+def load_aliases(lines: Iterable[str]) -> Dict[str, str]:
+    """Versioned alias TSV -> {stem_key: class representative}.
+
+    Rows declare evidence-backed stem equivalences (columns stem_key_a,
+    stem_key_b, ..., source). Pairs are merged transitively (union-find);
+    the class representative is the lexicographically smallest member, so
+    the mapping is deterministic regardless of row order. Keys must be in
+    normalized (symbol_key) form — raw-cased keys raise, they would
+    otherwise never match anything.
+    """
+    parent: Dict[str, str] = {}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    header: Optional[List[str]] = None
+    for line in lines:
+        line = line.rstrip("\n")
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if header is None:
+            header = parts
+            for col in ("stem_key_a", "stem_key_b", "source"):
+                if col not in header:
+                    raise ValueError("alias table missing column: %s" % col)
+            continue
+        row = dict(zip(header, parts))
+        a, b = row["stem_key_a"].strip(), row["stem_key_b"].strip()
+        for k in (a, b):
+            if k != symbol_key(k):
+                raise ValueError("alias key %r is not in normalized form (want %r)"
+                                 % (k, symbol_key(k)))
+            parent.setdefault(k, k)
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            lo, hi = sorted((ra, rb))
+            parent[hi] = lo
+
+    return {k: find(k) for k in parent}
+
+
+def _stem_class(stem_key: str, aliases: Optional[Dict[str, str]]) -> str:
+    if aliases is None:
+        return stem_key
+    return aliases.get(stem_key, stem_key)
+
+
 def _override_for(overrides, key: str, source: Optional[str]):
     """Source-scoped override wins over the wildcard scope."""
     if source is not None and (key, source) in overrides:
@@ -302,9 +353,14 @@ def different_stem_margin(hits: Sequence[Tuple[float, str]]):
 # -------------------------------------------------------------------- adjudication
 
 
-def _display_for(stem_key: str, units: List[dict]) -> Tuple[str, str]:
-    """(symbol_display, stem_display) chosen by source priority, then lexicographic."""
-    pool = [u for u in units if u["stem_key"] == stem_key]
+def _display_for(class_key: str, units: List[dict],
+                 aliases: Optional[Dict[str, str]] = None) -> Tuple[str, str]:
+    """(symbol_display, stem_display) chosen by source priority, then lexicographic.
+
+    ``class_key`` is an alias equivalence class; every unit whose stem
+    belongs to the class competes, and source priority picks the spelling.
+    """
+    pool = [u for u in units if _stem_class(u["stem_key"], aliases) == class_key]
     pool.sort(key=lambda u: (SOURCE_PRIORITY.index(u["source"]), u["symbol_display"]))
     return pool[0]["symbol_display"], pool[0]["stem_display"]
 
@@ -403,8 +459,8 @@ def _review_rows(family_id, verdict, reason_codes, units, support, coverage):
                  support, coverage, "%s:review" % family_id)]
 
 
-def _partition_by_catalog(units, catalog):
-    """stem_key -> set(og_id) for evidence-bearing genes; uncovered genes kept."""
+def _partition_by_catalog(units, catalog, aliases=None):
+    """class_key -> set(og_id) for evidence-bearing genes; uncovered genes kept."""
     gene_og = {}
     for og_id, info in catalog.items():
         for g in info["members"]:
@@ -416,14 +472,15 @@ def _partition_by_catalog(units, catalog):
         if og is None:
             uncovered.add(u["gene"])
         else:
-            part.setdefault(u["stem_key"], set()).add(og)
+            part.setdefault(_stem_class(u["stem_key"], aliases), set()).add(og)
     return part, uncovered
 
 
 def adjudicate_family(family_id: str, members: Set[str], calls: List[dict], *,
                       overrides, policy: Policy,
                       catalog: Optional[Dict[str, dict]] = None,
-                      tree_results: Optional[Dict[Tuple[str, str], dict]] = None) -> dict:
+                      tree_results: Optional[Dict[Tuple[str, str], dict]] = None,
+                      aliases: Optional[Dict[str, str]] = None) -> dict:
     """State machine of design §6 for one family. Membership is never altered."""
     for c in calls:
         if c["gene"] not in members:
@@ -440,18 +497,20 @@ def adjudicate_family(family_id: str, members: Set[str], calls: List[dict], *,
     weights = policy.source_weights
     audit: List[str] = []
     for u in units:
+        u["class_key"] = _stem_class(u["stem_key"], aliases)
+    for u in units:
         if not u["calibrated"]:
-            others = {v["stem_key"] for v in calibrated_units}
-            if others and u["stem_key"] not in others:
+            others = {v["class_key"] for v in calibrated_units}
+            if others and u["class_key"] not in others:
                 audit.append("AFDB_CONFLICT:%s:%s" % (u["gene"], u["stem_display"]))
     for v in variants:
         audit.append("VARIANT:%s:%s:%s" % (v["source"], v["gene"], v["symbol_display"]))
 
-    stems = sorted({u["stem_key"] for u in calibrated_units})
+    stems = sorted({u["class_key"] for u in calibrated_units})
     total_w = sum(weights.get(u["source"], 0.0) for u in calibrated_units)
     if stems and total_w > 0:
         lead_w = max(sum(weights.get(u["source"], 0.0)
-                         for u in calibrated_units if u["stem_key"] == s) for s in stems)
+                         for u in calibrated_units if u["class_key"] == s) for s in stems)
         support = lead_w / total_w
     else:
         support = 0.0
@@ -477,19 +536,20 @@ def adjudicate_family(family_id: str, members: Set[str], calls: List[dict], *,
 
     if len(stems) == 1:
         return _single_stem_result(family_id, stems[0], calibrated_units, variants,
-                                   units, support, coverage, policy, kw)
+                                   units, support, coverage, policy, kw, aliases)
     return _multi_stem_result(family_id, members, stems, calibrated_units, units,
-                              support, coverage, policy, catalog, tree_results, kw)
+                              support, coverage, policy, catalog, tree_results,
+                              kw, aliases)
 
 
-def _single_stem_result(family_id, stem_key, calibrated_units, variants, units,
-                        support, coverage, policy, kw):
+def _single_stem_result(family_id, class_key, calibrated_units, variants, units,
+                        support, coverage, policy, kw, aliases=None):
     if coverage < policy.min_label_coverage:
         verdict = "NEEDS_REVIEW_LOW_COVERAGE"
         rows = _review_rows(family_id, verdict, ["LOW_COVERAGE"],
                             units, support, coverage)
         return _result(family_id, verdict, rows, **kw)
-    _, stem_display = _display_for(stem_key, calibrated_units)
+    _, stem_display = _display_for(class_key, calibrated_units, aliases)
     suffix_pool = calibrated_units + [v for v in variants if v["calibrated"]]
     full_keys = {u["symbol_full_key"] for u in calibrated_units}
     displays = {u["symbol_display"] for u in calibrated_units}
@@ -520,7 +580,8 @@ def _single_stem_result(family_id, stem_key, calibrated_units, variants, units,
 
 
 def _multi_stem_result(family_id, members, stems, calibrated_units, units,
-                       support, coverage, policy, catalog, tree_results, kw):
+                       support, coverage, policy, catalog, tree_results, kw,
+                       aliases=None):
     def review(reasons, withheld=(), uncovered=()):
         kw2 = dict(kw)
         kw2["withheld"] = list(withheld)
@@ -532,7 +593,7 @@ def _multi_stem_result(family_id, members, stems, calibrated_units, units,
     if not catalog or tree_results is None:
         return review(["STEM_CONFLICT"])
 
-    part, uncovered = _partition_by_catalog(calibrated_units, catalog)
+    part, uncovered = _partition_by_catalog(calibrated_units, catalog, aliases)
     og_stems: Dict[str, Set[str]] = {}
     for stem_key, ogs in part.items():
         for og in ogs:
@@ -541,13 +602,14 @@ def _multi_stem_result(family_id, members, stems, calibrated_units, units,
         return review(["STEM_CONFLICT"], uncovered=uncovered)
 
     passed_rows, withheld = [], []
-    for stem_key in stems:
-        if stem_key not in part:
-            withheld.append({"stem": stem_key, "og": "", "reason": "CATALOG_UNCOVERED"})
+    for class_key in stems:
+        if class_key not in part:
+            withheld.append({"stem": class_key, "og": "", "reason": "CATALOG_UNCOVERED"})
             continue
-        _, stem_display = _display_for(stem_key, calibrated_units)
-        sources = [u["source"] for u in calibrated_units if u["stem_key"] == stem_key]
-        for og in sorted(part[stem_key]):
+        _, stem_display = _display_for(class_key, calibrated_units, aliases)
+        sources = [u["source"] for u in calibrated_units
+                   if u["class_key"] == class_key]
+        for og in sorted(part[class_key]):
             grade = catalog[og].get("grade")
             if grade != "HIGH":
                 withheld.append({"stem": stem_display, "og": og, "reason": "CATALOG_NOT_HIGH"})
