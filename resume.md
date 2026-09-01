@@ -730,6 +730,14 @@ sys.exit('masterList' in json.load(open('$j')))" && echo $j; done | wc -l`)로 �
   5905·2917·3754·7629(timeout) + 8761·9826·10939·12375(정전 사망) 각 12h, 전부
   masterList 재개. 성공 판정은 "masterList 없음 + 필수 키", 실패 시 백업 복원.
   결과는 `panel.status`의 `RETRY_OK/RETRY_FAIL`, 로그 `gard_retry.log`.
+- **1743 해결 + 재시도 정책 확정 (09-01 오후, Codex 합의)**: masterList 재개 2회가
+  같은 3bp 단계 `cached inf`로 죽은 뒤 **체크포인트 없는 fresh GA가 40분 만에 완주**
+  (`RETRY2_FRESH_OK`). 정책 — timeout 부류는 masterList resume가 기본값, **resume
+  특이적 수치 오류가 같은 단계에서 반복될 때만 fresh로 전환**, fresh에서도 같은
+  오류면 정렬 병리로 판정. 잔여 체크포인트는 `provenance/`로 이동(중복 md5 확인 후
+  제거), family 디렉터리에는 최종 `gard.json`만 둔다.
+- 본 스윕 종료(09-01, `GARDv2_QUEUE_DONE`): 마지막 `R1_OG0004166`도 timeout 부류
+  FAIL → 12h resume 일회성 재시도로 편입(`retry_4166.sh`).
 - 재개 시 확인: `ssh gpu 'tail -20 ~/canon_v4_selection/panel.status'`
 
 ### (구) v4 진행 상태 (2026-08-28 아침 — big6만 남음)
