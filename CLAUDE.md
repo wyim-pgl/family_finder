@@ -168,6 +168,9 @@ Runs on the Pronghorn cluster (`ssh pronghorn`); run directory
 (conda envs under `/data/gpfs/.../conda_envs/orthofinder`; a separate `iqtree2` env
 exists). SLURM: partition `cpu-s2-core-0`, `--account=cpu-s2-pgl-0`.
 `config_11sp.json` and the data dirs exist only on the cluster, not in this repo.
+The selection sweep on the 43-family panel (GARD / RELAX / MEME, HyPhy 2.5.100) runs
+on `gpu`, not Pronghorn: `~/canon_v4_selection/` — `panel42/<family>/`, append-only
+`panel.status`, drivers `run_gard_v2.sh` / `run_gard_retry.sh`.
 
 ## Common Pitfalls
 
@@ -194,3 +197,14 @@ exists). SLURM: partition `cpu-s2-core-0`, `--account=cpu-s2-pgl-0`.
   skips when unavailable.
 - **OrthoFinder v3 default MCL inflation is 1.2** (not v2's 1.5) — the config default
   `orthofinder_inflation: 1.2` reproduces it explicitly.
+- **GARD (HyPhy 2.5.100) writes checkpoint JSONs to `--output` mid-run** — a
+  `masterList` key marks a checkpoint (rerunning with the same output path resumes
+  from it; normal completion removes the key, GARD.bf 196–205 / 742–744). Never treat
+  a non-empty `gard.json` as a finished run: completion = valid JSON with
+  `breakpointData`/`bestModelAICc`/`trees` and **no** `masterList`. Sweep filters that
+  skip on non-empty JSON silently block retries of partial results.
+- **HyPhy's on-error step dump looks like progress** — when hyphy dies it prints the
+  batch-file step listing (`Step 82.gard.concludeAnalysis...`), which reads as if the
+  analysis reached those stages. The real cause is the `Error:` block above the dump
+  (e.g. `Failed to checkpoint likelihood value, cached inf` — an internal error that
+  `TOLERATE_NUMERICAL_ERRORS=1` does not cover). Read the error, not the step list.

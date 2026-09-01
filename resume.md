@@ -691,6 +691,40 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
   cluster_id.
 - 남은 선택지: ATH 앵커·AFDB protein_name 축 추가(#33 연동), 다심볼 17 검토.
 
+### 🔄 GARDv2 스윕 — 정전 복구 + 실패 2건 재시도 레이어 (2026-09-01 진행 중)
+
+selection 패널 스윕은 `gpu:~/canon_v4_selection/` (43 family, RELAX/MEME는
+`ALL_QUEUE_DONE` + 실패 2건 재시도 완료 상태). **GARD 대상은 총 36 family**(v1
+`GARD eligible: 36`, 전원 `GARD_TIMEOUT_OR_FAIL`) — 이 중 2개는 v1이 비어있지 않은
+`gard.json`을 남겨 GARDv2 필터(n≤74, c≤1500, p≤100k + json 없음)가 건너뛰었고,
+**GARDv2는 나머지 34개를 재실행**. 진행 분모는 항상 36으로 잰다 (`ls */gard.json |
+wc -l` 대비 36).
+
+- **정전(08-31 ~13:45)**: 로컬 ssh가 죽으며 드라이버 사망. 고아 hyphy 2개는 완주해
+  json을 남겼으나(`R1_OG0010939`·`R1_OG0008761`) `panel.status`에 OK 줄이 없다 —
+  **status 줄수와 json 수는 어긋날 수 있음**, 수지는 `ls */gard.json | wc -l`로 잴 것.
+- **재가동(09-01)**: 스크립트가 멱등(비어있지 않은 `gard.json` 스킵)이라 nohup 재기동.
+  현재 **34/36 json**, 마지막 2개(`R1_OG0002917`·`R1_OG0003754`) 실행 중. 모니터 가동.
+- **FAIL 2건 — 둘 다 유효한 체크포인트를 남김**:
+  - `R1_OG0001743` (32seq×1014nt): 3bp GA 중 `Failed to checkpoint likelihood value,
+    cached inf` 내부오류(910초, timeout 아님). `TOLERATE_NUMERICAL_ERRORS`로 안 잡힘.
+    등록 이슈 **없음**(hyphy#1082는 2.5.4에서 고쳐진 다른 assertion, #1950 통계요건은
+    여유 통과). 2bp 체크포인트 유효(c-AIC 15375→15100, bp 506·640) — bp 수 과소추정
+    가능성 있음.
+  - `R1_OG0005905` (23seq): 9bp 탐색 중 4h timeout. 8bp 체크포인트 유효
+    (36857→36504, 미수렴).
+  - `R1_OG0002917` (28seq, 09-01 추가): 5bp 탐색 중 4h timeout(signal 15). 4bp
+    체크포인트 유효(84790→84277, 미수렴) — 5905와 같은 부류로 재시도 12h에 편입.
+- **핵심 발견 — GARD json의 `masterList` 키 = 체크포인트 표식** (2.5.100 GARD.bf
+  196–205행: 있으면 그 지점부터 재개, 742–744행: 정상 완료 시 제거). v2 필터는
+  non-empty json을 완료 취급하므로 **partial이 재시도를 차단**한다.
+- **재시도 레이어**: `run_gard_retry.sh` (Codex 설계 → micromamba activate가 비대화
+  셸에서 불가라 hyphy 전체경로로 패치 후 배치, 대기 중). `GARDv2_QUEUE_DONE` 대기 →
+  체크포인트 백업(`gard.json.partial.*`) → 1743 4h(새 GA 시드 + masterList 재개) →
+  5905 12h → 2917 12h → 성공 판정은 "masterList 없음 + 필수 키", 실패 시 백업 복원.
+  결과는 `panel.status`의 `RETRY_OK/RETRY_FAIL`, 로그 `gard_retry.log`.
+- 재개 시 확인: `ssh gpu 'tail -20 ~/canon_v4_selection/panel.status'`
+
 ### (구) v4 진행 상태 (2026-08-28 아침 — big6만 남음)
 
 > ❌ **SUPERSEDED (2026-08-29):** 위 블록으로 대체 — v4 동결·매핑까지 전부 완료.
@@ -779,7 +813,11 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
   tandem Ppc1형 개명 + 추정 종트리 채택)은 **분석 전부 완료 후 착수** — 473 트리 완주 →
   카탈로그 v3 동결 → slate3 전수 확장(v4)까지. 그 전에는 이슈에 사실만 축적, 원고 파일
   불가침. 착수 시 OG id는 최종 summary 기준으로 재확인(`0000168` vs `0000165` 이력 참조).
-- 5sp Cgig MAKER 유지의 공식 결정 기록(#43 ①, 현행 이원 운용이 사실상 결정)
+- ✅ ~~5sp Cgig MAKER 유지의 공식 결정 기록~~ → **해소 (2026-08-31, 사용자 확인)**:
+  프로덕션은 15sp=Helixer가 정본이고 5sp는 테스트 패널 — 추가 결정 기록이 필요 없다는
+  의미로 종결(#43 종결 코멘트 2026-08-28의 이원 운용 명문화). **단, 5sp의 MAKER 자체는
+  교체·폐기 금지**: 한 유전체의 두 주석이 §2.X.8 길이-정책 대조군의 유일한 장치라
+  의도적 유지 대상이다 (methods.md "deliberately retained", retired_data.md 유지표, #43).
 
 ## 7.05 (구) /clear 후 세션 재개 가이드 (2026-08-26 기준 — v3 테이블·subfamily 카탈로그 세션)
 
