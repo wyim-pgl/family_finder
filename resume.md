@@ -697,12 +697,17 @@ selection 패널 스윕은 `gpu:~/canon_v4_selection/` (43 family, RELAX/MEME는
 `ALL_QUEUE_DONE` + 실패 2건 재시도 완료 상태). **GARD 대상은 총 36 family**(v1
 `GARD eligible: 36`, 전원 `GARD_TIMEOUT_OR_FAIL`) — 이 중 2개는 v1이 비어있지 않은
 `gard.json`을 남겨 GARDv2 필터(n≤74, c≤1500, p≤100k + json 없음)가 건너뛰었고,
-**GARDv2는 나머지 34개를 재실행**. 진행 분모는 항상 36으로 잰다 (`ls */gard.json |
-wc -l` 대비 36).
+**GARDv2는 나머지 34개를 재실행**. 진행 분모는 항상 36 — 단 **완료 수를 json 개수로
+재지 말 것**(실행 중·실패 건의 체크포인트도 json을 남김): masterList 없는 json 수
+(`for j in */gard.json; do python3 -c "import json,sys;
+sys.exit('masterList' in json.load(open('$j')))" && echo $j; done | wc -l`)로 잰다.
 
-- **정전(08-31 ~13:45)**: 로컬 ssh가 죽으며 드라이버 사망. 고아 hyphy 2개는 완주해
-  json을 남겼으나(`R1_OG0010939`·`R1_OG0008761`) `panel.status`에 OK 줄이 없다 —
-  **status 줄수와 json 수는 어긋날 수 있음**, 수지는 `ls */gard.json | wc -l`로 잴 것.
+- **정전(08-31 ~13:45)**: 로컬 ssh가 죽으며 드라이버 사망. 고아 hyphy는 한동안 더
+  돌며 json을 갱신하다 죽었는데(✏️ 처음엔 "완주"로 오판 — masterList 검사로 정정),
+  **4 family(`R1_OG0008761`·`R1_OG0009826`·`R1_OG0010939`·`R1_OG0012375`)가
+  체크포인트 json만 남긴 채 미완료**였고, 재가동 필터가 이를 완료로 취급해 조용히
+  건너뛰었다(masterList 함정의 실제 피해 사례; 9826은 PEPC BTPC family). 09-01
+  masterList 전수 검사(진짜 완료 26/36 ↔ OK 로그 26 일치)로 적발, 재시도 명단 편입.
 - **재가동(09-01)**: 스크립트가 멱등(비어있지 않은 `gard.json` 스킵)이라 nohup 재기동.
   현재 **34/36 json**, 마지막 2개(`R1_OG0002917`·`R1_OG0003754`) 실행 중. 모니터 가동.
 - **FAIL 2건 — 둘 다 유효한 체크포인트를 남김**:
@@ -720,8 +725,9 @@ wc -l` 대비 36).
   non-empty json을 완료 취급하므로 **partial이 재시도를 차단**한다.
 - **재시도 레이어**: `run_gard_retry.sh` (Codex 설계 → micromamba activate가 비대화
   셸에서 불가라 hyphy 전체경로로 패치 후 배치, 대기 중). `GARDv2_QUEUE_DONE` 대기 →
-  체크포인트 백업(`gard.json.partial.*`) → 1743 4h(새 GA 시드 + masterList 재개) →
-  5905 12h → 2917 12h → 성공 판정은 "masterList 없음 + 필수 키", 실패 시 백업 복원.
+  체크포인트 백업(`gard.json.partial.*`) → **재시도 명단 7**: 1743(4h, 내부오류 건) +
+  5905·2917(timeout) + 8761·9826·10939·12375(정전 사망) 각 12h, 전부 masterList 재개.
+  성공 판정은 "masterList 없음 + 필수 키", 실패 시 백업 복원.
   결과는 `panel.status`의 `RETRY_OK/RETRY_FAIL`, 로그 `gard_retry.log`.
 - 재개 시 확인: `ssh gpu 'tail -20 ~/canon_v4_selection/panel.status'`
 
