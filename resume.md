@@ -724,10 +724,11 @@ sys.exit('masterList' in json.load(open('$j')))" && echo $j; done | wc -l`)로 �
   196–205행: 있으면 그 지점부터 재개, 742–744행: 정상 완료 시 제거). v2 필터는
   non-empty json을 완료 취급하므로 **partial이 재시도를 차단**한다.
 - **재시도 레이어**: `run_gard_retry.sh` (Codex 설계 → micromamba activate가 비대화
-  셸에서 불가라 hyphy 전체경로로 패치 후 배치, 대기 중). `GARDv2_QUEUE_DONE` 대기 →
-  체크포인트 백업(`gard.json.partial.*`) → **재시도 명단 7**: 1743(4h, 내부오류 건) +
-  5905·2917(timeout) + 8761·9826·10939·12375(정전 사망) 각 12h, 전부 masterList 재개.
-  성공 판정은 "masterList 없음 + 필수 키", 실패 시 백업 복원.
+  셸에서 불가라 hyphy 전체경로로 패치). **09-01 15:45 병렬 즉시 시작으로 개편**(사용자
+  지시 — 16코어에 load ~1로 유휴): QUEUE_DONE 대기 제거, xargs -P 3 × OMP 4.
+  체크포인트 백업(`gard.json.partial.*`) → **재시도 명단 9**: 1743(4h, 내부오류 건) +
+  5905·2917·3754·7629(timeout) + 8761·9826·10939·12375(정전 사망) 각 12h, 전부
+  masterList 재개. 성공 판정은 "masterList 없음 + 필수 키", 실패 시 백업 복원.
   결과는 `panel.status`의 `RETRY_OK/RETRY_FAIL`, 로그 `gard_retry.log`.
 - 재개 시 확인: `ssh gpu 'tail -20 ~/canon_v4_selection/panel.status'`
 
