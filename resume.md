@@ -691,7 +691,7 @@ unroot 시 비자명 split은 `{Cgig,CgigH}` 와 `{Ococ,Obas}` 뿐 — "Mcry 외
   cluster_id.
 - 남은 선택지: ATH 앵커·AFDB protein_name 축 추가(#33 연동), 다심볼 17 검토.
 
-### 🔄 GARDv2 스윕 — 정전 복구 + 실패 2건 재시도 레이어 (2026-09-01 진행 중)
+### 🔄 GARDv2 스윕 — 정전 복구 + 재시도 레이어 (2026-09-02 12:20 기준, 34/36)
 
 selection 패널 스윕은 `gpu:~/canon_v4_selection/` (43 family, RELAX/MEME는
 `ALL_QUEUE_DONE` + 실패 2건 재시도 완료 상태). **GARD 대상은 총 36 family**(v1
@@ -702,24 +702,52 @@ selection 패널 스윕은 `gpu:~/canon_v4_selection/` (43 family, RELAX/MEME는
 (`for j in */gard.json; do python3 -c "import json,sys;
 sys.exit('masterList' in json.load(open('$j')))" && echo $j; done | wc -l`)로 잰다.
 
+#### ▶ 현재 상태 (09-02 12:20 PDT) — /clear 후 여기부터
+
+- **34/36 완료** (RETRY_OK 7건 + RETRY2_FRESH_OK 1건 포함). **남은 2개, 둘 다 실행 중**:
+  - `R1_OG0003754`: `retry_one.sh` 12h, 09-02 04:01 시작 → **한도 16:01**. 구판 복원
+    버그로 2bp에서 재출발(아래 함정 ③), 이전 세션에서 5bp까지 갔었음.
+  - `R1_OG0007629`: `retry_one.sh` 12h, 09-02 07:01 시작 → **한도 19:01**. 4bp
+    체크포인트(c-AIC 102486→100049)에서 resume. 패널 최대급 정렬.
+- **/clear 후 재개 계약**:
+  1. `ssh gpu 'tail -20 ~/canon_v4_selection/panel.status'` — `R1_OG0003754`/`R1_OG0007629`의
+     `RETRY_OK`/`RETRY_FAIL` 줄 확인. 위 masterList 검사로 완료 수 재확인.
+  2. `RETRY_FAIL exit=124 checkpoint_kept_newer`면 **그냥 이어 붙인다**:
+     `ssh gpu 'nohup bash ~/canon_v4_selection/retry_one.sh <FAM> 12h >> ~/canon_v4_selection/gard_retry.log 2>&1 < /dev/null &'`
+     (retry_one.sh 현행판은 timeout 시 복원하지 않고 최신 체크포인트 유지 — 12h마다
+     진행 누적). 수치 오류(`cached inf`)가 **같은 단계에서 반복**될 때만 fresh 전환
+     (json을 치우고 실행 — 1743 선례), 그래도 죽으면 정렬 병리로 판정하고 마지막
+     체크포인트를 최종값으로 동결.
+  3. 세션 모니터는 /clear로 소멸 — 필요하면 panel.status tail 폴링 모니터 재무장.
+  4. 36/36 도달 시: GARD breakpoint 결과를 RELAX/MEME 결과와 함께 selection 판정
+     테이블로 통합하는 단계가 다음 작업(아직 미착수).
+- **도구 현황**: `retry_one.sh`(범용, timeout=checkpoint_kept_newer 판정),
+  `run_gard_v2.sh`(본 스윕, 종료), `run_gard_retry.sh`(로스터판, 오케스트레이터 제거됨),
+  `provenance/`(1743의 crash 체크포인트 보존). 로그 `gard_retry.log`, 정본 상태는
+  append-only `panel.status`.
+
+#### 경위 (09-01 → 09-02)
+
 - **정전(08-31 ~13:45)**: 로컬 ssh가 죽으며 드라이버 사망. 고아 hyphy는 한동안 더
   돌며 json을 갱신하다 죽었는데(✏️ 처음엔 "완주"로 오판 — masterList 검사로 정정),
   **4 family(`R1_OG0008761`·`R1_OG0009826`·`R1_OG0010939`·`R1_OG0012375`)가
   체크포인트 json만 남긴 채 미완료**였고, 재가동 필터가 이를 완료로 취급해 조용히
   건너뛰었다(masterList 함정의 실제 피해 사례; 9826은 PEPC BTPC family). 09-01
-  masterList 전수 검사(진짜 완료 26/36 ↔ OK 로그 26 일치)로 적발, 재시도 명단 편입.
+  masterList 전수 검사(진짜 완료 26/36 ↔ OK 로그 26 일치)로 적발, 재시도 명단 편입 —
+  **4건 전부 09-01 밤 재시도 성공**.
 - **재가동(09-01)**: 스크립트가 멱등(비어있지 않은 `gard.json` 스킵)이라 nohup 재기동.
-  현재 **34/36 json**, 마지막 2개(`R1_OG0002917`·`R1_OG0003754`) 실행 중. 모니터 가동.
-- **FAIL 2건 — 둘 다 유효한 체크포인트를 남김**:
-  - `R1_OG0001743` (32seq×1014nt): 3bp GA 중 `Failed to checkpoint likelihood value,
-    cached inf` 내부오류(910초, timeout 아님). `TOLERATE_NUMERICAL_ERRORS`로 안 잡힘.
-    등록 이슈 **없음**(hyphy#1082는 2.5.4에서 고쳐진 다른 assertion, #1950 통계요건은
-    여유 통과). 2bp 체크포인트 유효(c-AIC 15375→15100, bp 506·640) — bp 수 과소추정
-    가능성 있음.
-  - `R1_OG0005905` (23seq): 9bp 탐색 중 4h timeout. 8bp 체크포인트 유효
-    (36857→36504, 미수렴).
-  - `R1_OG0002917` (28seq, 09-01 추가): 5bp 탐색 중 4h timeout(signal 15). 4bp
-    체크포인트 유효(84790→84277, 미수렴) — 5905와 같은 부류로 재시도 12h에 편입.
+  v2 재실행분 20 중 14 OK, 6 FAIL(전부 재시도로 회수: 1743 fresh, 5905 resume 2차,
+  2917·4166 resume 1차, 3754·7629 진행 중).
+- **v2 FAIL 6건의 원인과 결말** (전부 유효 체크포인트를 남겼었음):
+  - ✅ `R1_OG0001743` (32seq×1014nt): `Failed to checkpoint likelihood value, cached
+    inf` 내부오류(3bp GA, 910초 — timeout 아님). `TOLERATE_NUMERICAL_ERRORS`로 안
+    잡히고 등록 이슈 **없음**(hyphy#1082는 2.5.4에서 고쳐진 다른 assertion). resume
+    재시도 2회가 같은 지점에서 같은 오류 → **fresh GA(체크포인트 제거)가 40분 완주**.
+  - ✅ `R1_OG0005905` (23seq): 4h timeout(9bp 탐색 중) → resume 1차는 10bp에서
+    cached-inf → **resume 2차 성공**(GA 확률성으로 관문 통과, fresh 불필요).
+  - ✅ `R1_OG0002917`, ✅ `R1_OG0004166`: 4h timeout → 12h resume 1차 성공
+    (4166은 12h 2세션 소요).
+  - 🔄 `R1_OG0003754`, 🔄 `R1_OG0007629`: 4h timeout → 12h resume 진행 중 (위 참조).
 - **핵심 발견 — GARD json의 `masterList` 키 = 체크포인트 표식** (2.5.100 GARD.bf
   196–205행: 있으면 그 지점부터 재개, 742–744행: 정상 완료 시 제거). v2 필터는
   non-empty json을 완료 취급하므로 **partial이 재시도를 차단**한다.
@@ -736,9 +764,24 @@ sys.exit('masterList' in json.load(open('$j')))" && echo $j; done | wc -l`)로 �
   특이적 수치 오류가 같은 단계에서 반복될 때만 fresh로 전환**, fresh에서도 같은
   오류면 정렬 병리로 판정. 잔여 체크포인트는 `provenance/`로 이동(중복 md5 확인 후
   제거), family 디렉터리에는 최종 `gard.json`만 둔다.
-- 본 스윕 종료(09-01, `GARDv2_QUEUE_DONE`): 마지막 `R1_OG0004166`도 timeout 부류
-  FAIL → 12h resume 일회성 재시도로 편입(`retry_4166.sh`).
-- 재개 시 확인: `ssh gpu 'tail -20 ~/canon_v4_selection/panel.status'`
+- 본 스윕 종료(09-01, `GARDv2_QUEUE_DONE`). 09-01 저녁 사용자 지시로 대기 5건도
+  즉시 병렬 투입(오케스트레이터 제거, `retry_one.sh` 일회성 × 9 동시) — CPU 유휴 해소.
+
+#### 이번 세션의 신규 함정 (09-01~02 실측)
+
+- ① **GARD json의 `masterList` = 체크포인트 표식**(위) — 완료 판정은 반드시
+  "masterList 없음"으로. json 존재/크기/mtime 전부 오판 소재.
+- ② **hyphy 오류 시 스텝 덤프는 진행 로그가 아니다** — `Error:` 블록이 근인
+  (CLAUDE.md pitfall로 등재).
+- ③ **timeout 실패에 "백업 복원"은 진행분 파괴다** — 구판 retry가 3754의 12h 진행
+  (2→5bp)을 시작 전 백업(2bp)으로 되돌려 날렸다. 현행 `retry_one.sh`는 timeout(124)
+  시 최신 체크포인트 유지(`checkpoint_kept_newer`), json이 깨졌을 때만 복원.
+- ④ **`pgrep -f`는 ssh로 넘긴 자기 명령줄과 자기매치**한다 — 원격 감시는 파일 기반
+  스크립트로만(인라인 bash -c는 거짓 발화·오탐의 온상, 05:37 거짓 ORPHAN_ENDED 사례).
+- ⑤ **hyphy는 SIGTERM을 무시할 수 있다** — 7629가 timeout의 TERM 후 1시간 이상 더
+  계산하며 체크포인트를 갱신(생산적이라 방치가 정답이었음). `timeout -k` 없으면
+  12h 한도는 소프트 한도다.
+- ⑥ micromamba는 비대화 셸 PATH에 없다 — 원격 스크립트는 hyphy 전체경로 사용.
 
 ### (구) v4 진행 상태 (2026-08-28 아침 — big6만 남음)
 
